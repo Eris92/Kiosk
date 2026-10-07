@@ -1,6 +1,7 @@
 {
-  "Server": "rds.example.local",
-  "Port": 3389,
+  "Connections": [
+    { "Name": "RDS", "Server": "rds.example.local", "Port": 3389 }
+  ],
   "ReaderName": "",
   "IdleSeconds": 300,
   "ConnectTimeoutSeconds": 60,
