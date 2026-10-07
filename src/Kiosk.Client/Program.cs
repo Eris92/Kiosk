@@ -110,6 +110,8 @@ internal sealed class KioskForm : Form
         BackColor = Color.FromArgb(18, 25, 39);
         ForeColor = Color.White;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8) };
+        // Auto-connect needs no Connect button; hiding it avoids an empty disabled button while connecting.
+        connect.Visible = config.RequirePin;
         bar.Controls.Add(connect);
         var disconnect = new Button { Text = "Disconnect / change user", AutoSize = true };
         disconnect.Click += (_, _) => EndSession("manual_disconnect");
@@ -119,6 +121,13 @@ internal sealed class KioskForm : Form
             var exit = new Button { Text = "Exit test", AutoSize = true };
             exit.Click += (_, _) => Close();
             bar.Controls.Add(exit);
+        }
+        // Buttons inherit the dark form colours, which makes disabled (grey) text invisible.
+        foreach (Button button in bar.Controls)
+        {
+            button.BackColor = SystemColors.Control;
+            button.ForeColor = SystemColors.ControlText;
+            button.UseVisualStyleBackColor = true;
         }
         Controls.Add(surface);
         Controls.Add(bar);
