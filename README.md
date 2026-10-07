@@ -58,6 +58,19 @@ and test that policy first: it affects other interactive logons too. Without
 that enforcement a password credential may also be offered.
 
 After disconnect, remove and reinsert the card before another connection.
+The **Przeglądarka** button opens an embedded WebView2 browser inside the Kiosk
+window. It requires Microsoft Edge WebView2 Runtime. Set `BrowserUrl` in the
+client configuration to choose its start page (default: `https://www.google.com`).
+Each session uses a separate InPrivate profile under `%TEMP%\KioskBrowser`,
+independent of your personal Edge profile. Links requesting another window
+open in the embedded view; external application protocols are blocked.
+The **Notatnik** button opens a built-in plain-text editor with Open and Save As
+actions; it does not launch Windows Notepad. The top buttons switch between
+RDP, browser and notes without losing their current state.
+Card removal/change, inactivity, Disconnect and closing Kiosk dispose the local
+views and disconnect RDP. Save notes before removing the card: forced session
+end clears unsaved text. Manual Disconnect/Exit asks before discarding notes.
+Card presence enables local tools; it does not authenticate the user to websites.
 No automatic reconnect or credential reuse is requested by the client.
 TestMode false removes the window border and test exit; it does not restrict
 Alt+Tab, Ctrl+Alt+Del or Windows access. Production OS lockdown is separate.
@@ -77,6 +90,59 @@ notepad.exe .\out\client\client.json
 Scripts support Windows PowerShell 5.1 and PowerShell 7. The session launcher
 requires STA. Sign scripts or use your approved execution policy; no policy
 bypass is included. The EXE is unsigned; production signing/deployment is separate.
+
+## Local configuration: RDP, applications and bookmarks
+
+In TestMode, open **Konfiguracja** before starting a card session. It edits the
+same JSON file passed to the launcher (the desktop shortcut uses
+`client.local.json`). Save applies changes immediately and persists them for the
+next run. Configuration is disabled while a session is active; finish the
+session first. In production, manage this file with administrator-only write
+permissions and keep TestMode disabled.
+
+- **Połączenie i sesja**: RDS server/port, reader, browser home page and idle limit.
+- **Zakładki przeglądarki**: add/edit/remove named HTTP/HTTPS links. These appear
+  as buttons below the address bar and navigate the embedded browser.
+- **Aplikacje**: choose an EXE, name, arguments and optional working directory.
+  After card detection, choose the entry from **Aplikacje ▾**. Select it again to
+  return to its running view.
+
+RDP now calls `Connect()` on the embedded ActiveX control directly; it does not
+launch an RDP shell or separate mstsc window. Credential/PIN prompts remain
+Windows dialogs. The remote desktop is scaled inside the Kiosk content area.
+Live RDS authentication still requires a real configured server and certificates.
+
+External application embedding supports compatible desktop Win32 main windows,
+not every Windows program. Kiosk starts each application suspended, assigns it
+to a kill-on-close Windows Job, then embeds only a window owned by that Job.
+The main window follows the panel size. Existing personal instances are never
+adopted or killed. Programs that reuse another instance, require elevation, use
+store/UWP activation or reject cross-process parenting may not embed; configure
+an application's own new-instance argument when supported. Additional dialogs
+may still be separate windows. Kiosk reports failure instead of claiming that
+an unsupported application was embedded. This is not OS lockdown.
+
+Save work before removing the card: session termination closes launched
+application processes and their descendants. Unsaved application data can be
+lost. Manual Disconnect/Exit asks before closing running external applications.
+
+Configuration example (merge these fields with the existing client settings):
+
+```json
+{
+  "Bookmarks": [
+    { "Name": "Portal", "Url": "https://portal.example.local" }
+  ],
+  "Applications": [
+    {
+      "Name": "My application",
+      "Path": "C:\\Apps\\Example\\Example.exe",
+      "Arguments": "",
+      "WorkingDirectory": "C:\\Apps\\Example"
+    }
+  ]
+}
+```
 
 ## Applications in the authenticated RDS user session
 
@@ -160,3 +226,28 @@ block that configured reader. Removing the selected card or reader still closes
 the connection even when virtual cards remain PRESENT. Selecting a reader scopes
 monitoring; it does not filter Windows/RDP credential providers. Choose the
 certificate belonging to the intended physical card in the Windows dialog.
+
+## Windows shell mode (shared PC with full SSO)
+
+Office, Outlook, OneDrive, the browser and RDP get single sign-on only for the account signed in to Windows.
+For a shared PC set `"SessionMode": "WindowsShell"`: every person signs in to Windows with their card or
+Windows Hello and the Kiosk replaces Explorer as their shell.
+
+- **Zablokuj**, idle time and card removal disconnect the Windows session (like Switch user): programs keep
+  running and the sign-in screen is ready for the next person. Signing in again returns to the same Kiosk.
+- **Wyloguj** signs the person out of Windows. A disconnected session is signed out after
+  `ChangeUserAfterSeconds` (0 = never).
+- Konfiguracja is shown to Kiosk administrators (AdminCards) and members of the local Administrators group.
+
+Setup, as administrator, on a domain-joined or Intune PC (supports `-WhatIf`, reverts with `-Uninstall`):
+
+```powershell
+.\scripts\Build.ps1
+.\scripts\Install-KioskShell.ps1            # add -RequireSmartCard to forbid password sign-in
+```
+
+Windows Enterprise/Education uses Shell Launcher (administrators keep Explorer); Windows Pro writes the shell
+into the default user profile (accounts signing in for the first time get the Kiosk, existing profiles keep
+Explorer). Domain: the same settings can come from GPO (Custom User Interface, Interactive logon: Do not display
+last user name, Require smart card). Intune: `config/intune/ShellLauncher.xml` (AssignedAccess/ShellLauncher
+CSP, Enterprise/Education) plus the Kiosk as a Win32 app — a template to verify on a test device first.

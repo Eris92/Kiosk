@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Intune: Devices > Configuration > Create > Windows 10 and later > Templates > Custom, OMA-URI
+    ./Vendor/MSFT/AssignedAccess/ShellLauncher   (String / XML file: this file)
+  Requires Windows Enterprise / Education. Deploy the Kiosk as a Win32 app to C:\Program Files\Kiosk
+  and the configuration to C:\ProgramData\Kiosk\client.json with "SessionMode": "WindowsShell".
+  Everyone gets the Kiosk as their shell; members of the local Administrators group keep Explorer.
+  TEMPLATE: check it on one test device before assigning it to a group.
+-->
+<ShellLauncherConfiguration xmlns="http://schemas.microsoft.com/ShellLauncher/2018/Configuration"
+                            xmlns:V2="http://schemas.microsoft.com/ShellLauncher/2019/Configuration">
+  <Profiles>
+    <DefaultProfile>
+      <Shell Shell="C:\Program Files\Kiosk\Kiosk.Client.exe &quot;C:\ProgramData\Kiosk\client.json&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="false">
+        <DefaultAction Action="RestartShell"/>
+      </Shell>
+    </DefaultProfile>
+    <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}">
+      <Shell Shell="%SystemRoot%\explorer.exe" V2:AppType="Desktop">
+        <DefaultAction Action="RestartShell"/>
+      </Shell>
+    </Profile>
+  </Profiles>
+  <Configs>
+    <Config>
+      <Account Name="BUILTIN\Administrators"/>
+      <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}"/>
+    </Config>
+  </Configs>
+</ShellLauncherConfiguration>

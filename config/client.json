@@ -2,6 +2,11 @@
   "Server": "rds.example.local",
   "Port": 3389,
   "ReaderName": "",
+  "BrowserUrl": "https://www.google.com",
+  "Bookmarks": [
+    { "Name": "Google", "Url": "https://www.google.com" }
+  ],
+  "Applications": [],
   "IdleSeconds": 300,
   "ConnectTimeoutSeconds": 60,
   "TestMode": true
