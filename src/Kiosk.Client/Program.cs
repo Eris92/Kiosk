@@ -230,6 +230,19 @@ internal sealed class KioskForm : Form
             !CardReader.IsUsableCard(0x422) || CardReader.IsUsableCard(0x222) ||
             CardReader.IsUsableCard(0x12) || CardReader.IsUsableCard(0x28))
             throw new InvalidOperationException("PCSC card-state regression test failed.");
+        var physicalAndVirtual = new[]
+        {
+            new Native.ReaderState { Reader = "ACS", EventState = 0x422, Atr = new byte[36] },
+            new Native.ReaderState { Reader = "UICC", EventState = 0x22, Atr = new byte[36] },
+            new Native.ReaderState { Reader = "Windows Hello", EventState = 0x422, Atr = new byte[36] }
+        };
+        if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Count(s => CardReader.IsUsableCard(s.EventState)) != 1 ||
+            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 3 ||
+            CardReader.MonitoredReaders(physicalAndVirtual, "Missing").Length != 0)
+            throw new InvalidOperationException("PCSC reader-selection regression test failed.");
+        physicalAndVirtual[0].EventState = 0x12;
+        if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
+            throw new InvalidOperationException("Virtual reader masked physical card removal.");
         _ = Native.IdleMilliseconds();
         _ = ConfigureRdp(); // Validate every dynamic COM setting without initiating a connection.
         if ((int)rdp!.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test.");
@@ -269,6 +282,10 @@ internal sealed class CardReader : IDisposable
     internal static bool IsUsableCard(uint state) =>
         (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
 
+    internal static Native.ReaderState[] MonitoredReaders(Native.ReaderState[] states, string selected) =>
+        selected.Length == 0 ? states :
+        states.Where(s => string.Equals(s.Reader, selected, StringComparison.Ordinal)).ToArray();
+
     private static string Describe(Native.ReaderState state)
     {
         var flags = new (uint Bit, string Name)[]
@@ -298,17 +315,19 @@ internal sealed class CardReader : IDisposable
         if (states.Length == 0) { Status = "No reader available"; return null; }
         result = Native.SCardGetStatusChange(context, 0, states, (uint)states.Length);
         if (result != 0) { Reset(); Status = "Reader status failed: " + result.ToString("X8"); return null; }
-        var present = states.Where(s => IsUsableCard(s.EventState)).ToArray();
+        // ReaderName scopes presence/removal monitoring. Other readers may be virtual
+        // (Windows Hello, UICC) and must not block the selected physical reader.
+        var monitored = MonitoredReaders(states, selected);
+        var present = monitored.Where(s => IsUsableCard(s.EventState)).ToArray();
         var diagnostics = string.Join("\n", states.Select(Describe));
-        // Reject multiple cards even when a preferred reader is configured: RDP can see all readers.
+        if (monitored.Length == 0)
+        {
+            Status = "Configured reader not found: " + selected + "\n" + diagnostics;
+            return null;
+        }
         if (present.Length != 1)
         {
             Status = (present.Length == 0 ? "No usable PCSC card detected" : "Multiple PCSC cards detected") + "\n" + diagnostics;
-            return null;
-        }
-        if (selected.Length > 0 && present[0].Reader != selected)
-        {
-            Status = "ReaderName does not match. Configured: " + selected + "\n" + diagnostics;
             return null;
         }
         var card = present[0];
