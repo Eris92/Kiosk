@@ -1,0 +1,40 @@
+name: Build Windows client
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Validate PowerShell syntax and JSON
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts/*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+          Get-ChildItem config/*.json | ForEach-Object { Get-Content $_ -Raw | ConvertFrom-Json | Out-Null }
+      - name: Publish client
+        shell: pwsh
+        run: ./scripts/Build.ps1
+      - name: Package test files
+        shell: pwsh
+        run: |
+          Copy-Item scripts out/scripts -Recurse
+          Copy-Item config out/config -Recurse
+          Copy-Item README.md out/README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kiosk-win-x64
+          path: out/
+          retention-days: 30

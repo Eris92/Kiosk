@@ -1,0 +1,7 @@
+{
+  "Applications": [
+    { "Name": "Notepad", "Path": "C:\\Windows\\System32\\notepad.exe", "Arguments": "" },
+    { "Name": "Enova", "Path": "C:\\Program Files\\Soneta\\Enova365\\SonetaExplorer.exe", "Arguments": "" },
+    { "Name": "Web portal", "Path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "Arguments": "--new-window https://portal.example.local" }
+  ]
+}

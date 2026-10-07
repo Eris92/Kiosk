@@ -1,0 +1,288 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+
+namespace Kiosk.Client;
+
+internal sealed record Config
+{
+    public string Server { get; init; } = "";
+    public int Port { get; init; } = 3389;
+    public string ReaderName { get; init; } = "";
+    public int IdleSeconds { get; init; } = 300;
+    public int ConnectTimeoutSeconds { get; init; } = 60;
+    public bool TestMode { get; init; } = true;
+
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Server) || Server.Any(char.IsWhiteSpace) ||
+            Port is < 1 or > 65535 || IdleSeconds is < 10 or > 86400 ||
+            ConnectTimeoutSeconds is < 10 or > 300)
+            throw new InvalidDataException("Invalid server, port or timeout configuration.");
+    }
+}
+
+internal static class Program
+{
+    [STAThread]
+    private static void Main(string[] args)
+    {
+        ApplicationConfiguration.Initialize();
+        try
+        {
+            var path = args.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "client.json") : Path.GetFullPath(args[0]);
+            var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path),
+                new JsonSerializerOptions { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
+                ?? throw new InvalidDataException("Empty configuration.");
+            config.Validate();
+            using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
+            if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
+            Application.Run(new KioskForm(config));
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("startup_error", ex.Message);
+            MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}
+
+internal static class Audit
+{
+    internal static void Write(string action, string detail = "")
+    {
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Logs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, DateTime.UtcNow.ToString("yyyy-MM-dd") + ".jsonl"),
+                JsonSerializer.Serialize(new { time = DateTimeOffset.UtcNow, action, detail }) + Environment.NewLine);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+}
+
+internal sealed class RdpHost : AxHost
+{
+    // MsRdpClient9NotSafeForScripting, provided by Windows mstscax.dll.
+    internal RdpHost() : base("8B918B82-7985-4C24-89DF-C33AD2BBFBCD") { }
+    internal dynamic Client => GetOcx();
+}
+
+internal sealed class KioskForm : Form
+{
+    private readonly Config config;
+    private readonly Panel surface = new() { Dock = DockStyle.Fill };
+    private readonly Label status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 24) };
+    private readonly Button connect = new() { Text = "Connect with smart card", AutoSize = true };
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
+    private readonly CardReader reader = new();
+    private RdpHost? rdp;
+    private string? activeCard;
+    private DateTime connectingSince;
+    private bool wasConnected;
+    private bool requireRemoval;
+    private bool inTick;
+
+    internal KioskForm(Config config)
+    {
+        this.config = config;
+        Text = "Kiosk";
+        WindowState = FormWindowState.Maximized;
+        FormBorderStyle = config.TestMode ? FormBorderStyle.Sizable : FormBorderStyle.None;
+        BackColor = Color.FromArgb(18, 25, 39);
+        ForeColor = Color.White;
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8) };
+        bar.Controls.Add(connect);
+        var disconnect = new Button { Text = "Disconnect / change user", AutoSize = true };
+        disconnect.Click += (_, _) => EndSession("manual_disconnect");
+        bar.Controls.Add(disconnect);
+        if (config.TestMode)
+        {
+            var exit = new Button { Text = "Exit test", AutoSize = true };
+            exit.Click += (_, _) => Close();
+            bar.Controls.Add(exit);
+        }
+        Controls.Add(surface);
+        Controls.Add(bar);
+        surface.Controls.Add(status);
+        status.Text = "Insert smart card\nPIN is entered in the Windows credential dialog";
+        connect.Click += (_, _) => BeginSession();
+        timer.Tick += (_, _) => TickState();
+        Shown += (_, _) => timer.Start();
+        FormClosing += (_, _) => { timer.Stop(); EndSession("client_exit"); reader.Dispose(); };
+    }
+
+    private void TickState()
+    {
+        if (inTick) return;
+        inTick = true;
+        try
+        {
+            var card = reader.Snapshot(config.ReaderName);
+            if (rdp != null)
+            {
+                if (card == null || card != activeCard) { EndSession("card_removed_or_changed"); return; }
+                if (Native.IdleMilliseconds() >= config.IdleSeconds * 1000u) { EndSession("idle_timeout"); return; }
+                int state = (int)rdp.Client.Connected;
+                if (state == 1) wasConnected = true;
+                if (wasConnected && state == 0) { EndSession("remote_disconnect"); return; }
+                if (!wasConnected && DateTime.UtcNow - connectingSince > TimeSpan.FromSeconds(config.ConnectTimeoutSeconds))
+                    EndSession("connection_timeout");
+            }
+            else
+            {
+                if (card == null) requireRemoval = false;
+                connect.Enabled = card != null && !requireRemoval;
+                status.Text = card == null ? "Insert one smart card\n" + reader.Status :
+                    requireRemoval ? "Remove and reinsert the card to continue" : "Smart card detected\nSelect Connect and enter your PIN";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (rdp != null) EndSession("monitor_error");
+            connect.Enabled = false;
+            status.Text = "Connection blocked\n" + ex.Message;
+        }
+        finally { inTick = false; }
+    }
+
+    private void BeginSession()
+    {
+        try
+        {
+            if (rdp != null || requireRemoval) return;
+            activeCard = reader.Snapshot(config.ReaderName) ?? throw new InvalidOperationException("Insert exactly one smart card.");
+            rdp = new RdpHost { Dock = DockStyle.Fill };
+            ((ISupportInitialize)rdp).BeginInit();
+            surface.Controls.Add(rdp);
+            ((ISupportInitialize)rdp).EndInit();
+            rdp.CreateControl();
+            dynamic client = rdp.Client;
+            client.Server = config.Server;
+            client.DesktopWidth = Math.Max(800, surface.Width);
+            client.DesktopHeight = Math.Max(600, surface.Height);
+            dynamic settings = client.AdvancedSettings7;
+            settings.RDPPort = config.Port;
+            settings.EnableCredSspSupport = true;
+            settings.AuthenticationLevel = 1; // Reject server authentication failures.
+            settings.RedirectSmartCards = true;
+            settings.RedirectDrives = false;
+            settings.RedirectPrinters = false;
+            settings.RedirectClipboard = false;
+            settings.EnableAutoReconnect = false;
+            // Credential prompting is configured through the RDP shell, not AdvancedSettings.
+            dynamic shell = client.MsRdpClientShell;
+            shell.RdpFileContents = string.Join("\r\n", new[]
+            {
+                $"full address:s:{config.Server}", $"server port:i:{config.Port}",
+                "screen mode id:i:1", $"desktopwidth:i:{Math.Max(800, surface.Width)}",
+                $"desktopheight:i:{Math.Max(600, surface.Height)}",
+                "prompt for credentials:i:1", "promptcredentialonce:i:0",
+                "enablecredsspsupport:i:1", "authentication level:i:1",
+                "redirectsmartcards:i:1", "redirectclipboard:i:0", "redirectprinters:i:0",
+                "drivestoredirect:s:", "devicestoredirect:s:",
+                "autoreconnection enabled:i:0", "disableconnectionsharing:i:1"
+            }) + "\r\n";
+            // Fresh COM control per connection; never store a PIN/password or reuse credentials.
+            connectingSince = DateTime.UtcNow;
+            wasConnected = false;
+            connect.Enabled = false;
+            rdp.BringToFront();
+            shell.Launch();
+            Audit.Write("connect_requested");
+        }
+        catch (Exception ex)
+        {
+            EndSession("connect_error");
+            status.Text = "Connection error\n" + ex.Message;
+            Audit.Write("connect_error", ex.Message);
+            MessageBox.Show(this, ex.Message, "Connection error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void EndSession(string reason)
+    {
+        var old = rdp;
+        rdp = null;
+        status.BringToFront(); // Hide the remote desktop before releasing the transport.
+        activeCard = null;
+        wasConnected = false;
+        if (old == null) return;
+        requireRemoval = true;
+        try { old.Client.Disconnect(); }
+        catch (Exception ex) { Audit.Write("disconnect_error", ex.Message); }
+        finally { surface.Controls.Remove(old); old.Dispose(); }
+        Audit.Write(reason);
+    }
+}
+
+internal sealed class CardReader : IDisposable
+{
+    private IntPtr context;
+    internal string Status { get; private set; } = "";
+    internal string? Snapshot(string selected)
+    {
+        if (context == IntPtr.Zero)
+        {
+            var error = Native.SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context);
+            if (error != 0) { context = IntPtr.Zero; Status = "Smart Card service unavailable: " + error.ToString("X8"); return null; }
+        }
+        uint size = 0;
+        int result = Native.SCardListReaders(context, null, null, ref size);
+        if (result != 0) { Reset(); Status = "No reader available: " + result.ToString("X8"); return null; }
+        var names = new char[size];
+        result = Native.SCardListReaders(context, null, names, ref size);
+        if (result != 0) { Reset(); Status = "Reader enumeration failed"; return null; }
+        var readers = new string(names).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var states = readers.Select(n => new Native.ReaderState { Reader = n, Atr = new byte[36] }).ToArray();
+        if (states.Length == 0) { Status = "No reader available"; return null; }
+        result = Native.SCardGetStatusChange(context, 0, states, (uint)states.Length);
+        if (result != 0) { Reset(); Status = "Reader status failed: " + result.ToString("X8"); return null; }
+        var present = states.Where(s => (s.EventState & 0x20) != 0 && (s.EventState & (0x04 | 0x08 | 0x100 | 0x200)) == 0).ToArray();
+        // Reject multiple cards even when a preferred reader is configured: RDP can see all readers.
+        if (present.Length != 1 || (selected.Length > 0 && present[0].Reader != selected))
+        { Status = "Exactly one card in the configured reader is required"; return null; }
+        var card = present[0];
+        Status = card.Reader;
+        // Upper word is the insertion/removal event counter; detects rapid remove/reinsert.
+        // ATR is a change signal only, never an authenticated user identity.
+        return card.Reader + ":" + (card.EventState >> 16) + ":" + Convert.ToHexString(card.Atr.AsSpan(0, checked((int)Math.Min(card.AtrLength, 36u))));
+    }
+    private void Reset() { if (context != IntPtr.Zero) Native.SCardReleaseContext(context); context = IntPtr.Zero; }
+    public void Dispose() => Reset();
+}
+
+internal static class Native
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct ReaderState
+    {
+        [MarshalAs(UnmanagedType.LPWStr)] public string Reader;
+        public IntPtr UserData;
+        public uint CurrentState;
+        public uint EventState;
+        public uint AtrLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 36)] public byte[] Atr;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInput { public uint Size; public uint Time; }
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLastInputInfo(ref LastInput input);
+    internal static uint IdleMilliseconds()
+    {
+        var input = new LastInput { Size = (uint)Marshal.SizeOf<LastInput>() };
+        if (!GetLastInputInfo(ref input)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return unchecked((uint)Environment.TickCount - input.Time);
+    }
+    [DllImport("winscard.dll")]
+    internal static extern int SCardEstablishContext(uint scope, IntPtr reserved1, IntPtr reserved2, out IntPtr context);
+    [DllImport("winscard.dll")]
+    internal static extern int SCardReleaseContext(IntPtr context);
+    [DllImport("winscard.dll", EntryPoint = "SCardListReadersW", CharSet = CharSet.Unicode)]
+    internal static extern int SCardListReaders(IntPtr context, string? groups, [Out] char[]? readers, ref uint length);
+    [DllImport("winscard.dll", EntryPoint = "SCardGetStatusChangeW", CharSet = CharSet.Unicode)]
+    internal static extern int SCardGetStatusChange(IntPtr context, uint timeout, [In, Out] ReaderState[] states, uint count);
+}
