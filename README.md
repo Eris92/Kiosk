@@ -22,7 +22,7 @@ firewall/registry changes or credential storage are performed by these files.
   chain and reachable revocation endpoints. Check with `certutil -scinfo`.
 - Trusted RDS TLS certificate matching the configured server FQDN; NLA enabled.
   The client rejects server authentication failures.
-- Direct Session Host connection on the configured TCP port (default 3389).
+- Direct Session Host connection on each configured TCP port (default 3389).
   RD Gateway and broker/farm routing are not implemented in this version.
 - Set ReaderName to the exact physical PC/SC reader name when Windows Hello,
   UICC or other virtual readers are present. Only that reader is monitored.
@@ -39,8 +39,9 @@ https://learn.microsoft.com/en-us/windows/win32/termserv/msrdpclient9notsafefors
 1. Open Actions -> Build Windows client, open a successful run and download
    Kiosk-win-x64. Extract the ZIP to C:\Kiosk. The client is self-contained;
    installing a separate .NET runtime is not required.
-2. Edit client/client.json: set Server to your Session Host FQDN.
-   Keep TestMode true during testing. IdleSeconds defaults to 300.
+2. Edit client/client.json: list your Session Hosts in Connections (see
+   "RDP connections" below). Keep TestMode true during testing.
+   IdleSeconds defaults to 300.
 3. Run the read-only checks, then the client:
 
 ```powershell
@@ -146,6 +147,27 @@ No machine installation changes: close using Exit test, remove any manually
 deployed startup shortcut and delete the directory. Restore independently made
 RDS/GPO changes from your export. Avoid logoff or killing remote apps when
 preserving state. Runtime verification on Windows/RDS is required before rollout.
+
+## RDP connections
+
+`Connections` lists the RDP hosts offered on the kiosk. Each entry has a
+`Server` (FQDN, required), an optional `Port` (default 3389) and an optional
+`Name` shown on the button (defaults to the server). Names must be unique.
+
+```json
+"Connections": [
+  { "Name": "Biuro", "Server": "rds1.example.local" },
+  { "Name": "Enova", "Server": "rds2.example.local", "Port": 3390 }
+]
+```
+
+With one connection the kiosk shows a single "Connect with smart card" button;
+with several, one "Connect: <Name>" button per connection. The card and idle
+rules apply to whichever connection is active. Only one connection is open at
+a time.
+
+Older configurations with top-level `Server` and `Port` still work and are
+treated as a single connection. Do not combine `Server` with `Connections`.
 
 ## Selecting the physical reader
 

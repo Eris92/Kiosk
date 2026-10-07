@@ -4,8 +4,19 @@ using System.Text.Json;
 
 namespace Kiosk.Client;
 
+internal sealed record Connection
+{
+    public string Name { get; init; } = "";
+    public string Server { get; init; } = "";
+    public int Port { get; init; } = 3389;
+
+    internal string DisplayName => string.IsNullOrWhiteSpace(Name) ? Server : Name.Trim();
+}
+
 internal sealed record Config
 {
+    public List<Connection> Connections { get; init; } = new();
+    // Legacy single-server fields; used only when Connections is empty.
     public string Server { get; init; } = "";
     public int Port { get; init; } = 3389;
     public string ReaderName { get; init; } = "";
@@ -13,12 +24,57 @@ internal sealed record Config
     public int ConnectTimeoutSeconds { get; init; } = 60;
     public bool TestMode { get; init; } = true;
 
+    internal IReadOnlyList<Connection> EffectiveConnections =>
+        Connections.Count > 0 ? Connections :
+        string.IsNullOrWhiteSpace(Server) ? Array.Empty<Connection>() :
+        new[] { new Connection { Server = Server, Port = Port } };
+
+    internal static Config Parse(string json)
+    {
+        var config = JsonSerializer.Deserialize<Config>(json,
+            new JsonSerializerOptions { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
+            ?? throw new InvalidDataException("Empty configuration.");
+        config.Validate();
+        return config;
+    }
+
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(Server) || Server.Any(char.IsWhiteSpace) ||
-            Port is < 1 or > 65535 || IdleSeconds is < 10 or > 86400 ||
-            ConnectTimeoutSeconds is < 10 or > 300)
-            throw new InvalidDataException("Invalid server, port or timeout configuration.");
+        if (Connections.Count > 0 && !string.IsNullOrWhiteSpace(Server))
+            throw new InvalidDataException("Use either Connections or the legacy Server field, not both.");
+        var connections = EffectiveConnections;
+        if (connections.Count == 0)
+            throw new InvalidDataException("No RDP connection configured.");
+        foreach (var c in connections)
+            if (c == null || string.IsNullOrWhiteSpace(c.Server) || c.Server.Any(char.IsWhiteSpace) || c.Port is < 1 or > 65535)
+                throw new InvalidDataException("Invalid server or port in connection: " + c?.DisplayName);
+        if (connections.Select(c => c.DisplayName).Distinct(StringComparer.OrdinalIgnoreCase).Count() != connections.Count)
+            throw new InvalidDataException("Connection names must be unique.");
+        if (IdleSeconds is < 10 or > 86400 || ConnectTimeoutSeconds is < 10 or > 300)
+            throw new InvalidDataException("Invalid timeout configuration.");
+    }
+
+    internal static void SelfTest()
+    {
+        var legacy = Parse("""{"Server":"rds.example.local","Port":3390}""").EffectiveConnections;
+        if (legacy.Count != 1 || legacy[0].Server != "rds.example.local" || legacy[0].Port != 3390 || legacy[0].DisplayName != "rds.example.local")
+            throw new InvalidOperationException("Legacy single-server config regression test failed.");
+        var list = Parse("""{"Connections":[{"Name":"Biuro","Server":"rds1"},{"Server":"rds2","Port":3390}]}""").EffectiveConnections;
+        if (list.Count != 2 || list[0].DisplayName != "Biuro" || list[0].Port != 3389 || list[1].DisplayName != "rds2")
+            throw new InvalidOperationException("Connection list config regression test failed.");
+        foreach (var invalid in new[]
+        {
+            """{}""", """{"Connections":[]}""",
+            """{"Server":"rds1","Connections":[{"Server":"rds2"}]}""",
+            """{"Connections":[{"Name":"X","Server":"rds1"},{"Name":"x","Server":"rds2"}]}""",
+            """{"Connections":[{"Server":"rds 1"}]}""", """{"Connections":[{"Server":"rds1","Port":0}]}""",
+            """{"Connections":[{"Server":"rds1","Unknown":1}]}"""
+        })
+        {
+            try { Parse(invalid); }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException) { continue; }
+            throw new InvalidOperationException("Invalid config was accepted: " + invalid);
+        }
     }
 }
 
@@ -33,18 +89,16 @@ internal static class Program
         {
             if (selfTest)
             {
-                using var form = new KioskForm(new Config { Server = "localhost" });
+                Config.SelfTest();
+                using var form = new KioskForm(Config.Parse("""{"Connections":[{"Name":"A","Server":"localhost"},{"Server":"127.0.0.1","Port":3390}]}"""));
                 form.Show();
                 Application.DoEvents();
                 form.SmokeTest();
-                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "COM settings, native layout and idle input passed.");
+                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config, COM settings, native layout and idle input passed.");
                 return 0;
             }
             var path = args.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "client.json") : Path.GetFullPath(args[0]);
-            var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path),
-                new JsonSerializerOptions { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
-                ?? throw new InvalidDataException("Empty configuration.");
-            config.Validate();
+            var config = Config.Parse(File.ReadAllText(path));
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
             Application.Run(new KioskForm(config));
@@ -88,10 +142,11 @@ internal sealed class KioskForm : Form
     private readonly Config config;
     private readonly Panel surface = new() { Dock = DockStyle.Fill };
     private readonly Label status = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 24) };
-    private readonly Button connect = new() { Text = "Connect with smart card", AutoSize = true };
+    private readonly List<Button> connectButtons = new();
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
     private readonly CardReader reader = new();
     private RdpHost? rdp;
+    private Connection? activeConnection;
     private string? activeCard;
     private DateTime connectingSince;
     private bool wasConnected;
@@ -107,7 +162,18 @@ internal sealed class KioskForm : Form
         BackColor = Color.FromArgb(18, 25, 39);
         ForeColor = Color.White;
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(8) };
-        bar.Controls.Add(connect);
+        var connections = config.EffectiveConnections;
+        foreach (var connection in connections)
+        {
+            var button = new Button
+            {
+                Text = connections.Count == 1 ? "Connect with smart card" : "Connect: " + connection.DisplayName,
+                AutoSize = true, Enabled = false
+            };
+            button.Click += (_, _) => BeginSession(connection);
+            connectButtons.Add(button);
+            bar.Controls.Add(button);
+        }
         var disconnect = new Button { Text = "Disconnect / change user", AutoSize = true };
         disconnect.Click += (_, _) => EndSession("manual_disconnect");
         bar.Controls.Add(disconnect);
@@ -121,7 +187,6 @@ internal sealed class KioskForm : Form
         Controls.Add(bar);
         surface.Controls.Add(status);
         status.Text = "Insert smart card\nPIN is entered in the Windows credential dialog";
-        connect.Click += (_, _) => BeginSession();
         timer.Tick += (_, _) => TickState();
         Shown += (_, _) => timer.Start();
         FormClosing += (_, _) => { timer.Stop(); EndSession("client_exit"); reader.Dispose(); };
@@ -147,34 +212,42 @@ internal sealed class KioskForm : Form
             else
             {
                 if (card == null) requireRemoval = false;
-                connect.Enabled = card != null && !requireRemoval;
+                SetConnectEnabled(card != null && !requireRemoval);
                 status.Text = card == null ? "Insert one smart card\n" + reader.Status :
-                    requireRemoval ? "Remove and reinsert the card to continue" : "Smart card detected\nSelect Connect and enter your PIN";
+                    requireRemoval ? "Remove and reinsert the card to continue" :
+                    connectButtons.Count == 1 ? "Smart card detected\nSelect Connect and enter your PIN" :
+                    "Smart card detected\nSelect a connection and enter your PIN";
             }
         }
         catch (Exception ex)
         {
             if (rdp != null) EndSession("monitor_error");
-            connect.Enabled = false;
+            SetConnectEnabled(false);
             status.Text = "Connection blocked\n" + ex.Message;
         }
         finally { inTick = false; }
     }
 
-    private void BeginSession()
+    private void SetConnectEnabled(bool enabled)
+    {
+        foreach (var button in connectButtons) button.Enabled = enabled;
+    }
+
+    private void BeginSession(Connection connection)
     {
         try
         {
             if (rdp != null || requireRemoval) return;
             activeCard = reader.Snapshot(config.ReaderName) ?? throw new InvalidOperationException("Insert exactly one smart card.");
-            dynamic shell = ConfigureRdp();
+            dynamic shell = ConfigureRdp(connection);
+            activeConnection = connection;
             // Fresh COM control per connection; never store a PIN/password or reuse credentials.
             connectingSince = DateTime.UtcNow;
             wasConnected = false;
-            connect.Enabled = false;
+            SetConnectEnabled(false);
             rdp!.BringToFront();
             shell.Launch();
-            Audit.Write("connect_requested");
+            Audit.Write("connect_requested", connection.DisplayName);
         }
         catch (Exception ex)
         {
@@ -185,39 +258,39 @@ internal sealed class KioskForm : Form
         }
     }
 
-    private dynamic ConfigureRdp()
+    private dynamic ConfigureRdp(Connection connection)
     {
-    rdp = new RdpHost { Dock = DockStyle.Fill };
-    ((ISupportInitialize)rdp).BeginInit();
-    surface.Controls.Add(rdp);
-    ((ISupportInitialize)rdp).EndInit();
-    rdp.CreateControl();
-    dynamic client = rdp.Client;
-    client.Server = config.Server;
-    client.DesktopWidth = Math.Max(800, surface.Width);
-    client.DesktopHeight = Math.Max(600, surface.Height);
-    dynamic settings = client.AdvancedSettings7;
-    settings.RDPPort = config.Port;
-    settings.EnableCredSspSupport = true;
-    settings.AuthenticationLevel = 1; // Reject server authentication failures.
-    settings.RedirectSmartCards = true;
-    settings.RedirectDrives = false;
-    settings.RedirectPrinters = false;
-    settings.RedirectClipboard = false;
-    settings.EnableAutoReconnect = false;
-    // Credential prompting is configured through the RDP shell, not AdvancedSettings.
-    dynamic shell = client.MsRdpClientShell;
-    shell.RdpFileContents = string.Join("\r\n", new[]
-    {
-        $"full address:s:{config.Server}", $"server port:i:{config.Port}",
-        "screen mode id:i:1", $"desktopwidth:i:{Math.Max(800, surface.Width)}",
-        $"desktopheight:i:{Math.Max(600, surface.Height)}",
-        "prompt for credentials:i:1", "promptcredentialonce:i:0",
-        "enablecredsspsupport:i:1", "authentication level:i:1",
-        "redirectsmartcards:i:1", "redirectclipboard:i:0", "redirectprinters:i:0",
-        "drivestoredirect:s:", "devicestoredirect:s:",
-        "autoreconnection enabled:i:0", "disableconnectionsharing:i:1"
-    }) + "\r\n";
+        rdp = new RdpHost { Dock = DockStyle.Fill };
+        ((ISupportInitialize)rdp).BeginInit();
+        surface.Controls.Add(rdp);
+        ((ISupportInitialize)rdp).EndInit();
+        rdp.CreateControl();
+        dynamic client = rdp.Client;
+        client.Server = connection.Server;
+        client.DesktopWidth = Math.Max(800, surface.Width);
+        client.DesktopHeight = Math.Max(600, surface.Height);
+        dynamic settings = client.AdvancedSettings7;
+        settings.RDPPort = connection.Port;
+        settings.EnableCredSspSupport = true;
+        settings.AuthenticationLevel = 1; // Reject server authentication failures.
+        settings.RedirectSmartCards = true;
+        settings.RedirectDrives = false;
+        settings.RedirectPrinters = false;
+        settings.RedirectClipboard = false;
+        settings.EnableAutoReconnect = false;
+        // Credential prompting is configured through the RDP shell, not AdvancedSettings.
+        dynamic shell = client.MsRdpClientShell;
+        shell.RdpFileContents = string.Join("\r\n", new[]
+        {
+            $"full address:s:{connection.Server}", $"server port:i:{connection.Port}",
+            "screen mode id:i:1", $"desktopwidth:i:{Math.Max(800, surface.Width)}",
+            $"desktopheight:i:{Math.Max(600, surface.Height)}",
+            "prompt for credentials:i:1", "promptcredentialonce:i:0",
+            "enablecredsspsupport:i:1", "authentication level:i:1",
+            "redirectsmartcards:i:1", "redirectclipboard:i:0", "redirectprinters:i:0",
+            "drivestoredirect:s:", "devicestoredirect:s:",
+            "autoreconnection enabled:i:0", "disableconnectionsharing:i:1"
+        }) + "\r\n";
         return shell;
     }
 
@@ -244,7 +317,9 @@ internal sealed class KioskForm : Form
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
             throw new InvalidOperationException("Virtual reader masked physical card removal.");
         _ = Native.IdleMilliseconds();
-        _ = ConfigureRdp(); // Validate every dynamic COM setting without initiating a connection.
+        if (connectButtons.Count != config.EffectiveConnections.Count)
+            throw new InvalidOperationException("Connection buttons do not match configuration.");
+        _ = ConfigureRdp(config.EffectiveConnections[0]); // Validate every dynamic COM setting without initiating a connection.
         if ((int)rdp!.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test.");
         EndSession("smoke_test");
     }
@@ -252,16 +327,18 @@ internal sealed class KioskForm : Form
     private void EndSession(string reason)
     {
         var old = rdp;
+        var connection = activeConnection?.DisplayName ?? "";
         rdp = null;
         status.BringToFront(); // Hide the remote desktop before releasing the transport.
         activeCard = null;
+        activeConnection = null;
         wasConnected = false;
         if (old == null) return;
         requireRemoval = true;
         try { old.Client.Disconnect(); }
         catch (Exception ex) { Audit.Write("disconnect_error", ex.Message); }
         finally { surface.Controls.Remove(old); old.Dispose(); }
-        Audit.Write(reason);
+        Audit.Write(reason, connection);
     }
 }
 
