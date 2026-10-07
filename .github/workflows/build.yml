@@ -27,6 +27,13 @@ jobs:
       - name: Publish client
         shell: pwsh
         run: ./scripts/Build.ps1
+      - name: Windows COM smoke test
+        shell: pwsh
+        run: |
+          $process = Start-Process ./out/client/Kiosk.Client.exe -ArgumentList '--self-test' -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Smoke test timed out.' }
+          Get-Content ./out/client/self-test.txt
+          if ($process.ExitCode -ne 0) { throw 'Windows COM smoke test failed.' }
       - name: Package test files
         shell: pwsh
         run: |

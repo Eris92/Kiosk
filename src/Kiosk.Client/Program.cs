@@ -25,11 +25,21 @@ internal sealed record Config
 internal static class Program
 {
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        bool selfTest = args.Length > 0 && args[0] == "--self-test";
         try
         {
+            if (selfTest)
+            {
+                using var form = new KioskForm(new Config { Server = "localhost" });
+                form.Show();
+                Application.DoEvents();
+                form.SmokeTest();
+                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "COM settings, native layout and idle input passed.");
+                return 0;
+            }
             var path = args.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "client.json") : Path.GetFullPath(args[0]);
             var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path),
                 new JsonSerializerOptions { UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow })
@@ -38,11 +48,14 @@ internal static class Program
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
             Application.Run(new KioskForm(config));
+            return 0;
         }
         catch (Exception ex)
         {
             Audit.Write("startup_error", ex.Message);
-            MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (selfTest) File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString());
+            else MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
         }
     }
 }
@@ -154,37 +167,7 @@ internal sealed class KioskForm : Form
         {
             if (rdp != null || requireRemoval) return;
             activeCard = reader.Snapshot(config.ReaderName) ?? throw new InvalidOperationException("Insert exactly one smart card.");
-            rdp = new RdpHost { Dock = DockStyle.Fill };
-            ((ISupportInitialize)rdp).BeginInit();
-            surface.Controls.Add(rdp);
-            ((ISupportInitialize)rdp).EndInit();
-            rdp.CreateControl();
-            dynamic client = rdp.Client;
-            client.Server = config.Server;
-            client.DesktopWidth = Math.Max(800, surface.Width);
-            client.DesktopHeight = Math.Max(600, surface.Height);
-            dynamic settings = client.AdvancedSettings7;
-            settings.RDPPort = config.Port;
-            settings.EnableCredSspSupport = true;
-            settings.AuthenticationLevel = 1; // Reject server authentication failures.
-            settings.RedirectSmartCards = true;
-            settings.RedirectDrives = false;
-            settings.RedirectPrinters = false;
-            settings.RedirectClipboard = false;
-            settings.EnableAutoReconnect = false;
-            // Credential prompting is configured through the RDP shell, not AdvancedSettings.
-            dynamic shell = client.MsRdpClientShell;
-            shell.RdpFileContents = string.Join("\r\n", new[]
-            {
-                $"full address:s:{config.Server}", $"server port:i:{config.Port}",
-                "screen mode id:i:1", $"desktopwidth:i:{Math.Max(800, surface.Width)}",
-                $"desktopheight:i:{Math.Max(600, surface.Height)}",
-                "prompt for credentials:i:1", "promptcredentialonce:i:0",
-                "enablecredsspsupport:i:1", "authentication level:i:1",
-                "redirectsmartcards:i:1", "redirectclipboard:i:0", "redirectprinters:i:0",
-                "drivestoredirect:s:", "devicestoredirect:s:",
-                "autoreconnection enabled:i:0", "disableconnectionsharing:i:1"
-            }) + "\r\n";
+            dynamic shell = ConfigureRdp();
             // Fresh COM control per connection; never store a PIN/password or reuse credentials.
             connectingSince = DateTime.UtcNow;
             wasConnected = false;
@@ -200,6 +183,53 @@ internal sealed class KioskForm : Form
             Audit.Write("connect_error", ex.Message);
             MessageBox.Show(this, ex.Message, "Connection error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private dynamic ConfigureRdp()
+    {
+    rdp = new RdpHost { Dock = DockStyle.Fill };
+    ((ISupportInitialize)rdp).BeginInit();
+    surface.Controls.Add(rdp);
+    ((ISupportInitialize)rdp).EndInit();
+    rdp.CreateControl();
+    dynamic client = rdp.Client;
+    client.Server = config.Server;
+    client.DesktopWidth = Math.Max(800, surface.Width);
+    client.DesktopHeight = Math.Max(600, surface.Height);
+    dynamic settings = client.AdvancedSettings7;
+    settings.RDPPort = config.Port;
+    settings.EnableCredSspSupport = true;
+    settings.AuthenticationLevel = 1; // Reject server authentication failures.
+    settings.RedirectSmartCards = true;
+    settings.RedirectDrives = false;
+    settings.RedirectPrinters = false;
+    settings.RedirectClipboard = false;
+    settings.EnableAutoReconnect = false;
+    // Credential prompting is configured through the RDP shell, not AdvancedSettings.
+    dynamic shell = client.MsRdpClientShell;
+    shell.RdpFileContents = string.Join("\r\n", new[]
+    {
+        $"full address:s:{config.Server}", $"server port:i:{config.Port}",
+        "screen mode id:i:1", $"desktopwidth:i:{Math.Max(800, surface.Width)}",
+        $"desktopheight:i:{Math.Max(600, surface.Height)}",
+        "prompt for credentials:i:1", "promptcredentialonce:i:0",
+        "enablecredsspsupport:i:1", "authentication level:i:1",
+        "redirectsmartcards:i:1", "redirectclipboard:i:0", "redirectprinters:i:0",
+        "drivestoredirect:s:", "devicestoredirect:s:",
+        "autoreconnection enabled:i:0", "disableconnectionsharing:i:1"
+    }) + "\r\n";
+        return shell;
+    }
+
+    internal void SmokeTest()
+    {
+        if (Marshal.SizeOf<Native.ReaderState>() != 64 ||
+            Marshal.OffsetOf<Native.ReaderState>(nameof(Native.ReaderState.EventState)).ToInt32() != 20)
+            throw new InvalidOperationException("Unexpected PCSC x64 structure layout.");
+        _ = Native.IdleMilliseconds();
+        _ = ConfigureRdp(); // Validate every dynamic COM setting without initiating a connection.
+        if ((int)rdp!.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test.");
+        EndSession("smoke_test");
     }
 
     private void EndSession(string reason)
