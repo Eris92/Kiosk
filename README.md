@@ -24,7 +24,9 @@ firewall/registry changes or credential storage are performed by these files.
   The client rejects server authentication failures.
 - Direct Session Host connection on the configured TCP port (default 3389).
   RD Gateway and broker/farm routing are not implemented in this version.
-- Exactly one card across all readers; ReaderName optionally restricts the reader.
+- Set ReaderName to the exact physical PC/SC reader name when Windows Hello,
+  UICC or other virtual readers are present. Only that reader is monitored.
+  With ReaderName empty, exactly one usable card across all readers is required.
 
 Microsoft documentation:
 https://learn.microsoft.com/en-us/windows/security/identity-protection/smart-cards/smart-card-and-remote-desktop-services
@@ -122,7 +124,7 @@ the server. Standard users and individual certificates are required.
 2. User B connects with their own card. Verify B cannot see A's desktop/apps.
 3. A reconnects with PIN: verify the same session ID and application state.
 4. Wait 300 seconds without local input: disconnect while applications survive.
-5. Unplug reader, stop Smart Card service, insert a second card or rapidly
+5. Unplug the configured reader, stop Smart Card service or rapidly
    remove/reinsert: connection must close. PCSC event counters detect removal
    between polling cycles when supported by the reader stack.
 6. Remove card while entering PIN, cancel credentials, use a wrong PIN, unplug
@@ -144,3 +146,17 @@ No machine installation changes: close using Exit test, remove any manually
 deployed startup shortcut and delete the directory. Restore independently made
 RDS/GPO changes from your export. Avoid logoff or killing remote apps when
 preserving state. Runtime verification on Windows/RDS is required before rollout.
+
+## Selecting the physical reader
+
+For ACS ACR1252, set the following value in your client.local.json:
+
+```json
+"ReaderName": "ACS ACR1252 Dual Reader PICC 0"
+```
+
+Use the exact name shown on your machine. Windows Hello/UICC presence does not
+block that configured reader. Removing the selected card or reader still closes
+the connection even when virtual cards remain PRESENT. Selecting a reader scopes
+monitoring; it does not filter Windows/RDP credential providers. Choose the
+certificate belonging to the intended physical card in the Windows dialog.
