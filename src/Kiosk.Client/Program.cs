@@ -226,6 +226,10 @@ internal sealed class KioskForm : Form
         if (Marshal.SizeOf<Native.ReaderState>() != 64 ||
             Marshal.OffsetOf<Native.ReaderState>(nameof(Native.ReaderState.EventState)).ToInt32() != 20)
             throw new InvalidOperationException("Unexpected PCSC x64 structure layout.");
+        if (!CardReader.IsUsableCard(0x122) || !CardReader.IsUsableCard(0x82) ||
+            !CardReader.IsUsableCard(0x422) || CardReader.IsUsableCard(0x222) ||
+            CardReader.IsUsableCard(0x12) || CardReader.IsUsableCard(0x28))
+            throw new InvalidOperationException("PCSC card-state regression test failed.");
         _ = Native.IdleMilliseconds();
         _ = ConfigureRdp(); // Validate every dynamic COM setting without initiating a connection.
         if ((int)rdp!.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test.");
@@ -251,7 +255,31 @@ internal sealed class KioskForm : Form
 internal sealed class CardReader : IDisposable
 {
     private IntPtr context;
-    internal string Status { get; private set; } = "";
+    private string status = "";
+    internal string Status
+    {
+        get => status;
+        private set
+        {
+            if (status == value) return;
+            status = value;
+            Audit.Write("reader_status", value);
+        }
+    }
+    internal static bool IsUsableCard(uint state) =>
+        (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
+
+    private static string Describe(Native.ReaderState state)
+    {
+        var flags = new (uint Bit, string Name)[]
+        {
+            (0x01, "IGNORE"), (0x04, "UNKNOWN"), (0x08, "UNAVAILABLE"),
+            (0x10, "EMPTY"), (0x20, "PRESENT"), (0x80, "EXCLUSIVE"),
+            (0x100, "INUSE"), (0x200, "MUTE"), (0x400, "UNPOWERED")
+        };
+        return state.Reader + " | 0x" + (state.EventState & 0xFFFF).ToString("X4") +
+            " | " + string.Join(", ", flags.Where(f => (state.EventState & f.Bit) != 0).Select(f => f.Name));
+    }
     internal string? Snapshot(string selected)
     {
         if (context == IntPtr.Zero)
@@ -270,12 +298,21 @@ internal sealed class CardReader : IDisposable
         if (states.Length == 0) { Status = "No reader available"; return null; }
         result = Native.SCardGetStatusChange(context, 0, states, (uint)states.Length);
         if (result != 0) { Reset(); Status = "Reader status failed: " + result.ToString("X8"); return null; }
-        var present = states.Where(s => (s.EventState & 0x20) != 0 && (s.EventState & (0x04 | 0x08 | 0x100 | 0x200)) == 0).ToArray();
+        var present = states.Where(s => IsUsableCard(s.EventState)).ToArray();
+        var diagnostics = string.Join("\n", states.Select(Describe));
         // Reject multiple cards even when a preferred reader is configured: RDP can see all readers.
-        if (present.Length != 1 || (selected.Length > 0 && present[0].Reader != selected))
-        { Status = "Exactly one card in the configured reader is required"; return null; }
+        if (present.Length != 1)
+        {
+            Status = (present.Length == 0 ? "No usable PCSC card detected" : "Multiple PCSC cards detected") + "\n" + diagnostics;
+            return null;
+        }
+        if (selected.Length > 0 && present[0].Reader != selected)
+        {
+            Status = "ReaderName does not match. Configured: " + selected + "\n" + diagnostics;
+            return null;
+        }
         var card = present[0];
-        Status = card.Reader;
+        Status = "Card detected\n" + diagnostics;
         // Upper word is the insertion/removal event counter; detects rapid remove/reinsert.
         // ATR is a change signal only, never an authenticated user identity.
         return card.Reader + ":" + (card.EventState >> 16) + ":" + Convert.ToHexString(card.Atr.AsSpan(0, checked((int)Math.Min(card.AtrLength, 36u))));
