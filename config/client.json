@@ -4,5 +4,6 @@
   "ReaderName": "",
   "IdleSeconds": 300,
   "ConnectTimeoutSeconds": 60,
-  "TestMode": true
+  "TestMode": true,
+  "RequirePin": true
 }

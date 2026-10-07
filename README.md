@@ -57,6 +57,22 @@ relevant AD accounts with Smart card is required for interactive logon. Scope
 and test that policy first: it affects other interactive logons too. Without
 that enforcement a password credential may also be offered.
 
+### PIN or immediate connect (RequirePin)
+
+`RequirePin` in client.json chooses how a connection starts:
+
+| Value | Behaviour |
+| --- | --- |
+| `true` (default) | The user selects Connect. The client first resets the card (PC/SC `SCARD_RESET_CARD`), which clears the PIN the card itself has accepted, so the smart card has to verify the PIN again in the Windows dialog. |
+| `false` | The client connects as soon as one usable card is inserted, without a Connect click. Windows asks for the PIN only if the card middleware has no cached PIN. |
+
+A PIN cached by the card middleware or minidriver (PIN cache policy) is
+outside the client and can still skip the prompt with `true`. Test both values
+with your card and middleware; if the prompt is still skipped, change the
+middleware PIN cache policy. `false` lowers security: anyone holding the card
+reaches the desktop. Every connect attempt still needs card removal after a
+disconnect or error, so `false` never reconnects in a loop.
+
 After disconnect, remove and reinsert the card before another connection.
 No automatic reconnect or credential reuse is requested by the client.
 TestMode false removes the window border and test exit; it does not restrict

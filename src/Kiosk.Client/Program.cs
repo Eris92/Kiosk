@@ -12,6 +12,9 @@ internal sealed record Config
     public int IdleSeconds { get; init; } = 300;
     public int ConnectTimeoutSeconds { get; init; } = 60;
     public bool TestMode { get; init; } = true;
+    // true: user selects Connect and the card is reset first, so the PIN must be verified again.
+    // false: connect as soon as a usable card is inserted; PIN is asked only if Windows/middleware requires it.
+    public bool RequirePin { get; init; } = true;
 
     public void Validate()
     {
@@ -120,7 +123,7 @@ internal sealed class KioskForm : Form
         Controls.Add(surface);
         Controls.Add(bar);
         surface.Controls.Add(status);
-        status.Text = "Insert smart card\nPIN is entered in the Windows credential dialog";
+        status.Text = config.RequirePin ? "Insert smart card\nPIN is entered in the Windows credential dialog" : "Insert smart card to connect";
         connect.Click += (_, _) => BeginSession();
         timer.Tick += (_, _) => TickState();
         Shown += (_, _) => timer.Start();
@@ -149,7 +152,10 @@ internal sealed class KioskForm : Form
                 if (card == null) requireRemoval = false;
                 connect.Enabled = card != null && !requireRemoval;
                 status.Text = card == null ? "Insert one smart card\n" + reader.Status :
-                    requireRemoval ? "Remove and reinsert the card to continue" : "Smart card detected\nSelect Connect and enter your PIN";
+                    requireRemoval ? "Remove and reinsert the card to continue" :
+                    config.RequirePin ? "Smart card detected\nSelect Connect and enter your PIN" : "Smart card detected\nConnecting...";
+                // inTick stays set during BeginSession, so an error dialog cannot re-enter here.
+                if (!config.RequirePin && card != null && !requireRemoval) BeginSession();
             }
         }
         catch (Exception ex)
@@ -166,6 +172,13 @@ internal sealed class KioskForm : Form
         try
         {
             if (rdp != null || requireRemoval) return;
+            if (reader.Snapshot(config.ReaderName) == null) throw new InvalidOperationException("Insert exactly one smart card.");
+            if (config.RequirePin)
+            {
+                // Clears the card's verified-PIN state; a middleware PIN cache can still bypass this.
+                reader.ResetCard(config.ReaderName);
+                Audit.Write("card_reset_for_pin");
+            }
             activeCard = reader.Snapshot(config.ReaderName) ?? throw new InvalidOperationException("Insert exactly one smart card.");
             dynamic shell = ConfigureRdp();
             // Fresh COM control per connection; never store a PIN/password or reuse credentials.
@@ -178,6 +191,7 @@ internal sealed class KioskForm : Form
         }
         catch (Exception ex)
         {
+            requireRemoval = true; // Never retry automatically; RequirePin=false would loop on the error.
             EndSession("connect_error");
             status.Text = "Connection error\n" + ex.Message;
             Audit.Write("connect_error", ex.Message);
@@ -269,6 +283,7 @@ internal sealed class CardReader : IDisposable
 {
     private IntPtr context;
     private string status = "";
+    private string? cardReaderName;
     internal string Status
     {
         get => status;
@@ -331,10 +346,21 @@ internal sealed class CardReader : IDisposable
             return null;
         }
         var card = present[0];
+        cardReaderName = card.Reader;
         Status = "Card detected\n" + diagnostics;
         // Upper word is the insertion/removal event counter; detects rapid remove/reinsert.
         // ATR is a change signal only, never an authenticated user identity.
         return card.Reader + ":" + (card.EventState >> 16) + ":" + Convert.ToHexString(card.Atr.AsSpan(0, checked((int)Math.Min(card.AtrLength, 36u))));
+    }
+    internal void ResetCard(string selected)
+    {
+        if (Snapshot(selected) == null || cardReaderName == null) throw new InvalidOperationException("Insert exactly one smart card.");
+        int result = Native.SCardConnect(context, cardReaderName, Native.ShareShared, Native.ProtocolT0 | Native.ProtocolT1, out var handle, out _);
+        if (result != 0) throw new InvalidOperationException("Card reset failed: " + result.ToString("X8"));
+        result = Native.SCardDisconnect(handle, Native.ResetCard);
+        if (result != 0) throw new InvalidOperationException("Card reset failed: " + result.ToString("X8"));
+        // The reader may briefly report the card as powering up after a reset.
+        for (int i = 0; i < 10 && Snapshot(selected) == null; i++) Thread.Sleep(100);
     }
     private void Reset() { if (context != IntPtr.Zero) Native.SCardReleaseContext(context); context = IntPtr.Zero; }
     public void Dispose() => Reset();
@@ -371,4 +397,9 @@ internal static class Native
     internal static extern int SCardListReaders(IntPtr context, string? groups, [Out] char[]? readers, ref uint length);
     [DllImport("winscard.dll", EntryPoint = "SCardGetStatusChangeW", CharSet = CharSet.Unicode)]
     internal static extern int SCardGetStatusChange(IntPtr context, uint timeout, [In, Out] ReaderState[] states, uint count);
+    internal const uint ShareShared = 2, ProtocolT0 = 1, ProtocolT1 = 2, ResetCard = 1;
+    [DllImport("winscard.dll", EntryPoint = "SCardConnectW", CharSet = CharSet.Unicode)]
+    internal static extern int SCardConnect(IntPtr context, string reader, uint shareMode, uint preferredProtocols, out IntPtr card, out uint activeProtocol);
+    [DllImport("winscard.dll")]
+    internal static extern int SCardDisconnect(IntPtr card, uint disposition);
 }

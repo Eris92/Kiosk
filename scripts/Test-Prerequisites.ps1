@@ -14,5 +14,6 @@ $port = Test-NetConnection -ComputerName $config.Server -Port $config.Port -Info
     Port = $config.Port
     RdpPortReachable = $port
     TestMode = $config.TestMode
+    RequirePin = $config.RequirePin
 } | Format-List
 Write-Output 'For reader/certificate/PIN diagnostics run: certutil.exe -scinfo'
