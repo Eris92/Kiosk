@@ -10,6 +10,9 @@ internal sealed record Config
     public int Port { get; init; } = 3389;
     public string ReaderName { get; init; } = "";
     public int IdleSeconds { get; init; } = 300;
+    // Inactivity before the lock screen covers the session; 0 disables locking.
+    // Must be shorter than IdleSeconds, which still disconnects the session.
+    public int LockSeconds { get; init; } = 0;
     public int ConnectTimeoutSeconds { get; init; } = 60;
     public bool TestMode { get; init; } = true;
 
@@ -19,6 +22,24 @@ internal sealed record Config
             Port is < 1 or > 65535 || IdleSeconds is < 10 or > 86400 ||
             ConnectTimeoutSeconds is < 10 or > 300)
             throw new InvalidDataException("Invalid server, port or timeout configuration.");
+        if (LockSeconds != 0 && (LockSeconds < 10 || LockSeconds >= IdleSeconds))
+            throw new InvalidDataException("LockSeconds must be 0 (disabled) or between 10 and IdleSeconds - 1.");
+    }
+}
+
+internal enum IdleAction { None, Lock, Disconnect }
+
+internal static class IdlePolicy
+{
+    // Once locked, input on the lock screen must not keep the session alive, so the
+    // disconnect deadline runs from the lock time as well as from the last input.
+    internal static IdleAction Decide(Config config, uint idleMilliseconds, TimeSpan? lockedFor)
+    {
+        if (idleMilliseconds >= config.IdleSeconds * 1000u) return IdleAction.Disconnect;
+        if (lockedFor is { } locked)
+            return locked >= TimeSpan.FromSeconds(config.IdleSeconds - config.LockSeconds) ? IdleAction.Disconnect : IdleAction.None;
+        if (config.LockSeconds > 0 && idleMilliseconds >= config.LockSeconds * 1000u) return IdleAction.Lock;
+        return IdleAction.None;
     }
 }
 
@@ -94,6 +115,7 @@ internal sealed class KioskForm : Form
     private RdpHost? rdp;
     private string? activeCard;
     private DateTime connectingSince;
+    private DateTime? lockedSince;
     private bool wasConnected;
     private bool requireRemoval;
     private bool inTick;
@@ -137,7 +159,12 @@ internal sealed class KioskForm : Form
             if (rdp != null)
             {
                 if (card == null || card != activeCard) { EndSession("card_removed_or_changed"); return; }
-                if (Native.IdleMilliseconds() >= config.IdleSeconds * 1000u) { EndSession("idle_timeout"); return; }
+                var lockedFor = lockedSince is { } since ? DateTime.UtcNow - since : (TimeSpan?)null;
+                switch (IdlePolicy.Decide(config, Native.IdleMilliseconds(), lockedFor))
+                {
+                    case IdleAction.Disconnect: EndSession(lockedFor == null ? "idle_timeout" : "lock_timeout"); return;
+                    case IdleAction.Lock when wasConnected: LockSession(); break;
+                }
                 int state = (int)rdp.Client.Connected;
                 if (state == 1) wasConnected = true;
                 if (wasConnected && state == 0) { EndSession("remote_disconnect"); return; }
@@ -243,10 +270,42 @@ internal sealed class KioskForm : Form
         physicalAndVirtual[0].EventState = 0x12;
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
             throw new InvalidOperationException("Virtual reader masked physical card removal.");
+        var lockConfig = new Config { Server = "localhost", IdleSeconds = 300, LockSeconds = 60 };
+        lockConfig.Validate();
+        if (IdlePolicy.Decide(lockConfig, 59_000, null) != IdleAction.None ||
+            IdlePolicy.Decide(lockConfig, 60_000, null) != IdleAction.Lock ||
+            IdlePolicy.Decide(lockConfig, 1_000, TimeSpan.FromSeconds(239)) != IdleAction.None ||
+            IdlePolicy.Decide(lockConfig, 1_000, TimeSpan.FromSeconds(240)) != IdleAction.Disconnect ||
+            IdlePolicy.Decide(lockConfig, 300_000, null) != IdleAction.Disconnect ||
+            IdlePolicy.Decide(new Config { Server = "localhost" }, 299_000, null) != IdleAction.None)
+            throw new InvalidOperationException("Lock/idle policy regression test failed.");
+        foreach (var invalid in new[] { 5, 300, 400 })
+        {
+            try { new Config { Server = "localhost", IdleSeconds = 300, LockSeconds = invalid }.Validate(); }
+            catch (InvalidDataException) { continue; }
+            throw new InvalidOperationException("Invalid LockSeconds accepted: " + invalid);
+        }
         _ = Native.IdleMilliseconds();
         _ = ConfigureRdp(); // Validate every dynamic COM setting without initiating a connection.
         if ((int)rdp!.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test.");
+        LockSession();
+        if (lockedSince == null || rdp!.Enabled) throw new InvalidOperationException("Lock screen did not cover the session.");
         EndSession("smoke_test");
+        if (lockedSince != null) throw new InvalidOperationException("Lock state survived disconnect.");
+    }
+
+    private void LockSession()
+    {
+        if (rdp == null || lockedSince != null) return;
+        lockedSince = DateTime.UtcNow;
+        // Cover the remote desktop and take input away from it; the RDP connection stays
+        // up until the card is removed or the disconnect deadline passes.
+        rdp.Enabled = false;
+        status.Text = "Ekran zablokowany\nWyjmij kartę i włóż ją ponownie, aby kontynuować lub zmienić użytkownika";
+        status.BringToFront();
+        ActiveControl = null;
+        Focus();
+        Audit.Write("locked");
     }
 
     private void EndSession(string reason)
@@ -255,6 +314,7 @@ internal sealed class KioskForm : Form
         rdp = null;
         status.BringToFront(); // Hide the remote desktop before releasing the transport.
         activeCard = null;
+        lockedSince = null;
         wasConnected = false;
         if (old == null) return;
         requireRemoval = true;

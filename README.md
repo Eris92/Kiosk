@@ -57,6 +57,19 @@ relevant AD accounts with Smart card is required for interactive logon. Scope
 and test that policy first: it affects other interactive logons too. Without
 that enforcement a password credential may also be offered.
 
+### Lock screen
+
+`LockSeconds` (default 0 = disabled, sample config 120) is the inactivity time
+after which a lock screen covers the remote desktop and local input stops
+reaching it. The RDP connection stays up while locked. To continue or to switch
+user, remove the card and insert it again (yours or another user's): removal
+disconnects, and reinsertion starts a fresh connection with PIN in the Windows
+dialog, so the same user resumes their session and another user gets their own.
+`IdleSeconds` still disconnects: after IdleSeconds of inactivity, or after
+IdleSeconds - LockSeconds on the lock screen, even if someone touches it.
+LockSeconds must be 0 or between 10 and IdleSeconds - 1. The card ATR is not an
+identity, so the lock is never released without fresh authentication.
+
 After disconnect, remove and reinsert the card before another connection.
 No automatic reconnect or credential reuse is requested by the client.
 TestMode false removes the window border and test exit; it does not restrict
@@ -124,6 +137,10 @@ the server. Standard users and individual certificates are required.
 2. User B connects with their own card. Verify B cannot see A's desktop/apps.
 3. A reconnects with PIN: verify the same session ID and application state.
 4. Wait 300 seconds without local input: disconnect while applications survive.
+   With LockSeconds 120: after 120 seconds the lock screen appears and keyboard
+   or mouse input does not reach the remote desktop; touching the lock screen
+   does not postpone the disconnect at 300 seconds; remove and reinsert the card
+   to reconnect with PIN.
 5. Unplug the configured reader, stop Smart Card service or rapidly
    remove/reinsert: connection must close. PCSC event counters detect removal
    between polling cycles when supported by the reader stack.

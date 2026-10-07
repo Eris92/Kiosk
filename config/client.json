@@ -3,6 +3,7 @@
   "Port": 3389,
   "ReaderName": "",
   "IdleSeconds": 300,
+  "LockSeconds": 120,
   "ConnectTimeoutSeconds": 60,
   "TestMode": true
 }
