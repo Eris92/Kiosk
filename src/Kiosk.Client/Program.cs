@@ -172,7 +172,7 @@ internal sealed class KioskForm : Form
             connectingSince = DateTime.UtcNow;
             wasConnected = false;
             connect.Enabled = false;
-            rdp.BringToFront();
+            rdp!.BringToFront();
             shell.Launch();
             Audit.Write("connect_requested");
         }
@@ -226,7 +226,7 @@ internal sealed class KioskForm : Form
         if (Marshal.SizeOf<Native.ReaderState>() != 64 ||
             Marshal.OffsetOf<Native.ReaderState>(nameof(Native.ReaderState.EventState)).ToInt32() != 20)
             throw new InvalidOperationException("Unexpected PCSC x64 structure layout.");
-        if (!CardReader.IsUsableCard(0x122) || !CardReader.IsUsableCard(0x82) ||
+        if (!CardReader.IsUsableCard(0x122) || !CardReader.IsUsableCard(0xA2) ||
             !CardReader.IsUsableCard(0x422) || CardReader.IsUsableCard(0x222) ||
             CardReader.IsUsableCard(0x12) || CardReader.IsUsableCard(0x28))
             throw new InvalidOperationException("PCSC card-state regression test failed.");
