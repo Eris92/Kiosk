@@ -81,6 +81,8 @@ internal sealed class Taskbar : Panel
     internal Label Status { get; } = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     internal event Action<string>? TaskClicked;
     internal event Action<string>? TaskCloseRequested;
+    /// <summary>Right-click on a window button: its key, the button and the click point (for a context menu).</summary>
+    internal event Action<string, Control, Point>? TaskMenuRequested;
     internal int TaskCount => tasks.Count;
 
     internal Taskbar()
@@ -133,6 +135,7 @@ internal sealed class Taskbar : Panel
                 var key = window.Key;
                 button.Selected += () => TaskClicked?.Invoke(key);
                 button.CloseRequested += () => TaskCloseRequested?.Invoke(key);
+                button.MenuRequested += point => TaskMenuRequested?.Invoke(key, button, point);
                 tasks.Add(button);
                 Controls.Add(button);
             }
@@ -288,6 +291,7 @@ internal sealed class TabButton : Control
 
     internal event Action? Selected;
     internal event Action? CloseRequested;
+    internal event Action<Point>? MenuRequested;
 
     internal bool Active
     {
@@ -314,6 +318,7 @@ internal sealed class TabButton : Control
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Middle || (e.Button == MouseButtons.Left && CloseBounds.Contains(e.Location))) CloseRequested?.Invoke();
         else if (e.Button == MouseButtons.Left) Selected?.Invoke();
+        else if (e.Button == MouseButtons.Right) MenuRequested?.Invoke(e.Location);
     }
 
     protected override void OnPaint(PaintEventArgs e)

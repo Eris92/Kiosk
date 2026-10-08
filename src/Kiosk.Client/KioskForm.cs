@@ -44,6 +44,8 @@ internal sealed class KioskForm : Form
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
         internal UserLogon? Logon { get; set; }
         internal string Name => Logon?.DisplayName ?? Identity.Name;
+        /// <summary>Which screen each window goes on (window key → 1 = main, 2… = others); remembered per card.</summary>
+        internal Dictionary<string, int>? Layout { get; set; }
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
@@ -93,6 +95,7 @@ internal sealed class KioskForm : Form
         taskbar.MenuButton.Click += (_, _) => ToggleMenu();
         taskbar.TaskClicked += ActivateWindow;
         taskbar.TaskCloseRequested += key => { if (ConfirmClose(key)) CloseWindow(key, "window_closed"); };
+        taskbar.TaskMenuRequested += ShowTaskMenu;
         taskbar.LockButton.Click += (_, _) => Lock("manual_lock", 0);
         taskbar.LogoutButton.Click += (_, _) => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); };
         taskbar.ExitButton.Visible = config.TestMode;
@@ -106,7 +109,7 @@ internal sealed class KioskForm : Form
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { menu.Dispose(); StopIdleScreens(); };
+        FormClosed += (_, _) => { menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -439,6 +442,79 @@ internal sealed class KioskForm : Form
     // ---------------------------------------------------------------- screens while nobody works
 
     private readonly List<IdleScreen> idleScreens = new();
+    private readonly Dictionary<int, IdleScreen> idleByScreen = new();
+    private readonly Dictionary<int, ScreenHost> hosts = new();
+
+    /// <summary>1 = the main screen, then the others in Windows' order.</summary>
+    private static Screen[] OrderedScreens => Screen.AllScreens.OrderByDescending(s => s.Primary).ToArray();
+
+    private ScreenHost? HostOf(Control view) => hosts.Values.FirstOrDefault(h => h.View == view);
+
+    private void ShowTaskMenu(string key, Control button, Point point)
+    {
+        if (!CanUseApps || current!.Windows.FirstOrDefault(w => w.Key == key) is not { } window) return;
+        var screens = OrderedScreens;
+        var menuStrip = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
+        int placed = hosts.FirstOrDefault(h => h.Value.View == window.View).Key;
+        if (placed == 0) placed = 1;
+        for (int n = 1; n <= screens.Length; n++)
+        {
+            int target = n;
+            var item = new ToolStripMenuItem(n == 1 ? "Pokaż na ekranie głównym" : "Pokaż na ekranie " + n) { Checked = n == placed };
+            item.Click += (_, _) => PlaceWindow(current!, key, target, remember: true);
+            menuStrip.Items.Add(item);
+        }
+        if (screens.Length < 2) menuStrip.Items.Add(new ToolStripMenuItem("Podłączony jest jeden ekran") { Enabled = false });
+        menuStrip.Closed += (_, _) => BeginInvoke(menuStrip.Dispose);
+        menuStrip.Show(button, point);
+    }
+
+    /// <summary>Puts a window on screen n (1 = the main Kiosk screen); a window already there goes back to the main screen.</summary>
+    private void PlaceWindow(UserSession session, string key, int n, bool remember)
+    {
+        var window = session.Windows.FirstOrDefault(w => w.Key == key);
+        if (window == null) return;
+        var screens = OrderedScreens;
+        HostOf(window.View)?.Release();
+        if (n <= 1 || n > screens.Length) ReturnToMain(window.View);
+        else
+        {
+            if (!hosts.TryGetValue(n, out var host) || host.IsDisposed)
+                hosts[n] = host = new ScreenHost(screens[n - 1]) { Owner = this };
+            if (host.View is { } previous && previous != window.View) ReturnToMain(host.Release()!);
+            if (visibleView == window.View) ShowView(desktop);
+            host.Host(window.View);
+        }
+        if (remember)
+        {
+            session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
+            if (n <= 1) session.Layout.Remove(key); else session.Layout[key] = n;
+            ScreenLayouts.Save(session.Identity.Id, session.Layout);
+            Audit.Write("window_screen", key + " -> " + n);
+        }
+        RefreshHosts();
+    }
+
+    private void ReturnToMain(Control view)
+    {
+        if (view.Parent == surface) return;
+        view.Parent?.Controls.Remove(view);
+        view.Visible = false;
+        view.Dock = DockStyle.Fill;
+        surface.Controls.Add(view);
+    }
+
+    /// <summary>Other screens show the signed-in person's windows; locked or signed out, their idle content again.</summary>
+    private void RefreshHosts()
+    {
+        foreach (var (n, host) in hosts)
+        {
+            if (host.IsDisposed) continue;
+            bool show = host.View != null && current is { Locked: false } person && person.Windows.Any(w => w.View == host.View);
+            if (host.Visible != show) host.Visible = show;
+            if (idleByScreen.TryGetValue(n, out var idle) && !idle.IsDisposed && idle.Visible == show) idle.Visible = !show;
+        }
+    }
     private IdleScreen? mainIdle;
 
     /// <summary>Every screen with configured content shows it, view only; 1 = the main screen, then Windows' order.</summary>
@@ -455,6 +531,7 @@ internal sealed class KioskForm : Form
             if (ordered[i].Primary) { window.Owner = this; mainIdle = window; } // Above the Kiosk on the main screen.
             else window.TopMost = true;
             idleScreens.Add(window);
+            idleByScreen[i + 1] = window;
             if (!ordered[i].Primary || current is not { Locked: false }) window.Show();
         }
         Audit.Write("idle_screens", idleScreens.Count.ToString());
@@ -464,6 +541,7 @@ internal sealed class KioskForm : Form
     {
         foreach (var window in idleScreens) window.Dispose();
         idleScreens.Clear();
+        idleByScreen.Clear();
         mainIdle = null;
     }
 
@@ -549,6 +627,7 @@ internal sealed class KioskForm : Form
 
     private void RefreshChrome()
     {
+        RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
@@ -637,6 +716,7 @@ internal sealed class KioskForm : Form
         if (!CanUseApps) return;
         var window = current!.Windows.FirstOrDefault(w => w.Key == key);
         if (window == null) return;
+        if (HostOf(window.View) is { } host) { host.Activate(); return; } // On another screen.
         // Like the Windows taskbar: clicking the active window shows the desktop.
         ShowView(visibleView == window.View ? desktop : window.View);
     }
@@ -644,6 +724,7 @@ internal sealed class KioskForm : Form
     private void ActivateExisting(string key)
     {
         var window = current?.Windows.FirstOrDefault(w => w.Key == key);
+        if (window != null && CanUseApps && HostOf(window.View) is { } host) { host.Activate(); return; }
         if (window != null && CanUseApps) ShowView(window.View);
     }
 
@@ -653,6 +734,9 @@ internal sealed class KioskForm : Form
         if (view.Parent != surface) surface.Controls.Add(view);
         session.Windows.Add(new Window(key, title, view));
         if (session == current && !session.Locked) ShowView(view);
+        // A window this person put on another screen before opens there again.
+        session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
+        if (session.Layout.TryGetValue(key, out var screen) && screen > 1 && screen <= Screen.AllScreens.Length) PlaceWindow(session, key, screen, remember: false);
     }
 
     private void CloseWindow(string key, string reason, UserSession? session = null)
@@ -681,8 +765,10 @@ internal sealed class KioskForm : Form
         else if (window.Key == NotesKey) { session.Notes?.Editor.Clear(); session.Notes = null; }
         else if (window.Key == SettingsKey) settingsView = null;
         if (session.LastView == window.View) session.LastView = null;
-        surface.Controls.Remove(window.View);
+        HostOf(window.View)?.Release();
+        window.View.Parent?.Controls.Remove(window.View);
         window.View.Dispose();
+        RefreshHosts();
     }
 
     // ---------------------------------------------------------------- remote desktops
