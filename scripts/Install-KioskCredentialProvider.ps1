@@ -22,6 +22,7 @@ param(
     [string]$Title = 'Przyłóż kartę',
     [string]$AccentColor = '#3DDC84',
     [switch]$HideOtherOptions,
+    [switch]$Trace, # Writes C:\ProgramData\Kiosk\signin-trace.log for diagnosing the tile.
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -109,6 +110,7 @@ if ($PSCmdlet.ShouldProcess($settings, 'write tile settings')) {
     New-ItemProperty -Path $settings -Name Title -Value $Title -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $settings -Name TileImage -Value $TileImage -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $settings -Name InnerProvider -Value $fido -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $settings -Name Trace -Value ([int][bool]$Trace) -PropertyType DWord -Force | Out-Null
 }
 if ($PSCmdlet.ShouldProcess("$providers\$clsid", 'register credential provider')) {
     New-Item -Path "$providers\$clsid" -Force | Out-Null
