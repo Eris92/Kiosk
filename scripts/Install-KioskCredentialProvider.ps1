@@ -52,6 +52,8 @@ function Set-Excluded([string[]]$Add, [string[]]$Remove) {
 
 if ($Uninstall) {
     Set-Excluded -Add @() -Remove (@($fido, $clsid) + $others)
+    $default = (Get-ItemProperty -Path $policy -Name DefaultCredentialProvider -ErrorAction SilentlyContinue).DefaultCredentialProvider
+    if ($default -eq $clsid -and $PSCmdlet.ShouldProcess("$policy\DefaultCredentialProvider", 'remove')) { Remove-ItemProperty -Path $policy -Name DefaultCredentialProvider }
     foreach ($key in "$providers\$clsid", $com, $settings) {
         if ((Test-Path $key) -and $PSCmdlet.ShouldProcess($key, 'remove')) { Remove-Item -Path $key -Recurse -Force }
     }
@@ -116,6 +118,11 @@ if ($PSCmdlet.ShouldProcess("$providers\$clsid", 'register credential provider')
 # 3. Windows' own security key tile is replaced by the Kiosk one; optionally password / PIN tiles too.
 $hide = @($fido) + $(if ($HideOtherOptions) { $others } else { @() })
 Set-Excluded -Add $hide -Remove @()
+# The Kiosk tile is the one selected first on the sign-in screen, instead of the password.
+if ($PSCmdlet.ShouldProcess("$policy\DefaultCredentialProvider", $clsid)) {
+    if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
+    New-ItemProperty -Path $policy -Name DefaultCredentialProvider -Value $clsid -PropertyType String -Force | Out-Null
+}
 
 Write-Output "Done. Sign-in tile: $dll"
 Write-Output 'Sign out (not Win+L) and choose Other user > Sign-in options > the Kiosk card tile.'
