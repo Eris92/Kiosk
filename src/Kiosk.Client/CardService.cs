@@ -68,6 +68,7 @@ internal static class CardService
         try
         {
             using var card = new CtapCard(request.Reader);
+            if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
             card.UsePin(request.Pin);
             switch (request.Op)
             {

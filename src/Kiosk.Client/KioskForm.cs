@@ -280,7 +280,7 @@ internal sealed class KioskForm : Form
                 while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
                 {
                     var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
-                    Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code.ToString());
+                    Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code + " " + saved.Message);
                     if (saved.Code == CardPin.WrongPin) { message = saved.Message + " Spróbuj ponownie."; continue; }
                     session.Notice = saved.Code == CardPin.Verified ? null : "Karta nie została zapamiętana: " + saved.Message;
                     break;
@@ -321,7 +321,7 @@ internal sealed class KioskForm : Form
                 if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
                 var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
                 if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
-                Audit.Write("card_vault_failed", opened.Code.ToString());
+                Audit.Write("card_vault_failed", opened.Code + " " + opened.Message);
                 if (opened.Code == CardPin.WrongPin) { message = opened.Message + " Spróbuj ponownie."; continue; }
                 if (opened.Code == CardPin.NoKey) { session.Notice = opened.Message; return true; } // Set the card up again below.
                 if (opened.Code != CardPin.Verified) { session.Notice = opened.Message; return false; }

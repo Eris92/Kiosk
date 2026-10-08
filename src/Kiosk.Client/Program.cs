@@ -20,6 +20,13 @@ internal static class Program
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
+        if (args.Length == 2 && args[0] == "--card-info")
+        {
+            // Diagnostics through the Kiosk Card service (no PIN).
+            var answer = CardService.Call(new CardService.Request { Op = "info", Reader = args[1] });
+            Console.WriteLine(answer.Code + ": " + answer.Message);
+            return answer.Code == 0 ? 0 : 1;
+        }
         if (args.Length == 2 && args[0] == "--ctap-info")
         {
             // Diagnostics: talks FIDO2 to the card in the given reader without a PIN (authenticatorGetInfo).
