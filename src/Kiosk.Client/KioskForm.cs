@@ -277,7 +277,7 @@ internal sealed class KioskForm : Form
             try
             {
                 string message = "Wpisz PIN karty, aby ją zapamiętać. Następnym razem wystarczy sam PIN.";
-                while (PinDialog.Ask(this, message, cardPresent) is { } pin)
+                while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
                 {
                     var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
                     Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code.ToString());
@@ -296,7 +296,7 @@ internal sealed class KioskForm : Form
     {
         var readerName = reader.ActiveReader;
         string message = "Wpisz PIN karty.";
-        while (PinDialog.Ask(this, message, cardPresent) is { } pin)
+        while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
         {
             try
             {
@@ -320,7 +320,7 @@ internal sealed class KioskForm : Form
             string message = "Wpisz PIN karty, aby się zalogować.";
             while (true)
             {
-                var pin = PinDialog.Ask(this, message, cardPresent);
+                var pin = await desktop.AskPinAsync(message, cardPresent);
                 if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
                 var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
                 if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }

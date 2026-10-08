@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -61,6 +61,20 @@ internal sealed class CtapCard : IDisposable
         var pinHash = SHA256.HashData(Encoding.UTF8.GetBytes(pin)).AsSpan(0, 16).ToArray();
         var reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
         pinToken = Decrypt((byte[])reply[2L]);
+    }
+
+    /// <summary>authenticatorGetInfo as text, for diagnostics (no PIN needed).</summary>
+    internal string Info()
+    {
+        var info = Command(0x04, null);
+        return string.Join("; ", info.Select(p => p.Key + "=" + Describe(p.Value)));
+        static string Describe(object v) => v switch
+        {
+            byte[] b => Convert.ToHexString(b),
+            List<object> l => "[" + string.Join(",", l.Select(Describe)) + "]",
+            Dictionary<object, object> m => "{" + string.Join(",", m.Select(p => p.Key + ":" + Describe(p.Value))) + "}",
+            _ => v.ToString() ?? ""
+        };
     }
 
     // ------------------------------------------------------------------ credentials
@@ -128,9 +142,9 @@ internal sealed class CtapCard : IDisposable
     }
 
     /// <summary>One CTAP2 command: status byte, then a CBOR map.</summary>
-    private Dictionary<object, object> Command(byte command, object parameters)
+    private Dictionary<object, object> Command(byte command, object? parameters)
     {
-        var body = Cbor.Encode(parameters);
+        var body = parameters == null ? [] : Cbor.Encode(parameters);
         var request = new byte[body.Length + 1];
         request[0] = command;
         body.CopyTo(request, 1);
@@ -180,9 +194,9 @@ internal sealed class CtapCard : IDisposable
     private (byte[] Data, bool Ok, int Sw) Apdu(byte[] apdu)
     {
         var send = new IoRequest { Protocol = protocol, Length = 8 };
-        var response = new byte[65538];
+        var response = new byte[258];
         int length = response.Length;
-        Check(SCardTransmit(card, ref send, apdu, apdu.Length, IntPtr.Zero, response, ref length), "Błąd komunikacji z kartą");
+        Check(SCardTransmit(card, ref send, apdu, apdu.Length, IntPtr.Zero, response, ref length), "Błąd komunikacji z kartą (APDU " + Convert.ToHexString(apdu, 0, 2) + ", protokół " + protocol + ")");
         if (length < 2) throw new CtapException(-1, "Za krótka odpowiedź karty.");
         int sw = response[length - 2] << 8 | response[length - 1];
         return (response.AsSpan(0, length - 2).ToArray(), sw == 0x9000, sw);

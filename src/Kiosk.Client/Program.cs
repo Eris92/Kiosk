@@ -19,6 +19,12 @@ internal static class Program
         }
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
+        if (args.Length == 2 && args[0] == "--ctap-info")
+        {
+            // Diagnostics: talks FIDO2 to the card in the given reader without a PIN (authenticatorGetInfo).
+            try { using var card = new CtapCard(args[1]); Console.WriteLine(card.Info()); return 0; }
+            catch (Exception ex) { Console.WriteLine(ex.Message); return 1; }
+        }
         if (args.Length >= 2 && args[0] == "--try-app")
         {
             // Diagnostic: host one application exactly as the Kiosk would, to check whether it can be embedded.

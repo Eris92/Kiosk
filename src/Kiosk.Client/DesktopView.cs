@@ -87,7 +87,16 @@ internal sealed class DesktopView : UserControl
     private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Button resume = new() { Text = "Wznów sesję", Visible = false };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
+    // Card PIN asked right on the lock card (FIDO2 cards), instead of a separate window.
+    private readonly Label pinPrompt = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
+    private readonly TextBox pinBox = new() { UseSystemPasswordChar = true, BorderStyle = BorderStyle.FixedSingle, TextAlign = HorizontalAlignment.Center, MaxLength = 63, Visible = false };
+    private readonly Button pinOk = new() { Text = "Zaloguj", Visible = false };
+    private readonly Button pinCancel = new() { Text = "Anuluj", Visible = false };
+    private readonly System.Windows.Forms.Timer pinWatch = new() { Interval = 250 };
+    private TaskCompletionSource<string?>? pinRequest;
+    private Func<bool>? pinCardPresent;
     private bool locked;
+    private bool AskingPin => pinRequest != null;
 
     internal event Action? ResumeRequested;
 
@@ -113,11 +122,27 @@ internal sealed class DesktopView : UserControl
         hint.ForeColor = KioskTheme.Muted;
 
         foreach (var label in new[] { brand, subtitle, clock, date }) label.BackColor = Color.Transparent;
-        foreach (var label in new[] { heading, detail, hint }) label.BackColor = KioskTheme.Surface;
+        foreach (var label in new[] { heading, detail, hint, pinPrompt }) label.BackColor = KioskTheme.Surface;
+        pinPrompt.Font = new Font("Segoe UI", 11);
+        pinPrompt.ForeColor = KioskTheme.Muted;
+        pinPrompt.Visible = false;
+        pinBox.Font = new Font("Segoe UI", 20);
+        pinBox.BackColor = KioskTheme.Background;
+        pinBox.ForeColor = KioskTheme.Text;
         KioskTheme.StyleButton(resume, primary: true);
+        KioskTheme.StyleButton(pinOk, primary: true);
+        KioskTheme.StyleButton(pinCancel);
+        pinOk.Click += (_, _) => FinishPin(true);
+        pinCancel.Click += (_, _) => FinishPin(false);
+        pinBox.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; FinishPin(true); }
+            if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; FinishPin(false); }
+        };
+        pinWatch.Tick += (_, _) => { if (pinCardPresent?.Invoke() == false) FinishPin(false); }; // Card taken away.
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume });
+        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
         Controls.AddRange(new Control[] { card, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
@@ -128,6 +153,8 @@ internal sealed class DesktopView : UserControl
     private void OnThemeChanged()
     {
         KioskTheme.StyleButton(resume, primary: true);
+        KioskTheme.StyleButton(pinOk, primary: true);
+        KioskTheme.StyleButton(pinCancel);
         Invalidate(true);
     }
 
@@ -140,7 +167,8 @@ internal sealed class DesktopView : UserControl
         heading.Text = title;
         detail.Text = description;
         hint.Text = locked ? "Twoje aplikacje czekają na wznowienie sesji." : "Aplikacje i połączenia znajdziesz w menu na dole.";
-        resume.Visible = locked;
+        resume.Visible = locked && !AskingPin;
+        hint.Visible = !AskingPin;
         card.Locked = locked;
         ArrangeControls();
         card.Invalidate();
@@ -172,7 +200,7 @@ internal sealed class DesktopView : UserControl
         date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
-        int cardHeight = Scale(locked ? 370 : 324);
+        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : 324);
         int top = Math.Max(Scale(125), (Height - cardHeight) / 2 + Scale(12));
         card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
         int innerMargin = Scale(30);
@@ -182,6 +210,49 @@ internal sealed class DesktopView : UserControl
         hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
         int buttonWidth = Math.Min(Scale(220), textWidth);
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
+        int pinWidth = Math.Min(Scale(360), textWidth);
+        int pinLeft = (cardWidth - pinWidth) / 2;
+        pinPrompt.SetBounds(innerMargin, Scale(262), textWidth, Scale(30));
+        pinBox.SetBounds(pinLeft, Scale(300), pinWidth, pinBox.PreferredHeight);
+        int half = (pinWidth - Scale(12)) / 2;
+        pinOk.SetBounds(pinLeft, Scale(385), half, Scale(46));
+        pinCancel.SetBounds(pinLeft + half + Scale(12), Scale(385), half, Scale(46));
+    }
+
+    /// <summary>
+    /// Shows the PIN field on the lock card and waits for it; null when cancelled or the card is taken away.
+    /// The typed text is handed over once and the field is cleared.
+    /// </summary>
+    internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent)
+    {
+        pinRequest?.TrySetResult(null);
+        pinRequest = new TaskCompletionSource<string?>();
+        pinCardPresent = cardPresent;
+        pinPrompt.Text = message;
+        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = true;
+        resume.Visible = hint.Visible = false;
+        ArrangeControls();
+        card.Invalidate();
+        pinBox.Clear();
+        pinBox.Focus();
+        pinWatch.Start();
+        return pinRequest.Task;
+    }
+
+    private void FinishPin(bool accepted)
+    {
+        if (pinRequest == null || accepted && pinBox.TextLength == 0) return;
+        var request = pinRequest;
+        var value = accepted ? pinBox.Text : null;
+        pinBox.Clear();
+        pinWatch.Stop();
+        pinRequest = null;
+        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = false;
+        resume.Visible = locked;
+        hint.Visible = true;
+        ArrangeControls();
+        card.Invalidate();
+        request.TrySetResult(value);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -198,7 +269,7 @@ internal sealed class DesktopView : UserControl
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { clockTimer.Dispose(); KioskTheme.Changed -= OnThemeChanged; }
+        if (disposing) { clockTimer.Dispose(); pinWatch.Dispose(); pinRequest?.TrySetResult(null); KioskTheme.Changed -= OnThemeChanged; }
         base.Dispose(disposing);
     }
 
