@@ -686,7 +686,7 @@ internal sealed class KioskForm : Form
         if (!CheckCard()) return;
         var session = current!;
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
-        var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints);
+        var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
         session.Browser = requested;
         AddWindow(session, BrowserKey, "Przeglądarka", requested);
         try

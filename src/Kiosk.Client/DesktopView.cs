@@ -300,7 +300,7 @@ internal sealed class MenuTile : Button
         g.DrawPath(stroke, tile);
         var textColor = Enabled ? KioskTheme.Text : KioskTheme.Muted;
         int left = S(17);
-        int right = S(38);
+        int right = S(17);
         int titleHeight = Math.Max(Font.Height + S(5), S(28));
         int titleTop = category.Length == 0 ? (Height - titleHeight) / 2 : S(17);
         TextRenderer.DrawText(g, Text, Font, new Rectangle(left, titleTop, Math.Max(0, Width - left - right), titleHeight), textColor,
@@ -311,9 +311,6 @@ internal sealed class MenuTile : Button
             TextRenderer.DrawText(g, category, smallFont, new Rectangle(left, S(49), Math.Max(0, Width - left - right), S(22)), KioskTheme.Muted,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         }
-        using var arrow = new Pen(Enabled ? KioskTheme.AccentLine : KioskTheme.Muted, S(2)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        int arrowX = Width - S(23), arrowY = Height / 2;
-        g.DrawLines(arrow, new[] { new Point(arrowX - S(3), arrowY - S(5)), new Point(arrowX + S(2), arrowY), new Point(arrowX - S(3), arrowY + S(5)) });
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(ClientRectangle, -S(6), -S(6)), KioskTheme.AccentLine, BackColor);
     }
 }

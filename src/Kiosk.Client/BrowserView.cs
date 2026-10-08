@@ -26,7 +26,10 @@ internal sealed class BrowserView : UserControl
     private Tab? active;
     private CoreWebView2Environment? environment;
     private string homeUrl = "about:blank";
-    private readonly string userDataFolder = Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N"));
+    private readonly string userDataFolder;
+    /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
+    /// account for SSO and keeps a normal profile in their own AppData instead of a throw-away InPrivate one.</summary>
+    private readonly bool windowsAccount;
 
     private readonly TextBox address = new()
     {
@@ -51,9 +54,13 @@ internal sealed class BrowserView : UserControl
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false)
     {
         this.policy = policy ?? new SitePolicy(false, [], []);
+        this.windowsAccount = windowsAccount;
+        userDataFolder = windowsAccount
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
+            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N"));
         this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
@@ -155,7 +162,9 @@ internal sealed class BrowserView : UserControl
     {
         homeUrl = url;
         // Per-session profile folder, separate from the user's installed browser; tabs share it.
-        environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+        // Single sign-on with the Windows account (Entra ID PRT) only when that account is the person's own.
+        var environmentOptions = new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = windowsAccount };
+        environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
         if (IsDisposed) return;
         await AddTabAsync(url);
         message.Text = "";
@@ -177,7 +186,7 @@ internal sealed class BrowserView : UserControl
 
         var options = environment.CreateCoreWebView2ControllerOptions();
         options.ProfileName = ProfileName;
-        options.IsInPrivateModeEnabled = true;
+        options.IsInPrivateModeEnabled = !windowsAccount;
         await web.EnsureCoreWebView2Async(environment, options);
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
@@ -309,7 +318,7 @@ internal sealed class BrowserView : UserControl
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (!disposing) return;
+        if (!disposing || windowsAccount) return; // A Windows user's own profile stays, like a normal browser.
         // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
         var folder = userDataFolder;
         _ = Task.Run(async () =>
