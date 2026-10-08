@@ -100,13 +100,13 @@ internal sealed class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => timer.Start();
+        Shown += (_, _) => { timer.Start(); StartIdleScreens(); };
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => menu.Dispose();
+        FormClosed += (_, _) => { menu.Dispose(); StopIdleScreens(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -145,6 +145,7 @@ internal sealed class KioskForm : Form
             ExpireSessions();
             MonitorRdp();
             MonitorApplications();
+            UpdateMainIdle();
         }
         catch (Exception ex)
         {
@@ -433,6 +434,50 @@ internal sealed class KioskForm : Form
             key.StartsWith("app:") ? "Zamknąć aplikację? Niezapisane dane mogą zostać utracone." :
             key.StartsWith("rdp:") ? "Rozłączyć ten pulpit zdalny?" : null;
         return question == null || MessageBox.Show(this, question, "Zamknij okno", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+    }
+
+    // ---------------------------------------------------------------- screens while nobody works
+
+    private readonly List<IdleScreen> idleScreens = new();
+    private IdleScreen? mainIdle;
+
+    /// <summary>Every screen with configured content shows it, view only; 1 = the main screen, then Windows' order.</summary>
+    private void StartIdleScreens()
+    {
+        StopIdleScreens();
+        if (ShellMode || config.IdleScreens.Length == 0) return;
+        var ordered = Screen.AllScreens.OrderByDescending(s => s.Primary).ToArray();
+        for (int i = 0; i < ordered.Length; i++)
+        {
+            var content = config.IdleScreens.FirstOrDefault(s => s.Screen == i + 1) ?? config.IdleScreens.FirstOrDefault(s => s.Screen == 0);
+            if (content == null) continue;
+            var window = new IdleScreen(ordered[i], content);
+            if (ordered[i].Primary) { window.Owner = this; mainIdle = window; } // Above the Kiosk on the main screen.
+            else window.TopMost = true;
+            idleScreens.Add(window);
+            if (!ordered[i].Primary || current is not { Locked: false }) window.Show();
+        }
+        Audit.Write("idle_screens", idleScreens.Count.ToString());
+    }
+
+    private void StopIdleScreens()
+    {
+        foreach (var window in idleScreens) window.Dispose();
+        idleScreens.Clear();
+        mainIdle = null;
+    }
+
+    /// <summary>Main screen: input or a card brings up the Kiosk (sign-in); left alone without a card it returns to the content.</summary>
+    private void UpdateMainIdle()
+    {
+        if (mainIdle == null || mainIdle.IsDisposed) return;
+        bool someone = current is { Locked: false } || cardKey != null || verifying || settingsView != null;
+        uint idle = Native.IdleMilliseconds();
+        if (mainIdle.Visible)
+        {
+            if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1)) { mainIdle.Hide(); Activate(); }
+        }
+        else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u) mainIdle.Show();
     }
 
     // ---------------------------------------------------------------- Windows shell mode
@@ -880,6 +925,7 @@ internal sealed class KioskForm : Form
             KioskTheme.SetAccent(updated.AccentColor);
             Invalidate(true);
             Audit.Write("settings_saved");
+            StartIdleScreens();
             CloseWindow(SettingsKey, "settings_closed", session);
         };
         AddWindow(session, SettingsKey, "Konfiguracja", view);

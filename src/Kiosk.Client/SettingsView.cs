@@ -35,6 +35,8 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView apps = Grid();
     private readonly DataGridView bookmarks = Grid();
     private readonly DataGridView adminCards = Grid();
+    private readonly DataGridView idleScreens = Grid();
+    private readonly NumericUpDown idleAfter = new() { Minimum = 5, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
     private readonly Label error = new() { Dock = DockStyle.Bottom, Height = 40, ForeColor = Color.Firebrick, Padding = new Padding(16, 8, 16, 0) };
@@ -177,6 +179,24 @@ internal sealed class SettingsView : UserControl
         };
         applications.Controls.Add(addNotes);
 
+        var screens = new TabPage("Ekrany") { Padding = new Padding(12) };
+        tabs.TabPages.Insert(tabs.TabPages.IndexOf(admins), screens);
+        idleScreens.Columns.Add("Screen", "Ekran (0 = wszystkie, 1 = główny)");
+        idleScreens.Columns.Add("Url", "Strona WWW");
+        idleScreens.Columns.Add("Path", "albo aplikacja (pełna ścieżka do EXE)");
+        idleScreens.Columns.Add("Arguments", "Argumenty");
+        idleScreens.Columns["Screen"]!.FillWeight = 45;
+        foreach (var s in config.IdleScreens) idleScreens.Rows.Add(s.Screen.ToString(), s.Url, s.Path, s.Arguments);
+        idleScreens.DefaultValuesNeeded += (_, e) => e.Row.Cells["Screen"].Value = "0";
+        SetupGridTab(screens, idleScreens,
+            "Gdy nikt nie pracuje, ekrany pokazują tę treść tylko do oglądania (bez klawiatury i myszy). Na głównym ekranie ruch myszy, " +
+            "klawisz albo karta pokazuje logowanie. Ekrany: " + string.Join(", ", Screen.AllScreens.Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
+        var idleRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 8) };
+        idleRow.Controls.Add(new Label { Text = "Powrót głównego ekranu do treści po (s bez ruchu, bez karty)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
+        idleRow.Controls.Add(idleAfter);
+        idleAfter.Value = Math.Clamp(config.IdleAfterSeconds, (int)idleAfter.Minimum, (int)idleAfter.Maximum);
+        screens.Controls.Add(idleRow);
+
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
         var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };
         var cancel = new Button { Text = "Anuluj", Size = new Size(120, 38) };
@@ -293,7 +313,7 @@ internal sealed class SettingsView : UserControl
     /// <summary>Builds and validates the edited configuration without saving it.</summary>
     internal Config BuildConfig()
     {
-        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit();
+        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit();
         var selected = autoConnect.SelectedItem as string;
         var result = original with
         {
@@ -319,7 +339,13 @@ internal sealed class SettingsView : UserControl
             {
                 Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), WorkingDirectory = PathCell(r, "WorkingDirectory")
             }).ToArray(),
-            Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url") }).ToArray()
+            Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url") }).ToArray(),
+            IdleAfterSeconds = (int)idleAfter.Value,
+            IdleScreens = idleScreens.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Url").Length > 0 || Cell(r, "Path").Length > 0)).Select(r => new ScreenContent
+            {
+                Screen = int.TryParse(Cell(r, "Screen"), out var screen) ? screen : throw new InvalidDataException("Numer ekranu musi być liczbą (0 = wszystkie)."),
+                Url = Cell(r, "Url"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments")
+            }).ToArray()
         };
         result.Validate();
         return result;
