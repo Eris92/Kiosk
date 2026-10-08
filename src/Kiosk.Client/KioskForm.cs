@@ -269,44 +269,73 @@ internal sealed class KioskForm : Form
             catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
             if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             Audit.Write("signed_in_as_user", session.Logon.DisplayName);
-            if (CardVault.Available)
+            // Remember the account for this card: next time the card and its PIN are enough.
+            var logon = session.Logon;
+            var id = session.Identity.Id;
+            var readerName = reader.ActiveReader;
+            verifying = true;
+            try
             {
-                // Remember the account for this card: next time the card and its PIN are enough.
-                var logon = session.Logon;
-                var id = session.Identity.Id;
-                var owner = Handle;
-                verifying = true;
-                try
+                string message = "Wpisz PIN karty, aby ją zapamiętać. Następnym razem wystarczy sam PIN.";
+                while (PinDialog.Ask(this, message) is { } pin)
                 {
-                    var saved = await Task.Run(() => CardVault.Enroll(id, logon, owner));
-                    session.Notice = saved.Code == CardPin.Verified ? null : "Karta nie została zapamiętana: " + saved.Message;
+                    var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
                     Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code.ToString());
+                    if (saved.Code == CardPin.WrongPin) { message = saved.Message + " Spróbuj ponownie."; continue; }
+                    session.Notice = saved.Code == CardPin.Verified ? null : "Karta nie została zapamiętana: " + saved.Message;
+                    break;
                 }
-                catch (Exception ex) { session.Notice = "Karta nie została zapamiętana: " + ex.Message; Audit.Write("card_enroll_failed", ex.Message); }
-                finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
             }
+            catch (Exception ex) { session.Notice = "Karta nie została zapamiętana: " + ex.Message; Audit.Write("card_enroll_failed", ex.Message); }
+            finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
         }
         Unlock(session);
     }
 
+    private async Task<CardPin.Result> VerifyFidoPinAsync()
+    {
+        var readerName = reader.ActiveReader;
+        string message = "Wpisz PIN karty.";
+        while (PinDialog.Ask(this, message) is { } pin)
+        {
+            try
+            {
+                await Task.Run(() => { using var card = new CtapCard(readerName); card.UsePin(pin); });
+                return new(CardPin.Verified, "PIN karty potwierdzony.");
+            }
+            catch (CtapException ex) when (ex.Code == 0x31) { message = ex.Message + " Spróbuj ponownie."; }
+            catch (CtapException ex) { return new(CardPin.Failed, ex.Message); }
+        }
+        return new(CardPin.Cancelled, "Anulowano wpisywanie PIN-u.");
+    }
+
     private async Task<bool> VerifyPersonAsync(UserSession session)
     {
-        if (config.SignInAsUser && session.Logon == null && CardVault.Available)
+        if (config.SignInAsUser && session.Logon == null)
         {
-            // A remembered card: one Windows dialog (card PIN) unlocks the account stored for it.
+            // A remembered card: only its PIN, typed in Kiosk, opens the account stored for it.
             if (!CardVault.IsEnrolled(session.Identity.Id)) return true; // First use: Zaloguj asks, enrolling checks the PIN.
             var id = session.Identity.Id;
-            var owner = Handle;
-            var opened = await Task.Run(() => CardVault.Open(id, owner));
-            if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
-            if (opened.Code != CardPin.Verified) { session.Notice = opened.Message; Audit.Write("card_vault_failed", opened.Code.ToString()); return false; }
-            // The PIN was right but the password changed: ask once and store the new one.
-            var logon = UserLogon.Prompt(Handle, opened.Message);
-            if (logon == null) { session.Notice = "Logowanie anulowane."; return false; }
-            session.Logon = logon;
-            var saved = await Task.Run(() => CardVault.Update(id, logon, owner));
-            if (saved.Code != CardPin.Verified) session.Notice = "Nowe hasło nie zostało zapamiętane: " + saved.Message;
-            return true;
+            var readerName = reader.ActiveReader;
+            string message = "Wpisz PIN karty, aby się zalogować.";
+            while (true)
+            {
+                var pin = PinDialog.Ask(this, message);
+                if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
+                var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
+                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
+                Audit.Write("card_vault_failed", opened.Code.ToString());
+                if (opened.Code == CardPin.WrongPin) { message = opened.Message + " Spróbuj ponownie."; continue; }
+                if (opened.Code == CardPin.NoKey) { session.Notice = opened.Message; return true; } // Set the card up again below.
+                if (opened.Code != CardPin.Verified) { session.Notice = opened.Message; return false; }
+                // The PIN was right but the password changed: ask once and store the new one.
+                var logon = UserLogon.Prompt(Handle, opened.Message);
+                if (logon == null) { session.Notice = "Logowanie anulowane."; return false; }
+                session.Logon = logon;
+                var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
+                if (saved.Code != CardPin.Verified) session.Notice = "Nowe hasło nie zostało zapamiętane: " + saved.Message;
+                return true;
+            }
         }
         switch (config.UnlockMethod)
         {
@@ -333,12 +362,8 @@ internal sealed class KioskForm : Form
                 try
                 {
                     var result = await CardPin.VerifyAsync(reader.ActiveReader, Handle, cancel.Token);
-                    // A FIDO2 card has no certificate key: Windows' security key dialog checks its PIN instead.
-                    if (result.Code == CardPin.NoKey && FidoPin.Available)
-                    {
-                        var owner = Handle;
-                        result = await Task.Run(() => FidoPin.Verify(owner), cancel.Token);
-                    }
+                    // A FIDO2 card has no certificate key: Kiosk asks for its PIN and the card checks it (CTAP2).
+                    if (result.Code == CardPin.NoKey) result = await VerifyFidoPinAsync();
                     if (result.Code == CardPin.Verified) return true;
                     session.Notice = result.Message.Length > 0 ? result.Message : "Nie potwierdzono PIN-u karty.";
                     Audit.Write("unlock_pin_failed", result.Code.ToString());
