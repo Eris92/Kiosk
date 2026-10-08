@@ -345,6 +345,10 @@ internal sealed class MenuTile : Button
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
     }
 
+    /// <summary>Icon on the left of the tile: the program's own icon, or a glyph of the Windows icon font.</summary>
+    internal Image? IconImage { get; init; }
+    internal string? Glyph { get; init; }
+
     internal string Category
     {
         get => category;
@@ -371,6 +375,12 @@ internal sealed class MenuTile : Button
         g.DrawPath(stroke, tile);
         var textColor = Enabled ? KioskTheme.Text : KioskTheme.Muted;
         int left = S(17);
+        if (IconImage != null || Glyph != null)
+        {
+            int icon = S(30);
+            KioskIcons.Draw(g, new Rectangle(left, (Height - icon) / 2, icon, icon), Glyph, IconImage, Enabled ? KioskTheme.AccentLine : KioskTheme.Muted);
+            left += icon + S(14);
+        }
         int right = S(17);
         int titleHeight = Math.Max(Font.Height + S(5), S(28));
         int titleTop = category.Length == 0 ? (Height - titleHeight) / 2 : S(17);

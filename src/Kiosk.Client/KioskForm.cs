@@ -486,6 +486,14 @@ internal sealed class KioskForm : Form
         if (!CanUseApps || current!.Windows.FirstOrDefault(w => w.Key == key) is not { } window) return;
         var screens = OrderedScreens;
         var menuStrip = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
+        var closeItem = new ToolStripMenuItem("Zamknij okno");
+        closeItem.Click += (_, _) => { if (ConfirmClose(key)) CloseWindow(key, "window_closed"); };
+        if (screens.Length > 1)
+        {
+            var numbers = new ToolStripMenuItem("Pokaż numery ekranów");
+            numbers.Click += (_, _) => ShowScreenNumbers();
+            menuStrip.Items.Add(numbers);
+        }
         if (key.StartsWith("app:") || key == BrowserKey || key.StartsWith("browser:"))
         {
             var another = new ToolStripMenuItem("Otwórz kolejne okno");
@@ -503,6 +511,8 @@ internal sealed class KioskForm : Form
             menuStrip.Items.Add(item);
         }
         if (screens.Length < 2) menuStrip.Items.Add(new ToolStripMenuItem("Podłączony jest jeden ekran") { Enabled = false });
+        menuStrip.Items.Add(new ToolStripSeparator());
+        menuStrip.Items.Add(closeItem);
         menuStrip.Closed += (_, _) => BeginInvoke(menuStrip.Dispose);
         menuStrip.Show(button, point);
     }
@@ -573,7 +583,23 @@ internal sealed class KioskForm : Form
             if (!ordered[i].Primary || current is not { Locked: false }) window.Show();
         }
         Audit.Write("idle_screens", idleScreens.Count.ToString());
+        ScheduleScreenRefresh();
     }
+
+    private readonly System.Windows.Forms.Timer screenRefresh = new();
+
+    /// <summary>Timed refresh of the screens' pages (Konfiguracja → Ekrany).</summary>
+    private void ScheduleScreenRefresh()
+    {
+        screenRefresh.Stop();
+        screenRefresh.Tick -= ReloadScreens;
+        if (config.ScreenRefreshSeconds <= 0 || idleScreens.Count == 0) return;
+        screenRefresh.Interval = config.ScreenRefreshSeconds * 1000;
+        screenRefresh.Tick += ReloadScreens;
+        screenRefresh.Start();
+    }
+
+    private void ReloadScreens(object? sender, EventArgs e) { foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Reload(); }
 
     private void StopIdleScreens()
     {
@@ -725,7 +751,7 @@ internal sealed class KioskForm : Form
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
         taskbar.LogoutButton.Enabled = current != null;
-        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => (w.Key, w.Title, w.View == visibleView)).ToArray() : []);
+        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(current, w); return (w.Key, w.Title, w.View == visibleView, glyph, icon); }).ToArray() : []);
         taskbar.Status.Text = current == null ? (requireRemoval ? "Wyjmij kartę" : "Brak karty") + (others > 0 ? " · zachowane sesje: " + others : "") :
             (current.Locked ? "🔒 " : "● ") + current.Name + (others > 0 ? " · inne sesje: " + others : "");
         taskbar.Status.ForeColor = CanUseApps ? Color.FromArgb(110, 214, 150) : KioskTheme.Muted;
@@ -774,24 +800,124 @@ internal sealed class KioskForm : Form
         var s = current;
         var remote = config.RdpConnections.Select(c => new MenuItemSpec(c.Name,
             (s?.Rdp.ContainsKey(c.Name) == true ? "Otwarte · " : "") + c.Server + " · " + AuthenticationLabel(c.Authentication),
-            () => OpenRdp(c), can)).ToList();
+            () => OpenRdp(c), can, KioskIcons.Remote)).ToList();
         if (remote.Count == 0) remote.Add(new MenuItemSpec("Brak połączeń", "Dodaj je w Konfiguracji", () => { }, false));
         var apps = new List<MenuItemSpec>();
-        if (config.EnableBrowser) apps.Add(new("Przeglądarka", s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can));
+        if (config.EnableBrowser) apps.Add(new("Przeglądarka", s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can,
+            KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null));
         // The built-in Notatnik is an ordinary entry of the application list, so it can be removed there.
         apps.AddRange(config.Applications.Select(a => a.IsBuiltInNotes
-            ? new MenuItemSpec(a.Name, s?.Notes != null ? "Otwarty" : "Notatki tekstowe", OpenNotes, can)
-            : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can)));
+            ? new MenuItemSpec(a.Name, s?.Notes != null ? "Otwarty" : "Notatki tekstowe", OpenNotes, can, KioskIcons.Notes)
+            : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can,
+                KioskIcons.App, KioskIcons.ForProgram(a.Path))));
         if (apps.Count == 0) apps.Add(new MenuItemSpec("Brak aplikacji", "Dodaj je w Konfiguracji", () => { }, false));
-        var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop)) };
+        var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
+        if (config.IdleScreens.Length > 0)
+            system.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
         if (configPath != null && s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can));
+            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
         if (can)
         {
-            system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0)));
-            system.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }));
+            system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
+            system.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
         }
-        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("System", system)];
+        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
+            KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
+        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems), new("System", system)];
+    }
+
+    /// <summary>Taskbar icon of a window: the program's own icon, or the icon of the Kiosk function.</summary>
+    private static (string? Glyph, Image? Icon) IconFor(UserSession session, Window w)
+    {
+        if (w.Key.StartsWith("rdp:")) return (KioskIcons.Remote, null);
+        if (w.Key == BrowserKey || w.Key.StartsWith("browser:") || w.Key.StartsWith("web:")) return (KioskIcons.Browser, null);
+        if (w.Key == NotesKey) return (KioskIcons.Notes, null);
+        if (w.Key == SettingsKey) return (KioskIcons.Settings, null);
+        if (w.View is ApplicationView app && app.ProgramPath.Length > 0) return (KioskIcons.App, KioskIcons.ForProgram(app.ProgramPath));
+        return (KioskIcons.App, null);
+    }
+
+    /// <summary>Menu → Polecenia: runs a program or script in the background and shows how it ended.</summary>
+    private void RunCommand(CommandEntry command)
+    {
+        if (current is not { } session) return;
+        if (command.Confirm && MessageBox.Show(this, "Uruchomić polecenie „" + command.Name + "”?", "Polecenie", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        var ext = Path.GetExtension(command.Path).ToLowerInvariant();
+        var system = Environment.SystemDirectory;
+        var (program, arguments) = ext switch
+        {
+            ".ps1" => (Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe"), "-NoProfile -NonInteractive -WindowStyle Hidden -File \"" + command.Path + "\" " + command.Arguments),
+            ".cmd" or ".bat" => (Path.Combine(system, "cmd.exe"), "/c \"\"" + command.Path + "\" " + command.Arguments + "\""),
+            _ => (command.Path, command.Arguments)
+        };
+        var line = "\"" + program + "\" " + arguments;
+        var directory = Path.GetDirectoryName(command.Path);
+        Audit.Write("command_started", command.Name);
+        notice = "Polecenie „" + command.Name + "” działa…";
+        RefreshChrome();
+        _ = Task.Run(() =>
+        {
+            int code;
+            if (command.AsUser && session.Logon != null)
+            {
+                var (process, thread) = session.Logon.Start(program, line, directory, show: 0); // SW_HIDE
+                AppNative.ResumeThread(thread);
+                AppNative.CloseHandle(thread);
+                WaitForSingleObject(process, uint.MaxValue);
+                GetExitCodeProcess(process, out var exit);
+                AppNative.CloseHandle(process);
+                code = (int)exit;
+            }
+            else
+            {
+                var start = new System.Diagnostics.ProcessStartInfo(program, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = directory ?? "" };
+                using var process = System.Diagnostics.Process.Start(start)!;
+                process.WaitForExit();
+                code = process.ExitCode;
+            }
+            return code;
+        }).ContinueWith(t =>
+        {
+            var text = t.IsFaulted ? "nie udało się uruchomić: " + t.Exception!.InnerException!.Message : t.Result == 0 ? "zakończone." : "zakończone z kodem " + t.Result + ".";
+            notice = "Polecenie „" + command.Name + "” " + text;
+            Audit.Write("command_finished", command.Name + ": " + (t.IsFaulted ? "error" : t.Result.ToString()));
+            RefreshChrome();
+        }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+
+    /// <summary>Menu → Odśwież ekrany: the screens' content starts again (pages reload, programs restart).</summary>
+    private void RefreshScreens()
+    {
+        Audit.Write("screens_refreshed");
+        StartIdleScreens();
+        RefreshHosts();
+    }
+
+    /// <summary>A big number on every screen for a few seconds (the numbers used in Konfiguracja and "Pokaż na ekranie").</summary>
+    private void ShowScreenNumbers()
+    {
+        var screens = OrderedScreens;
+        for (int i = 0; i < screens.Length; i++)
+        {
+            var b = screens[i].Bounds;
+            var label = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, ShowInTaskbar = false, TopMost = true,
+                BackColor = KioskTheme.Accent, Bounds = new Rectangle(b.Left + b.Width / 2 - 110, b.Top + b.Height / 2 - 110, 220, 220)
+            };
+            label.Controls.Add(new Label
+            {
+                Text = (i + 1).ToString(), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 72, FontStyle.Bold), ForeColor = KioskTheme.OnAccent
+            });
+            var close = new System.Windows.Forms.Timer { Interval = 3000 };
+            close.Tick += (_, _) => { close.Dispose(); label.Close(); label.Dispose(); };
+            label.Show();
+            close.Start();
+        }
     }
 
     private void ShowView(Control view)
@@ -1105,6 +1231,7 @@ internal sealed class KioskForm : Form
         if (configPath == null || !CanUseApps || !IsAdmin(current!)) return;
         var session = current!;
         var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
+        view.IdentifyScreensRequested += ShowScreenNumbers;
         settingsView = view;
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>

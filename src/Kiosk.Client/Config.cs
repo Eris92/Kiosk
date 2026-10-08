@@ -31,6 +31,18 @@ internal sealed record ScreenContent
     public string Arguments { get; init; } = "";
 }
 
+/// <summary>A command in Menu → Polecenia: a program or script run in the background (copy files, sync, restart…).</summary>
+internal sealed record CommandEntry
+{
+    public string Name { get; init; } = "";
+    /// <summary>EXE, .cmd/.bat or .ps1.</summary>
+    public string Path { get; init; } = "";
+    public string Arguments { get; init; } = "";
+    /// <summary>Run as the signed-in person (after "Zaloguj"); otherwise as the Kiosk account.</summary>
+    public bool AsUser { get; init; } = true;
+    public bool Confirm { get; init; }
+}
+
 internal sealed record AdminCard
 {
     public string Name { get; init; } = "";
@@ -52,6 +64,9 @@ internal sealed record Config
     public ScreenContent[] IdleScreens { get; init; } = [];
     /// <summary>Without a card, the main screen returns to its idle content after this many seconds without input.</summary>
     public int IdleAfterSeconds { get; init; } = 5;
+    /// <summary>Screens' web pages are reloaded every this many seconds (0 = never).</summary>
+    public int ScreenRefreshSeconds { get; init; }
+    public CommandEntry[] Commands { get; init; } = [];
     public int LockAfterSeconds { get; init; } = 300;
     public int ChangeUserAfterSeconds { get; init; } = 600;
     public UnlockMethod UnlockMethod { get; init; } = UnlockMethod.Card;
@@ -116,6 +131,9 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy połączeń RDP muszą być unikalne.");
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
+        if (ScreenRefreshSeconds is < 0 or > 86400) throw new InvalidDataException("Odświeżanie ekranów: 0–86400 s.");
+        foreach (var c in Commands ?? [])
+            if (c.Name.Length == 0 || c.Path.Length == 0) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");
         if (IdleAfterSeconds is < 3 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 3–86400 s.");
         foreach (var s in IdleScreens ?? [])
         {

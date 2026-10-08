@@ -36,6 +36,11 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView bookmarks = Grid();
     private readonly DataGridView adminCards = Grid();
     private readonly DataGridView idleScreens = Grid();
+    private readonly DataGridView commands = Grid();
+    private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
+    private bool scaled;
+    /// <summary>Shows each screen's number on the screen itself.</summary>
+    internal event Action? IdentifyScreensRequested;
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
@@ -195,7 +200,26 @@ internal sealed class SettingsView : UserControl
         idleRow.Controls.Add(new Label { Text = "Ekran blokady na głównym ekranie po (s bez ruchu, gdy sesja zablokowana lub nikt nie jest zalogowany)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
         idleRow.Controls.Add(idleAfter);
         idleAfter.Value = Math.Clamp(config.IdleAfterSeconds, (int)idleAfter.Minimum, (int)idleAfter.Maximum);
+        idleRow.Controls.Add(new Label { Text = "Odświeżaj strony ekranów co (s, 0 = nie)", AutoSize = true, Padding = new Padding(24, 8, 8, 4) });
+        idleRow.Controls.Add(screenRefresh);
+        screenRefresh.Value = Math.Clamp(config.ScreenRefreshSeconds, 0, 86400);
+        var identify = new Button { Text = "Pokaż numery ekranów", AutoSize = true, Margin = new Padding(24, 2, 4, 2) };
+        identify.Click += (_, _) => IdentifyScreensRequested?.Invoke();
+        idleRow.Controls.Add(identify);
         screens.Controls.Add(idleRow);
+        screens.Controls.Add(new ScreenMap { Dock = DockStyle.Top, Height = 150 });
+
+        var commandsTab = new TabPage("Polecenia") { Padding = new Padding(12) };
+        tabs.TabPages.Insert(tabs.TabPages.IndexOf(admins), commandsTab);
+        commands.Columns.Add("Name", "Nazwa w menu");
+        commands.Columns.Add("Path", "Program lub skrypt (.exe, .cmd, .bat, .ps1)");
+        commands.Columns.Add("Arguments", "Argumenty");
+        commands.Columns.Add(new DataGridViewCheckBoxColumn { Name = "AsUser", HeaderText = "Jako zalogowana osoba", FillWeight = 45 });
+        commands.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Confirm", HeaderText = "Pytaj przed", FillWeight = 35 });
+        foreach (var c in config.Commands) commands.Rows.Add(c.Name, c.Path, c.Arguments, c.AsUser, c.Confirm);
+        commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
+        SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
+            "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
         var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };
@@ -243,6 +267,27 @@ internal sealed class SettingsView : UserControl
         };
     }
     private static string AuthLabel(RdpAuthentication value) => AuthenticationOptions.First(o => o.Value == value).Label;
+
+    /// <summary>
+    /// The layout is written for 100 % (96 DPI). On a screen with another scale everything is enlarged once, so
+    /// columns, rows and grids fit the bigger text (fonts are in points and follow the scale by themselves).
+    /// </summary>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (scaled) return;
+        scaled = true;
+        float factor = DeviceDpi / 96f;
+        if (Math.Abs(factor - 1) < 0.01) return;
+        Scale(new SizeF(factor, factor));
+        foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands })
+        {
+            grid.ColumnHeadersHeight = (int)(34 * factor);
+            grid.RowTemplate.Height = (int)(30 * factor);
+            grid.RowHeadersWidth = (int)(28 * factor);
+            foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
+        }
+    }
 
     private static DataGridView Grid() => new()
     {
@@ -313,7 +358,7 @@ internal sealed class SettingsView : UserControl
     /// <summary>Builds and validates the edited configuration without saving it.</summary>
     internal Config BuildConfig()
     {
-        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit();
+        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit(); commands.EndEdit();
         var selected = autoConnect.SelectedItem as string;
         var result = original with
         {
@@ -341,6 +386,12 @@ internal sealed class SettingsView : UserControl
             }).ToArray(),
             Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url") }).ToArray(),
             IdleAfterSeconds = (int)idleAfter.Value,
+            ScreenRefreshSeconds = (int)screenRefresh.Value,
+            Commands = commands.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Cell(r, "Name").Length > 0).Select(r => new CommandEntry
+            {
+                Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"),
+                AsUser = r.Cells["AsUser"].Value is true, Confirm = r.Cells["Confirm"].Value is true
+            }).ToArray(),
             IdleScreens = idleScreens.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Url").Length > 0 || Cell(r, "Path").Length > 0)).Select(r => new ScreenContent
             {
                 Screen = int.TryParse(Cell(r, "Screen"), out var screen) ? screen : throw new InvalidDataException("Numer ekranu musi być liczbą (0 = wszystkie)."),
@@ -368,5 +419,38 @@ internal sealed class SettingsView : UserControl
             SaveRequested?.Invoke(result);
         }
         catch (Exception ex) { error.Text = ex.Message; }
+    }
+}
+
+/// <summary>A small map of the screens as Windows arranges them, with the numbers used in Kiosk (1 = main).</summary>
+internal sealed class ScreenMap : Control
+{
+    internal ScreenMap() { DoubleBuffered = true; SetStyle(ControlStyles.ResizeRedraw, true); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var screens = Screen.AllScreens.OrderByDescending(s => s.Primary).ToArray();
+        if (screens.Length == 0 || Width < 20 || Height < 20) return;
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var all = screens.Select(s => s.Bounds).Aggregate(Rectangle.Union);
+        float scale = Math.Min((Width - 20f) / all.Width, (Height - 20f) / all.Height);
+        float offsetX = (Width - all.Width * scale) / 2, offsetY = (Height - all.Height * scale) / 2;
+        using var font = new Font("Segoe UI", 14, FontStyle.Bold);
+        using var small = new Font("Segoe UI", 8);
+        for (int i = 0; i < screens.Length; i++)
+        {
+            var b = screens[i].Bounds;
+            var r = new RectangleF(offsetX + (b.X - all.X) * scale, offsetY + (b.Y - all.Y) * scale, b.Width * scale - 4, b.Height * scale - 4);
+            using var fill = new SolidBrush(i == 0 ? Color.FromArgb(214, 236, 255) : Color.FromArgb(232, 237, 244));
+            g.FillRectangle(fill, r);
+            g.DrawRectangle(Pens.SteelBlue, r.X, r.Y, r.Width, r.Height);
+            var text = (i + 1).ToString();
+            var size = g.MeasureString(text, font);
+            g.DrawString(text, font, Brushes.Black, r.X + (r.Width - size.Width) / 2, r.Y + (r.Height - size.Height) / 2 - 6);
+            var label = b.Width + "×" + b.Height + (i == 0 ? " (główny)" : "");
+            var labelSize = g.MeasureString(label, small);
+            g.DrawString(label, small, Brushes.DimGray, r.X + (r.Width - labelSize.Width) / 2, r.Bottom - labelSize.Height - 2);
+        }
     }
 }
