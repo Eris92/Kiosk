@@ -77,6 +77,8 @@ internal static class CardService
                 case "enroll":
                 {
                     var id = card.MakeCredential(RelyingParty);
+                    // CTAP 2.1 cards drop the token's permissions after makeCredential: get a fresh one for the assertion.
+                    card.UsePin(request.Pin);
                     var secret = card.HmacSecret(RelyingParty, id, Convert.FromBase64String(request.Salt!));
                     return new Response { CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) };
                 }
