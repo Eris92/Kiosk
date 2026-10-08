@@ -26,10 +26,23 @@ internal sealed class CtapCard : IDisposable
     internal CtapCard(string reader)
     {
         Check(SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context), "Brak usługi kart");
-        Check(SCardConnect(context, reader, 2, 3, out card, out protocol), "Brak karty w czytniku");
-        // SELECT the FIDO applet.
-        var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
-        if (!answer.Ok) throw new CtapException(-1, "Karta nie ma aplikacji FIDO2.");
+        // Right after another program (or a card reset) used the card it can refuse briefly: reconnect and retry.
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Check(SCardConnect(context, reader, 2, 3, out card, out protocol), "Brak karty w czytniku");
+                // SELECT the FIDO applet.
+                var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
+                if (!answer.Ok) throw new CtapException(-2, "Karta nie ma aplikacji FIDO2.");
+                return;
+            }
+            catch (CtapException ex) when (ex.Code == -1 && attempt < 4)
+            {
+                if (card != IntPtr.Zero) { SCardDisconnect(card, 1); card = IntPtr.Zero; } // SCARD_RESET_CARD
+                Thread.Sleep(300);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ PIN
