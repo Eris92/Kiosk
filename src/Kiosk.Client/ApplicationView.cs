@@ -16,6 +16,7 @@ internal sealed class ApplicationView : Panel
     private SafeFileHandle? job;
     private readonly HashSet<IntPtr> placedDialogs = new();
     private DateTime windowLostAt = DateTime.MaxValue;
+    private uint inputThread;
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
@@ -77,6 +78,14 @@ internal sealed class ApplicationView : Panel
         if (AppNative.GetParent(window) != Handle) throw new Win32Exception("Aplikacja nie pozwala osadzić swojego okna w Kiosku.");
         HostedWindow = window;
         Started = true;
+        // A child window of another process gets the keyboard only when both threads share input state
+        // (otherwise clicks work but typing goes nowhere, e.g. Edge started as another user).
+        uint thread = AppNative.GetWindowThreadProcessId(window, out _);
+        if (thread != inputThread)
+        {
+            if (inputThread != 0) AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false);
+            inputThread = AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), thread, true) ? thread : 0;
+        }
         windowLostAt = DateTime.MaxValue;
         AppNative.ShowWindow(window, 9); // SW_RESTORE: leave the minimised start state.
         AppNative.ShowWindow(window, 5); // SW_SHOW
@@ -164,6 +173,8 @@ internal sealed class ApplicationView : Panel
     }
 
     protected override void OnResize(EventArgs e) { base.OnResize(e); ResizeChild(); }
+    /// <summary>The Kiosk focusing this view (taskbar, Menu) puts the keyboard into the hosted program.</summary>
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); if (HostedWindow != IntPtr.Zero) AppNative.SetFocus(HostedWindow); }
     private void ResizeChild()
     {
         if (HostedWindow != IntPtr.Zero) AppNative.MoveWindow(HostedWindow, 0, 0, ClientSize.Width, ClientSize.Height, true);
@@ -174,6 +185,7 @@ internal sealed class ApplicationView : Panel
         if (disposing)
         {
             // Terminate only this launch and its descendants, never a pre-existing instance.
+            if (inputThread != 0) { AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false); inputThread = 0; }
             job?.Dispose(); job = null; HostedWindow = IntPtr.Zero;
         }
         base.Dispose(disposing);
@@ -183,6 +195,9 @@ internal sealed class ApplicationView : Panel
 
 internal static class AppNative
 {
+    [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
+    [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] internal static extern IntPtr SetFocus(IntPtr window);
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] internal static extern bool GetClientRect(IntPtr window, out Rect rect);
     [StructLayout(LayoutKind.Sequential)] internal struct BasicLimits

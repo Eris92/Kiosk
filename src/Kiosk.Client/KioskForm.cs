@@ -46,6 +46,8 @@ internal sealed class KioskForm : Form
         internal string Name => Logon?.DisplayName ?? Identity.Name;
         /// <summary>Which screen each window goes on (window key → 1 = main, 2… = others); remembered per card.</summary>
         internal Dictionary<string, int>? Layout { get; set; }
+        /// <summary>The screens' content was opened as this person (editable) after their first unlock.</summary>
+        internal bool ScreensOpened { get; set; }
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
@@ -230,6 +232,7 @@ internal sealed class KioskForm : Form
 
     private void Unlock(UserSession session)
     {
+        if (!session.ScreensOpened && !ShellMode && config.IdleScreens.Length > 0) { session.ScreensOpened = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
         session.Locked = false;
         session.Verified = true;
         session.Notice = null;
@@ -527,7 +530,7 @@ internal sealed class KioskForm : Form
         {
             var content = config.IdleScreens.FirstOrDefault(s => s.Screen == i + 1) ?? config.IdleScreens.FirstOrDefault(s => s.Screen == 0);
             if (content == null) continue;
-            var window = new IdleScreen(ordered[i], content);
+            var window = new IdleScreen(ordered[i], content, i + 1);
             if (ordered[i].Primary) { window.Owner = this; mainIdle = window; } // Above the Kiosk on the main screen.
             else window.TopMost = true;
             idleScreens.Add(window);
@@ -545,9 +548,65 @@ internal sealed class KioskForm : Form
         mainIdle = null;
     }
 
+    /// <summary>
+    /// After sign-in each screen's content opens again as the signed-in person: the same page or program, but
+    /// editable and under their account (so its own logs show who changed what). Locking brings back the
+    /// read-only content; the person's windows wait on their screens.
+    /// </summary>
+    private async Task OpenScreenContentsAsync(UserSession session)
+    {
+        var screens = OrderedScreens;
+        for (int n = 1; n <= screens.Length; n++)
+        {
+            var content = config.IdleScreens.FirstOrDefault(s => s.Screen == n) ?? config.IdleScreens.FirstOrDefault(s => s.Screen == 0);
+            if (content == null || current != session || session.Locked) continue;
+            var title = "Ekran " + n;
+            try
+            {
+                if (content.Url.Length > 0 && session.Logon == null)
+                {
+                    // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
+                    var key = "web:" + n;
+                    var view = new BrowserView([], null, session.Identity.Thumbprints);
+                    AddWindow(session, key, title, view);
+                    if (n > 1) PlaceWindow(session, key, n, remember: false);
+                    await view.InitializeAsync(content.Url);
+                }
+                else
+                {
+                    var entry = content.Url.Length > 0 ? EdgeForScreen(session.Logon!, n, content.Url)
+                        : new ApplicationEntry { Name = title, Path = content.Path, Arguments = content.Arguments };
+                    session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
+                    if (n > 1) session.Layout["app:" + title] = n; // Opens on its own screen.
+                    await StartApplicationAsync(session, entry);
+                }
+                Audit.Write("screen_opened_as_user", title);
+            }
+            catch (Exception ex) { Audit.Write("screen_open_error", title + ": " + ex.Message); }
+        }
+        // The main screen's content (if any) is what the person sees first.
+        if (current == session && !session.Locked && session.Windows.FirstOrDefault(w => w.Title == "Ekran 1") is { } main && HostOf(main.View) == null) ShowView(main.View);
+    }
+
+    /// <summary>The person's own Edge for a screen: a separate browser folder per screen in their profile, so it is
+    /// its own window (Edge would otherwise hand the page to an Edge already open) and keeps their sign-ins.</summary>
+    private static ApplicationEntry EdgeForScreen(UserLogon logon, int n, string url)
+    {
+        var profile = logon.ProfileDirectory ?? throw new InvalidOperationException("Profil Windows tej osoby jeszcze nie istnieje.");
+        var folder = Path.Combine(profile, "AppData", "Local", "Kiosk", "Edge", "Ekran" + n);
+        return new ApplicationEntry
+        {
+            Name = "Ekran " + n,
+            Path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe"),
+            Arguments = "--user-data-dir=\"" + folder + "\" --no-first-run --new-window " + url
+        };
+    }
+
     /// <summary>Main screen: input or a card brings up the Kiosk (sign-in); left alone without a card it returns to the content.</summary>
     private void UpdateMainIdle()
     {
+        // While Konfiguracja is open the screens accept input, so an administrator can sign their pages in (read-only account).
+        foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         bool someone = current is { Locked: false } || cardKey != null || verifying || settingsView != null;
         uint idle = Native.IdleMilliseconds();

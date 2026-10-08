@@ -17,11 +17,20 @@ internal sealed class IdleScreen : Form
     private bool starting;
 
     internal Screen Target { get; }
+    private readonly int number;
+
+    /// <summary>Normally view only; true while Konfiguracja is open, so the page can be signed in (read-only account).</summary>
+    internal bool Interactive
+    {
+        get => Enabled;
+        set { if (Enabled != value) Enabled = value; }
+    }
     internal DateTime ShownAt { get; private set; }
 
-    internal IdleScreen(Screen screen, ScreenContent content)
+    internal IdleScreen(Screen screen, ScreenContent content, int number)
     {
         Target = screen;
+        this.number = number;
         this.content = content;
         Text = "Kiosk";
         FormBorderStyle = FormBorderStyle.None;
@@ -51,11 +60,10 @@ internal sealed class IdleScreen : Form
             {
                 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KioskTheme.Background };
                 Controls.Add(web);
-                var folder = Path.Combine(Path.GetTempPath(), "KioskScreens", Guid.NewGuid().ToString("N"));
+                // A lasting profile per screen: the read-only account signed in once stays signed in.
+                var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Screens", "Ekran" + number);
                 var environment = await CoreWebView2Environment.CreateAsync(null, folder);
-                var options = environment.CreateCoreWebView2ControllerOptions();
-                options.IsInPrivateModeEnabled = true;
-                await web.EnsureCoreWebView2Async(environment, options);
+                await web.EnsureCoreWebView2Async(environment);
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.

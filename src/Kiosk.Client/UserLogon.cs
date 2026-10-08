@@ -34,6 +34,10 @@ internal sealed class UserLogon : IDisposable
     }
 
     internal string User => user;
+    internal string Sid { get; private set; } = "";
+    /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
+    internal string? ProfileDirectory =>
+        Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
     internal string? Domain => domain;
 
     /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
@@ -54,7 +58,7 @@ internal sealed class UserLogon : IDisposable
         {
             if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
             using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
-            return new UserLogon(login, domain, password, length, identity.Name);
+            return new UserLogon(login, domain, password, length, identity.Name) { Sid = identity.User?.Value ?? "" };
         }
     }
 
