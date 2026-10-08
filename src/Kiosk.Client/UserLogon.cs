@@ -53,8 +53,8 @@ internal sealed class UserLogon : IDisposable
             int nameLength = name.Capacity, domLength = dom.Capacity, passwordLength = password.Length;
             try
             {
-                if (!CredUnPackAuthenticationBuffer(0, buffer, size, name, ref nameLength, dom, ref domLength, password, ref passwordLength))
-                    throw new Win32Exception();
+                if (!CredUnPackAuthenticationBuffer(1, buffer, size, name, ref nameLength, dom, ref domLength, password, ref passwordLength))
+                    throw new Win32Exception(); // 1 = CRED_PACK_PROTECTED_CREDENTIALS: a usable (unprotected) password
                 var login = name.ToString();
                 string? domainPart = dom.Length > 0 ? dom.ToString() : null;
                 int slash = login.IndexOf('\\');
@@ -66,9 +66,21 @@ internal sealed class UserLogon : IDisposable
                 try
                 {
                     // Windows checks the account (Entra ID or domain) exactly as at sign-in.
-                    if (!LogonUser(login, domainPart, typed, 2, 0, out var token)) // LOGON32_LOGON_INTERACTIVE
+                    bool ok = LogonUser(login, domainPart, typed, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
+                    int code = ok ? 0 : Marshal.GetLastWin32Error();
+                    // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
+                    if (!ok && domainPart == null && login.Contains('@'))
                     {
-                        error = "Nieprawidłowy login lub hasło (" + new Win32Exception().Message + ").";
+                        token.Dispose();
+                        ok = LogonUser(login, "AzureAD", typed, 2, 0, out token);
+                        if (ok) domainPart = "AzureAD";
+                        else code = Marshal.GetLastWin32Error();
+                    }
+                    if (!ok)
+                    {
+                        token.Dispose();
+                        Audit.Write("signin_failed", "error " + code); // Never the login or password.
+                        error = "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
                         continue;
                     }
                     string display;
