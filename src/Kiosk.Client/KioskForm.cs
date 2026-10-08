@@ -74,7 +74,6 @@ internal sealed class KioskForm : Form
     private string? notice;
 
     private bool CanUseApps => current is { Locked: false };
-    private bool HasSessionWindows => current?.Windows.Any(w => w.Key != SettingsKey) == true;
 
     internal KioskForm(Config config, string? configPath = null)
     {
@@ -785,7 +784,7 @@ internal sealed class KioskForm : Form
         if (apps.Count == 0) apps.Add(new MenuItemSpec("Brak aplikacji", "Dodaj je w Konfiguracji", () => { }, false));
         var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop)) };
         if (configPath != null && s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Konfiguracja", HasSessionWindows ? "Zamknij najpierw otwarte okna" : "Ustawienia Kiosku", OpenSettings, can && !HasSessionWindows));
+            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can));
         if (can)
         {
             system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0)));
@@ -1101,7 +1100,8 @@ internal sealed class KioskForm : Form
     private void OpenSettings()
     {
         if (settingsView != null) { ActivateExisting(SettingsKey); return; }
-        if (HasSessionWindows || configPath == null || !CanUseApps || !IsAdmin(current!)) return;
+        // Open windows stay as they are; saved settings apply to what is opened next.
+        if (configPath == null || !CanUseApps || !IsAdmin(current!)) return;
         var session = current!;
         var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
         settingsView = view;
