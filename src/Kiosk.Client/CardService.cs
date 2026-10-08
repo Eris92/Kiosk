@@ -65,10 +65,12 @@ internal static class CardService
 
     private static Response Handle(Request request)
     {
+        string step = "połączenie";
         try
         {
             using var card = new CtapCard(request.Reader);
             if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
+            step = "PIN";
             card.UsePin(request.Pin);
             switch (request.Op)
             {
@@ -76,9 +78,12 @@ internal static class CardService
                     return new Response { Message = "PIN karty potwierdzony." };
                 case "enroll":
                 {
+                    step = "tworzenie klucza";
                     var id = card.MakeCredential(RelyingParty);
                     // CTAP 2.1 cards drop the token's permissions after makeCredential: get a fresh one for the assertion.
+                    step = "PIN (2)";
                     card.UsePin(request.Pin);
+                    step = "odczyt klucza";
                     var secret = card.HmacSecret(RelyingParty, id, Convert.FromBase64String(request.Salt!));
                     return new Response { CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) };
                 }
@@ -91,7 +96,7 @@ internal static class CardService
                     return new Response { Code = -2, Message = "Nieznane polecenie." };
             }
         }
-        catch (CtapException ex) { return new Response { Code = ex.Code, Message = ex.Message }; }
+        catch (CtapException ex) { return new Response { Code = ex.Code, Message = ex.Message + " [" + step + "]" }; }
         catch (Exception ex) { return new Response { Code = -1, Message = ex.Message }; }
         finally { request.Pin = ""; }
     }
