@@ -14,6 +14,7 @@ $out = Resolve-Path $OutputPath
 # Static CRT (/MT): LogonUI must not depend on a separately installed VC++ runtime.
 $compile = "cl.exe /nologo /utf-8 /W4 /O2 /MT /EHsc /DUNICODE /D_UNICODE /LD `"$source\KioskCredentialProvider.cpp`" " +
     "/Fo`"$out\\`" /Fe`"$out\KioskCredentialProvider.dll`" /link /DEF:`"$source\KioskCredentialProvider.def`" ole32.lib shlwapi.lib advapi32.lib user32.lib"
-& cmd.exe /c "`"$vcvars`" >nul && $compile"
+$env:PATH = (Split-Path $vswhere) + ';' + $env:PATH # vcvars looks vswhere up on PATH
+& cmd.exe /c "`"$vcvars`" >nul 2>&1 && $compile 2>&1"
 if ($LASTEXITCODE -ne 0) { throw 'Credential provider build failed.' }
 Write-Output "Build ready: $out\KioskCredentialProvider.dll"

@@ -29,7 +29,7 @@ static void ReadSetting(const wchar_t* name, wchar_t* value, DWORD chars, const 
         lstrcpynW(value, fallback, chars);
 }
 
-template <class T> static void Release(T*& p) { if (p) { p->Release(); p = nullptr; } }
+template <class T> static void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
 // ------------------------------------------------------------------ credential events
 
@@ -50,7 +50,7 @@ public:
         outer->QueryInterface(IID_PPV_ARGS(&outer2));
         InterlockedIncrement(&g_objects);
     }
-    ~Events() { Release(outer2); Release(outer); InterlockedDecrement(&g_objects); }
+    ~Events() { SafeRelease(outer2); SafeRelease(outer); InterlockedDecrement(&g_objects); }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
@@ -101,7 +101,7 @@ public:
         inner->QueryInterface(IID_PPV_ARGS(&innerOptions));
         InterlockedIncrement(&g_objects);
     }
-    ~Credential() { Release(events); Release(innerOptions); Release(inner2); Release(inner); InterlockedDecrement(&g_objects); }
+    ~Credential() { SafeRelease(events); SafeRelease(innerOptions); SafeRelease(inner2); SafeRelease(inner); InterlockedDecrement(&g_objects); }
     ICredentialProviderCredential* Inner() const { return inner; }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
@@ -120,13 +120,13 @@ public:
 
     IFACEMETHODIMP Advise(ICredentialProviderCredentialEvents* pcpce) override
     {
-        Release(events);
+        SafeRelease(events);
         if (!pcpce) return inner->Advise(nullptr);
         events = new (std::nothrow) Events(pcpce, static_cast<ICredentialProviderCredential2*>(this));
         if (!events) return E_OUTOFMEMORY;
         return inner->Advise(events);
     }
-    IFACEMETHODIMP UnAdvise() override { HRESULT hr = inner->UnAdvise(); Release(events); return hr; }
+    IFACEMETHODIMP UnAdvise() override { HRESULT hr = inner->UnAdvise(); SafeRelease(events); return hr; }
     IFACEMETHODIMP SetSelected(BOOL* autoLogon) override { return inner->SetSelected(autoLogon); }
     IFACEMETHODIMP SetDeselected() override { return inner->SetDeselected(); }
     IFACEMETHODIMP GetFieldState(DWORD f, CREDENTIAL_PROVIDER_FIELD_STATE* s, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE* i) override { return inner->GetFieldState(f, s, i); }
@@ -195,10 +195,10 @@ class Provider final : public ICredentialProvider, public ICredentialProviderSet
     std::vector<Credential*> credentials;
     DWORD titleField = MAXDWORD, imageField = MAXDWORD;
 
-    void ClearCredentials() { for (auto*& c : credentials) Release(c); credentials.clear(); }
+    void ClearCredentials() { for (auto*& c : credentials) SafeRelease(c); credentials.clear(); }
 public:
     Provider() { InterlockedIncrement(&g_objects); }
-    ~Provider() { ClearCredentials(); Release(innerUsers); Release(inner); InterlockedDecrement(&g_objects); }
+    ~Provider() { ClearCredentials(); SafeRelease(innerUsers); SafeRelease(inner); InterlockedDecrement(&g_objects); }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
@@ -247,7 +247,20 @@ public:
     IFACEMETHODIMP Advise(ICredentialProviderEvents* e, UINT_PTR context) override { return inner ? inner->Advise(e, context) : E_UNEXPECTED; }
     IFACEMETHODIMP UnAdvise() override { return inner ? inner->UnAdvise() : E_UNEXPECTED; }
     IFACEMETHODIMP GetFieldDescriptorCount(DWORD* count) override { return inner ? inner->GetFieldDescriptorCount(count) : E_UNEXPECTED; }
-    IFACEMETHODIMP GetFieldDescriptorAt(DWORD i, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** d) override { return inner ? inner->GetFieldDescriptorAt(i, d) : E_UNEXPECTED; }
+    IFACEMETHODIMP GetFieldDescriptorAt(DWORD i, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR** d) override
+    {
+        if (!inner) return E_UNEXPECTED;
+        HRESULT hr = inner->GetFieldDescriptorAt(i, d);
+        // The picture's label names the tile under "Sign-in options".
+        if (SUCCEEDED(hr) && d && *d && (i == imageField || i == titleField))
+        {
+            wchar_t title[256];
+            ReadSetting(L"Title", title, ARRAYSIZE(title), L"Przyłóż kartę");
+            LPWSTR label = nullptr;
+            if (SUCCEEDED(SHStrDupW(title, &label))) { CoTaskMemFree((*d)->pszLabel); (*d)->pszLabel = label; }
+        }
+        return hr;
+    }
     IFACEMETHODIMP GetCredentialCount(DWORD* count, DWORD* def, BOOL* autoLogon) override { return inner ? inner->GetCredentialCount(count, def, autoLogon) : E_UNEXPECTED; }
     IFACEMETHODIMP GetCredentialAt(DWORD i, ICredentialProviderCredential** result) override
     {
@@ -260,7 +273,7 @@ public:
         // The wrapped provider may hand out new credentials after it reports a change.
         if (!credentials[i] || credentials[i]->Inner() != wrapped)
         {
-            Release(credentials[i]);
+            SafeRelease(credentials[i]);
             credentials[i] = new (std::nothrow) Credential(wrapped, titleField, imageField);
         }
         wrapped->Release();
