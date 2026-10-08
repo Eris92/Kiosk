@@ -289,6 +289,12 @@ internal sealed class KioskForm : Form
                 try
                 {
                     var result = await CardPin.VerifyAsync(reader.ActiveReader, Handle, cancel.Token);
+                    // A FIDO2 card has no certificate key: Windows' security key dialog checks its PIN instead.
+                    if (result.Code == CardPin.NoKey && FidoPin.Available)
+                    {
+                        var owner = Handle;
+                        result = await Task.Run(() => FidoPin.Verify(owner), cancel.Token);
+                    }
                     if (result.Code == CardPin.Verified) return true;
                     session.Notice = result.Message.Length > 0 ? result.Message : "Nie potwierdzono PIN-u karty.";
                     Audit.Write("unlock_pin_failed", result.Code.ToString());
