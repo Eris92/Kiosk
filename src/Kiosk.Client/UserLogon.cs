@@ -33,6 +33,31 @@ internal sealed class UserLogon : IDisposable
         if (!CryptProtectMemory(secret, secret.Length, 0)) throw new Win32Exception();
     }
 
+    internal string User => user;
+    internal string? Domain => domain;
+
+    /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
+    /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
+    internal static UserLogon? TryLogon(string login, string? domain, char[] password, int length, out int code)
+    {
+        bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
+        code = ok ? 0 : Marshal.GetLastWin32Error();
+        // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
+        if (!ok && domain == null && login.Contains('@'))
+        {
+            token.Dispose();
+            ok = LogonUser(login, "AzureAD", password, 2, 0, out token);
+            if (ok) domain = "AzureAD";
+            else code = Marshal.GetLastWin32Error();
+        }
+        using (token)
+        {
+            if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
+            using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
+            return new UserLogon(login, domain, password, length, identity.Name);
+        }
+    }
+
     /// <summary>Shows the Windows credential dialog and checks the account; null when cancelled.</summary>
     internal static UserLogon? Prompt(IntPtr owner, string message)
     {
@@ -65,29 +90,10 @@ internal sealed class UserLogon : IDisposable
                 Array.Copy(password, typed, typedLength);
                 try
                 {
-                    // Windows checks the account (Entra ID or domain) exactly as at sign-in.
-                    bool ok = LogonUser(login, domainPart, typed, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
-                    int code = ok ? 0 : Marshal.GetLastWin32Error();
-                    // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
-                    if (!ok && domainPart == null && login.Contains('@'))
-                    {
-                        token.Dispose();
-                        ok = LogonUser(login, "AzureAD", typed, 2, 0, out token);
-                        if (ok) domainPart = "AzureAD";
-                        else code = Marshal.GetLastWin32Error();
-                    }
-                    if (!ok)
-                    {
-                        token.Dispose();
-                        Audit.Write("signin_failed", "error " + code); // Never the login or password.
-                        error = "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
-                        continue;
-                    }
-                    string display;
-                    using (token)
-                    using (var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle()))
-                        display = identity.Name;
-                    return new UserLogon(login, domainPart, typed, typedLength, display);
+                    var logon = TryLogon(login, domainPart, typed, typedLength, out int code);
+                    if (logon != null) return logon;
+                    error = "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
+                    continue;
                 }
                 finally { Array.Clear(typed); }
             }

@@ -269,12 +269,45 @@ internal sealed class KioskForm : Form
             catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
             if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             Audit.Write("signed_in_as_user", session.Logon.DisplayName);
+            if (CardVault.Available)
+            {
+                // Remember the account for this card: next time the card and its PIN are enough.
+                var logon = session.Logon;
+                var id = session.Identity.Id;
+                var owner = Handle;
+                verifying = true;
+                try
+                {
+                    var saved = await Task.Run(() => CardVault.Enroll(id, logon, owner));
+                    session.Notice = saved.Code == CardPin.Verified ? null : "Karta nie została zapamiętana: " + saved.Message;
+                    Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code.ToString());
+                }
+                catch (Exception ex) { session.Notice = "Karta nie została zapamiętana: " + ex.Message; Audit.Write("card_enroll_failed", ex.Message); }
+                finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+            }
         }
         Unlock(session);
     }
 
     private async Task<bool> VerifyPersonAsync(UserSession session)
     {
+        if (config.SignInAsUser && session.Logon == null && CardVault.Available)
+        {
+            // A remembered card: one Windows dialog (card PIN) unlocks the account stored for it.
+            if (!CardVault.IsEnrolled(session.Identity.Id)) return true; // First use: Zaloguj asks, enrolling checks the PIN.
+            var id = session.Identity.Id;
+            var owner = Handle;
+            var opened = await Task.Run(() => CardVault.Open(id, owner));
+            if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
+            if (opened.Code != CardPin.Verified) { session.Notice = opened.Message; Audit.Write("card_vault_failed", opened.Code.ToString()); return false; }
+            // The PIN was right but the password changed: ask once and store the new one.
+            var logon = UserLogon.Prompt(Handle, opened.Message);
+            if (logon == null) { session.Notice = "Logowanie anulowane."; return false; }
+            session.Logon = logon;
+            var saved = await Task.Run(() => CardVault.Update(id, logon, owner));
+            if (saved.Code != CardPin.Verified) session.Notice = "Nowe hasło nie zostało zapamiętane: " + saved.Message;
+            return true;
+        }
         switch (config.UnlockMethod)
         {
             case UnlockMethod.CardAndWindowsHello:
