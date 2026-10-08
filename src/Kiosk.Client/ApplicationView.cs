@@ -22,7 +22,8 @@ internal sealed class ApplicationView : Panel
 
     internal ApplicationView() { Dock = DockStyle.Fill; BackColor = KioskTheme.Background; }
 
-    internal async Task StartAsync(ApplicationEntry entry)
+    /// <param name="logon">When set, the program runs as that person (runas), otherwise as the Kiosk account.</param>
+    internal async Task StartAsync(ApplicationEntry entry, UserLogon? logon = null)
     {
         if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
         _ = Handle;
@@ -34,10 +35,16 @@ internal sealed class ApplicationView : Panel
         // e.g. KeePass with "minimize to tray", hide themselves or stay blank). It is adopted within ~50 ms.
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = 4 };
         // Start suspended: no descendant can escape ownership before job assignment.
-        if (!AppNative.CreateProcess(entry.Path, new StringBuilder('"' + entry.Path + "\" " + entry.Arguments),
-            IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,
-            string.IsNullOrWhiteSpace(entry.WorkingDirectory) ? Path.GetDirectoryName(entry.Path) : entry.WorkingDirectory,
-            ref startup, out var process)) throw new Win32Exception();
+        var directory = string.IsNullOrWhiteSpace(entry.WorkingDirectory) ? Path.GetDirectoryName(entry.Path) : entry.WorkingDirectory;
+        var commandLine = '"' + entry.Path + "\" " + entry.Arguments;
+        AppNative.ProcessInfo process;
+        if (logon != null)
+        {
+            var started = logon.Start(entry.Path, commandLine, directory);
+            process = new AppNative.ProcessInfo { Process = started.Process, Thread = started.Thread };
+        }
+        else if (!AppNative.CreateProcess(entry.Path, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,
+            directory, ref startup, out process)) throw new Win32Exception();
         try
         {
             if (!AppNative.AssignProcessToJobObject(job, process.Process)) throw new Win32Exception();

@@ -28,6 +28,7 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox enableBrowser = new() { Text = "Przeglądarka włączona (widoczna w Menu)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 2), Font = new Font("Segoe UI", 10, FontStyle.Bold) };
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
+    private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” pyta o login i hasło konta (jak runas): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
     private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };
     private readonly ComboBox autoConnect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 320 };
     private readonly DataGridView connections = Grid();
@@ -112,6 +113,9 @@ internal sealed class SettingsView : UserControl
         var pinRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         fields.Controls.Add(requirePin, 1, pinRow);
+        var signInRow = fields.RowCount++;
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        fields.Controls.Add(signInAsUser, 1, signInRow);
         var removalRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         fields.Controls.Add(disconnectOnRemoval, 1, removalRow);
@@ -130,6 +134,7 @@ internal sealed class SettingsView : UserControl
         changeUserAfter.Value = config.ChangeUserAfterSeconds;
         connectTimeout.Value = config.ConnectTimeoutSeconds;
         requirePin.Checked = config.RequireCredentialPrompt;
+        signInAsUser.Checked = config.SignInAsUser;
         unlock.SelectedIndex = (int)config.UnlockMethod;
         sessionMode.SelectedIndex = (int)config.SessionMode;
         disconnectOnRemoval.Checked = config.DisconnectOnCardRemoval;
@@ -299,6 +304,7 @@ internal sealed class SettingsView : UserControl
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,
             RequireCredentialPrompt = requirePin.Checked,
+            SignInAsUser = signInAsUser.Checked,
             UnlockMethod = (UnlockMethod)Math.Max(0, unlock.SelectedIndex),
             SessionMode = (SessionMode)Math.Max(0, sessionMode.SelectedIndex),
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,

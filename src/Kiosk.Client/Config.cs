@@ -41,6 +41,9 @@ internal sealed record Config
     public int LockAfterSeconds { get; init; } = 300;
     public int ChangeUserAfterSeconds { get; init; } = 600;
     public UnlockMethod UnlockMethod { get; init; } = UnlockMethod.Card;
+    /// <summary>"Zaloguj" also asks for the person's Windows / Entra login and password (like runas); their apps,
+    /// Edge and "current user" remote desktops then run as them. Kiosk mode only.</summary>
+    public bool SignInAsUser { get; init; }
     /// <summary>Kiosk: one Windows account, the Kiosk switches people by card. WindowsShell: every person signs in to
     /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;

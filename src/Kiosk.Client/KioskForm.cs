@@ -41,6 +41,9 @@ internal sealed class KioskForm : Form
         internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0;
         /// <summary>The card's account (UPN from its certificate) is in this PC's local Administrators group.</summary>
         internal bool IsWindowsAdmin { get; set; }
+        /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
+        internal UserLogon? Logon { get; set; }
+        internal string Name => Logon?.DisplayName ?? Identity.Name;
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
@@ -259,6 +262,14 @@ internal sealed class KioskForm : Form
             return;
         }
         cardKey = reader.Snapshot(config.ReaderName); // A PIN check resets the card; that is not a new insertion.
+        if (config.SignInAsUser && session.Logon == null)
+        {
+            // Like runas: the person's own account, checked by Windows; asked once per Kiosk session.
+            try { session.Logon = UserLogon.Prompt(Handle, "Podaj login (np. jan@firma.pl) i hasło swojego konta. Aplikacje, przeglądarka i pulpity zdalne uruchomią się jako Ty."); }
+            catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
+            if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
+            Audit.Write("signed_in_as_user", session.Logon.DisplayName);
+        }
         Unlock(session);
     }
 
@@ -334,6 +345,8 @@ internal sealed class KioskForm : Form
     {
         if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
+        session.Logon?.Dispose(); // Forget the password with the session.
+        session.Logon = null;
         sessions.Remove(session.Identity.Id);
         Audit.Write(reason, session.Identity.Name);
     }
@@ -441,7 +454,7 @@ internal sealed class KioskForm : Form
         taskbar.LogoutButton.Enabled = current != null;
         taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => (w.Key, w.Title, w.View == visibleView)).ToArray() : []);
         taskbar.Status.Text = current == null ? (requireRemoval ? "Wyjmij kartę" : "Brak karty") + (others > 0 ? " · zachowane sesje: " + others : "") :
-            (current.Locked ? "🔒 " : "● ") + current.Identity.Name + (others > 0 ? " · inne sesje: " + others : "");
+            (current.Locked ? "🔒 " : "● ") + current.Name + (others > 0 ? " · inne sesje: " + others : "");
         taskbar.Status.ForeColor = CanUseApps ? Color.FromArgb(110, 214, 150) : KioskTheme.Muted;
 
         var retention = config.ChangeUserAfterSeconds > 0
@@ -450,11 +463,11 @@ internal sealed class KioskForm : Form
         if (current is { Locked: true } locked)
         {
             var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
-            var detail = locked.Identity.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
+            var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
             desktop.UpdateStatus(title, detail, locked: true, locked.Verified ? "Wznów sesję" : "Zaloguj");
         }
         else if (current != null)
-            desktop.UpdateStatus("Witaj, " + current.Identity.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.");
+            desktop.UpdateStatus("Witaj, " + current.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.");
         else if (requireRemoval)
             desktop.UpdateStatus("Wyjmij kartę", "Sesja została zamknięta. Wyjmij kartę i włóż ją ponownie, aby zacząć od nowa.");
         else
@@ -582,7 +595,7 @@ internal sealed class KioskForm : Form
         RdpHost? host = null;
         try
         {
-            host = CreateRdp(connection, config.RequireCredentialPrompt);
+            host = CreateRdp(connection, config.RequireCredentialPrompt, session.Logon);
             session.Rdp[connection.Name] = new RdpSession { Connection = connection, Host = host, ConnectingSince = DateTime.UtcNow };
             AddWindow(session, key, connection.Name, host);
             // Fresh COM control per connection and per person; never store a PIN/password or reuse credentials.
@@ -599,8 +612,11 @@ internal sealed class KioskForm : Form
         }
     }
 
-    private RdpHost CreateRdp(RdpConnection connection, bool promptForCredentials)
+    private RdpHost CreateRdp(RdpConnection connection, bool promptForCredentials, UserLogon? logon = null)
     {
+        // "Bieżący użytkownik" after "Zaloguj": the person's own account signs in to the remote desktop.
+        bool asLoggedOnUser = logon != null && connection.Authentication == RdpAuthentication.WindowsCurrentUser;
+        if (asLoggedOnUser) promptForCredentials = false;
         var host = new RdpHost { Dock = DockStyle.Fill, Visible = false };
         ((ISupportInitialize)host).BeginInit();
         surface.Controls.Add(host);
@@ -634,6 +650,13 @@ internal sealed class KioskForm : Form
         if (credentials.GetPromptForCredentials() != promptForCredentials || !credentials.GetPromptForCredsOnClient() ||
             !credentials.GetAllowPromptingForCredentials() || credentials.GetAllowCredentialSaving())
             throw new InvalidOperationException("Nie udało się zastosować zasad pytania o poświadczenia RDP.");
+        if (asLoggedOnUser)
+        {
+            client.UserName = logon!.Login;
+            var password = logon.Reveal();
+            try { settings.ClearTextPassword = new string(password, 0, Array.IndexOf(password, '\0')); }
+            finally { Array.Clear(password); }
+        }
         if (connection.Authentication == RdpAuthentication.EntraId)
         {
             var extended = (IRdpExtendedSettings)(object)client;
@@ -692,12 +715,25 @@ internal sealed class KioskForm : Form
         session.Notes.Editor.Focus();
     }
 
+    private ApplicationEntry EdgeAsUser => new()
+    {
+        Name = "Przeglądarka",
+        Path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe"),
+        Arguments = "--new-window " + config.BrowserUrl
+    };
+
     private async Task OpenBrowserAsync()
     {
         if (!config.EnableBrowser) return;
         if (current?.Browser != null) { ActivateExisting(BrowserKey); return; }
         if (!CheckCard()) return;
         var session = current!;
+        if (session.Logon != null)
+        {
+            // Signed in as the person: their own Edge, with their profile, bookmarks and SSO (like runas).
+            await OpenApplicationAsync(EdgeAsUser);
+            return;
+        }
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
         var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
         session.Browser = requested;
@@ -739,7 +775,7 @@ internal sealed class KioskForm : Form
         AddWindow(session, key, entry.Name, requested);
         try
         {
-            await requested.StartAsync(entry);
+            await requested.StartAsync(entry, session.Logon);
             if (!requested.IsDisposed) Audit.Write("application_opened", entry.Name);
         }
         catch (Exception ex)
