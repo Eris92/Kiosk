@@ -35,6 +35,9 @@ internal sealed class CtapCard : IDisposable
                 // SELECT the FIDO applet.
                 var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
                 if (!answer.Ok) throw new CtapException(-2, "Karta nie ma aplikacji FIDO2.");
+                // Keep other programs (Windows' smart card stack) off the card until we are done: they would
+                // select another applet and the PIN token would be lost.
+                SCardBeginTransaction(card);
                 return;
             }
             catch (CtapException ex) when (ex.Code == -1 && attempt < 4)
@@ -59,9 +62,23 @@ internal sealed class CtapCard : IDisposable
         platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
         shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
         var pinHash = SHA256.HashData(Encoding.UTF8.GetBytes(pin)).AsSpan(0, 16).ToArray();
-        var reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
+        Dictionary<object, object> reply;
+        try
+        {
+            // CTAP 2.1: a token limited to this relying party, allowed to create (mc) and use (ga) its credential.
+            // Cards that implement 2.1 reject the older token for makeCredential (PIN_AUTH_INVALID).
+            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 9L), (3L, PlatformCose()), (6L, Encrypt(pinHash)), (9L, 0x03L), (10L, RelyingParty)));
+        }
+        catch (CtapException ex) when (ex.Code is 0x01 or 0x02 or 0x11 or 0x2B)
+        {
+            // CTAP 2.0 card without that subcommand: the classic PIN token (0x05).
+            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
+        }
         pinToken = Decrypt((byte[])reply[2L]);
     }
+
+    /// <summary>The only relying party Kiosk ever uses on the card.</summary>
+    internal const string RelyingParty = "kiosk.local";
 
     /// <summary>authenticatorGetInfo as text, for diagnostics (no PIN needed).</summary>
     internal string Info()
@@ -212,7 +229,7 @@ internal sealed class CtapCard : IDisposable
         if (pinToken != null) Array.Clear(pinToken);
         if (shared != null) Array.Clear(shared);
         platformKey?.Dispose();
-        if (card != IntPtr.Zero) { SCardDisconnect(card, 0); card = IntPtr.Zero; }
+        if (card != IntPtr.Zero) { SCardEndTransaction(card, 0); SCardDisconnect(card, 0); card = IntPtr.Zero; }
         if (context != IntPtr.Zero) { SCardReleaseContext(context); context = IntPtr.Zero; }
     }
 
@@ -221,6 +238,8 @@ internal sealed class CtapCard : IDisposable
     [DllImport("winscard.dll")] private static extern int SCardReleaseContext(IntPtr context);
     [DllImport("winscard.dll", EntryPoint = "SCardConnectW", CharSet = CharSet.Unicode)] private static extern int SCardConnect(IntPtr context, string reader, uint share, uint protocols, out IntPtr card, out uint protocol);
     [DllImport("winscard.dll")] private static extern int SCardDisconnect(IntPtr card, uint disposition);
+    [DllImport("winscard.dll")] private static extern int SCardBeginTransaction(IntPtr card);
+    [DllImport("winscard.dll")] private static extern int SCardEndTransaction(IntPtr card, uint disposition);
     [DllImport("winscard.dll")] private static extern int SCardTransmit(IntPtr card, ref IoRequest send, byte[] command, int commandLength, IntPtr receive, byte[] response, ref int responseLength);
 }
 

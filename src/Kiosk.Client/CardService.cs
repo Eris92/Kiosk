@@ -18,7 +18,7 @@ internal static class CardService
     internal const string ServiceName = "KioskCard";
     internal const string Argument = "--card-service";
     private const string PipeName = "KioskCard";
-    private const string RelyingParty = "kiosk.local";
+    private const string RelyingParty = CtapCard.RelyingParty;
 
     internal sealed class Request
     {
