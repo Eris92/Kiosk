@@ -36,7 +36,7 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView bookmarks = Grid();
     private readonly DataGridView adminCards = Grid();
     private readonly DataGridView idleScreens = Grid();
-    private readonly NumericUpDown idleAfter = new() { Minimum = 5, Maximum = 86400, Width = 120 };
+    private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
     private readonly Label error = new() { Dock = DockStyle.Bottom, Height = 40, ForeColor = Color.Firebrick, Padding = new Padding(16, 8, 16, 0) };
@@ -192,7 +192,7 @@ internal sealed class SettingsView : UserControl
             "Gdy nikt nie pracuje, ekrany pokazują tę treść tylko do oglądania (bez klawiatury i myszy). Na głównym ekranie ruch myszy, " +
             "klawisz albo karta pokazuje logowanie. Ekrany: " + string.Join(", ", Screen.AllScreens.Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
         var idleRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 8) };
-        idleRow.Controls.Add(new Label { Text = "Powrót głównego ekranu do treści po (s bez ruchu, bez karty)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
+        idleRow.Controls.Add(new Label { Text = "Ekran blokady na głównym ekranie po (s bez ruchu, gdy sesja zablokowana lub nikt nie jest zalogowany)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
         idleRow.Controls.Add(idleAfter);
         idleAfter.Value = Math.Clamp(config.IdleAfterSeconds, (int)idleAfter.Minimum, (int)idleAfter.Maximum);
         screens.Controls.Add(idleRow);

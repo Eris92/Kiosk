@@ -51,7 +51,7 @@ internal sealed record Config
     /// <summary>Screens' content while nobody is signed in (view only). Empty = the usual Kiosk desktop.</summary>
     public ScreenContent[] IdleScreens { get; init; } = [];
     /// <summary>Without a card, the main screen returns to its idle content after this many seconds without input.</summary>
-    public int IdleAfterSeconds { get; init; } = 60;
+    public int IdleAfterSeconds { get; init; } = 5;
     public int LockAfterSeconds { get; init; } = 300;
     public int ChangeUserAfterSeconds { get; init; } = 600;
     public UnlockMethod UnlockMethod { get; init; } = UnlockMethod.Card;
@@ -116,7 +116,7 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy połączeń RDP muszą być unikalne.");
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
-        if (IdleAfterSeconds is < 5 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 5–86400 s.");
+        if (IdleAfterSeconds is < 3 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 3–86400 s.");
         foreach (var s in IdleScreens ?? [])
         {
             if (s.Screen < 0) throw new InvalidDataException("Numer ekranu nie może być ujemny.");

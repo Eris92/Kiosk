@@ -96,7 +96,7 @@ internal sealed class DesktopView : UserControl
     private TaskCompletionSource<string?>? pinRequest;
     private Func<bool>? pinCardPresent;
     private bool locked;
-    private bool AskingPin => pinRequest != null;
+    internal bool AskingPin => pinRequest != null;
 
     internal event Action? ResumeRequested;
 

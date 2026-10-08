@@ -635,13 +635,14 @@ internal sealed class KioskForm : Form
         };
     }
 
-    /// <summary>Main screen: input or a card brings up the Kiosk (sign-in); left alone without a card it returns to the content.</summary>
+    /// <summary>Main screen: input brings up the Kiosk (sign-in / lock screen); left alone while locked or signed out it returns to the content.</summary>
     private void UpdateMainIdle()
     {
         // While Konfiguracja is open the screens accept input, so an administrator can sign their pages in (read-only account).
         foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
-        bool someone = current is { Locked: false } || cardKey != null || verifying || settingsView != null;
+        // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
+        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin;
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
