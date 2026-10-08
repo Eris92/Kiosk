@@ -19,6 +19,7 @@ internal static class Program
         }
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
+        if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         if (args.Length == 2 && args[0] == "--ctap-info")
         {
             // Diagnostics: talks FIDO2 to the card in the given reader without a PIN (authenticatorGetInfo).

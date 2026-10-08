@@ -298,13 +298,10 @@ internal sealed class KioskForm : Form
         string message = "Wpisz PIN karty.";
         while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
         {
-            try
-            {
-                await Task.Run(() => { using var card = new CtapCard(readerName); card.UsePin(pin); });
-                return new(CardPin.Verified, "PIN karty potwierdzony.");
-            }
-            catch (CtapException ex) when (ex.Code == 0x31) { message = ex.Message + " Spróbuj ponownie."; }
-            catch (CtapException ex) { return new(CardPin.Failed, ex.Message); }
+            var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "verify", Reader = readerName, Pin = pin }));
+            if (answer.Code == 0) return new(CardPin.Verified, answer.Message);
+            if (answer.Code != 0x31) return new(CardPin.Failed, answer.Message);
+            message = answer.Message + " Spróbuj ponownie.";
         }
         return new(CardPin.Cancelled, "Anulowano wpisywanie PIN-u.");
     }

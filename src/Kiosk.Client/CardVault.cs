@@ -51,15 +51,10 @@ internal static class CardVault
     {
         var entry = JsonSerializer.Deserialize<Entry>(File.ReadAllText(FileFor(cardId)))!;
         if (!entry.Direct) { Forget(cardId); return new(null, CardPin.NoKey, "Kartę trzeba zapamiętać ponownie."); }
-        byte[] key;
-        try
-        {
-            using var card = new CtapCard(reader);
-            card.UsePin(pin);
-            key = card.HmacSecret(RelyingParty, Convert.FromBase64String(entry.CredentialId), Convert.FromBase64String(entry.Salt));
-        }
-        catch (CtapException ex) when (ex.Code == 0x2E) { Forget(cardId); return new(null, CardPin.NoKey, ex.Message); }
-        catch (CtapException ex) { return new(null, ex.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, ex.Message); }
+        var answer = CardService.Call(new CardService.Request { Op = "open", Reader = reader, Pin = pin, CredentialId = entry.CredentialId, Salt = entry.Salt });
+        if (answer.Code == 0x2E) { Forget(cardId); return new(null, CardPin.NoKey, answer.Message); }
+        if (answer.Code != 0 || answer.Secret == null) return new(null, answer.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, answer.Message);
+        var key = Convert.FromBase64String(answer.Secret);
         var cipher = Convert.FromBase64String(entry.Cipher);
         var plain = new byte[cipher.Length];
         try
@@ -84,15 +79,11 @@ internal static class CardVault
     internal static Result Enroll(string cardId, UserLogon logon, string reader, string pin)
     {
         var salt = RandomNumberGenerator.GetBytes(32);
-        byte[] key, credentialId;
-        try
-        {
-            using var card = new CtapCard(reader);
-            card.UsePin(pin);
-            credentialId = card.MakeCredential(RelyingParty);
-            key = card.HmacSecret(RelyingParty, credentialId, salt);
-        }
-        catch (CtapException ex) { return new(null, ex.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, ex.Message); }
+        var answer = CardService.Call(new CardService.Request { Op = "enroll", Reader = reader, Pin = pin, Salt = Convert.ToBase64String(salt) });
+        if (answer.Code != 0 || answer.Secret == null || answer.CredentialId == null)
+            return new(null, answer.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, answer.Message);
+        var key = Convert.FromBase64String(answer.Secret);
+        var credentialId = Convert.FromBase64String(answer.CredentialId);
         var password = logon.Reveal();
         int length = Array.IndexOf(password, '\0');
         var plain = Encoding.Unicode.GetBytes(password, 0, length);
