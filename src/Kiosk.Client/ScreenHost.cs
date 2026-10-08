@@ -24,6 +24,10 @@ internal sealed class ScreenHost : Form
         BackColor = KioskTheme.Background;
     }
 
+    /// <summary>Moving to a screen with another scale: Windows suggests a size; the window must still cover its screen.</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e) { base.OnDpiChanged(e); Bounds = Target.Bounds; }
+    protected override void OnShown(EventArgs e) { base.OnShown(e); Bounds = Target.Bounds; }
+
     internal void Host(Control view)
     {
         view.Parent?.Controls.Remove(view);

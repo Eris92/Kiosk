@@ -453,11 +453,47 @@ internal sealed class KioskForm : Form
 
     private ScreenHost? HostOf(Control view) => hosts.Values.FirstOrDefault(h => h.View == view);
 
+    /// <summary>"Excel 2", "Excel 3"…: a name not used by this person's open windows yet.</summary>
+    private static string NextInstanceName(UserSession session, string name)
+    {
+        var baseName = System.Text.RegularExpressions.Regex.Replace(name, @" \d+$", "");
+        for (int n = 2; ; n++)
+            if (!session.Applications.ContainsKey(baseName + " " + n) && session.Windows.All(w => w.Title != baseName + " " + n)) return baseName + " " + n;
+    }
+
+    /// <summary>One more window of the same kind (browser, application) — e.g. to put one on each screen.</summary>
+    private async Task OpenAnotherAsync(string key)
+    {
+        if (current is not { } session) return;
+        if (key.StartsWith("app:") && session.Applications.ContainsKey(key[4..]))
+        {
+            var name = System.Text.RegularExpressions.Regex.Replace(key[4..], @" \d+$", "");
+            var entry = config.Applications.FirstOrDefault(a => a.Name == name) ?? (name == EdgeAsUser.Name ? EdgeAsUser : null);
+            if (entry != null) await OpenApplicationAsync(entry with { Name = key[4..] }, another: true);
+        }
+        else if (key == BrowserKey || key.StartsWith("browser:"))
+        {
+            // The Kiosk browser (no Windows account for the person): another browser window of its own.
+            var title = NextInstanceName(session, "Przeglądarka");
+            var view = new BrowserView(config.Bookmarks, new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains), session.Identity.Thumbprints);
+            AddWindow(session, "browser:" + title, title, view);
+            try { await view.InitializeAsync(config.BrowserUrl); }
+            catch (Exception ex) { CloseWindow("browser:" + title, "browser_error", session); notice = "Nie udało się uruchomić przeglądarki: " + ex.Message; }
+        }
+    }
+
     private void ShowTaskMenu(string key, Control button, Point point)
     {
         if (!CanUseApps || current!.Windows.FirstOrDefault(w => w.Key == key) is not { } window) return;
         var screens = OrderedScreens;
         var menuStrip = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
+        if (key.StartsWith("app:") || key == BrowserKey || key.StartsWith("browser:"))
+        {
+            var another = new ToolStripMenuItem("Otwórz kolejne okno");
+            another.Click += (_, _) => _ = OpenAnotherAsync(key);
+            menuStrip.Items.Add(another);
+            menuStrip.Items.Add(new ToolStripSeparator());
+        }
         int placed = hosts.FirstOrDefault(h => h.Value.View == window.View).Key;
         if (placed == 0) placed = 1;
         for (int n = 1; n <= screens.Length; n++)
@@ -969,7 +1005,12 @@ internal sealed class KioskForm : Form
     private async Task OpenBrowserAsync()
     {
         if (!config.EnableBrowser) return;
-        if (current?.Browser != null) { ActivateExisting(BrowserKey); return; }
+        if (current?.Browser != null)
+        {
+            // Already on another screen: a new browser window for this one.
+            if (HostOf(current.Browser) != null && current.Logon == null) await OpenAnotherAsync(BrowserKey); else ActivateExisting(BrowserKey);
+            return;
+        }
         if (!CheckCard()) return;
         var session = current!;
         if (session.Logon != null)
@@ -997,14 +1038,18 @@ internal sealed class KioskForm : Form
         }
     }
 
-    private async Task OpenApplicationAsync(ApplicationEntry entry)
+    /// <param name="another">Open one more window even when the program is already open (e.g. one per screen).</param>
+    private async Task OpenApplicationAsync(ApplicationEntry entry, bool another = false)
     {
         if (entry.IsBuiltInNotes) { OpenNotes(); return; }
         var key = "app:" + entry.Name;
         if (current?.Applications.TryGetValue(entry.Name, out var existing) == true)
         {
-            if (existing.HostedWindow == IntPtr.Zero || AppNative.IsWindow(existing.HostedWindow)) { ActivateExisting(key); return; }
-            CloseWindow(key, "application_exited");
+            bool alive = existing.HostedWindow == IntPtr.Zero || AppNative.IsWindow(existing.HostedWindow);
+            // Already open on the main screen: show it. Open only on other screens (or asked for): one more window.
+            if (alive && !another && HostOf(existing) == null) { ActivateExisting(key); return; }
+            if (!alive) CloseWindow(key, "application_exited");
+            else entry = entry with { Name = NextInstanceName(current!, entry.Name) };
         }
         if (!CheckCard()) return;
         try { await StartApplicationAsync(current!, entry); }

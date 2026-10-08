@@ -88,6 +88,10 @@ internal sealed class IdleScreen : Form
         await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
     }
 
+    /// <summary>Moving to a screen with another scale: Windows suggests a size; the window must still cover its screen.</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e) { base.OnDpiChanged(e); Bounds = Target.Bounds; }
+    protected override void OnShown(EventArgs e) { base.OnShown(e); Bounds = Target.Bounds; }
+
     protected override CreateParams CreateParams
     {
         get
