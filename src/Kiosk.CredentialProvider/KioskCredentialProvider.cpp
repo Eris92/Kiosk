@@ -171,12 +171,8 @@ public:
     IFACEMETHODIMP GetFieldOptions(DWORD f, CREDENTIAL_PROVIDER_CREDENTIAL_FIELD_OPTIONS* o) override { return innerOptions ? innerOptions->GetFieldOptions(f, o) : E_NOTIMPL; }
 };
 
-HRESULT Events::SetFieldString(ICredentialProviderCredential*, DWORD f, LPCWSTR s)
-{
-    auto* wrapper = static_cast<Credential*>(static_cast<ICredentialProviderCredential2*>(sender));
-    if (f == wrapper->titleField) return S_OK; // Keep the Kiosk title.
-    return outer->SetFieldString(sender, f, s);
-}
+// Text updates pass through: the security key provider shows its prompts ("touch the key", PIN) in these fields.
+HRESULT Events::SetFieldString(ICredentialProviderCredential*, DWORD f, LPCWSTR s) { return outer->SetFieldString(sender, f, s); }
 
 HRESULT Events::SetFieldBitmap(ICredentialProviderCredential*, DWORD f, HBITMAP b)
 {
