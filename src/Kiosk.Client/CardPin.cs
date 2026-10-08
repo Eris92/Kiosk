@@ -130,6 +130,30 @@ internal static class CardPin
     }
 
     /// <summary>
+    /// Serial number (UID) of a card without certificates, via the PC/SC GET DATA command. Keeps two cards of the
+    /// same model apart, which share an ATR. A change signal for separating sessions, not an authenticated identity.
+    /// </summary>
+    internal static string? ReadUid(string reader)
+    {
+        if (SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out var context) != 0) return null;
+        try
+        {
+            if (SCardConnect(context, reader, 2, 3, out var card, out var protocol) != 0) return null; // SHARED, T0 | T1
+            try
+            {
+                var send = new IoRequest { Protocol = protocol, Length = 8 };
+                byte[] command = [0xFF, 0xCA, 0x00, 0x00, 0x00], response = new byte[258];
+                int length = response.Length;
+                if (SCardTransmit(card, ref send, command, command.Length, IntPtr.Zero, response, ref length) != 0 ||
+                    length < 3 || response[length - 2] != 0x90 || response[length - 1] != 0x00) return null;
+                return Convert.ToHexString(response, 0, length - 2);
+            }
+            finally { SCardDisconnect(card, 0); } // SCARD_LEAVE_CARD
+        }
+        finally { SCardReleaseContext(context); }
+    }
+
+    /// <summary>
     /// Cards such as PIV/YubiKey stay PIN-verified while powered, so a signature would pass silently.
     /// A warm reset clears that state and the PIN must be entered again.
     /// </summary>
@@ -148,6 +172,8 @@ internal static class CardPin
     [DllImport("winscard.dll")] private static extern int SCardReleaseContext(IntPtr context);
     [DllImport("winscard.dll", EntryPoint = "SCardConnectW", CharSet = CharSet.Unicode)] private static extern int SCardConnect(IntPtr context, string reader, uint share, uint protocols, out IntPtr card, out uint protocol);
     [DllImport("winscard.dll")] private static extern int SCardDisconnect(IntPtr card, uint disposition);
+    [StructLayout(LayoutKind.Sequential)] private struct IoRequest { public uint Protocol; public uint Length; }
+    [DllImport("winscard.dll")] private static extern int SCardTransmit(IntPtr card, ref IoRequest send, byte[] command, int commandLength, IntPtr receive, byte[] response, ref int responseLength);
 
     private static int Exit(int code, string message) { Console.Out.Write(message); Console.Out.Flush(); return code; }
 

@@ -131,7 +131,7 @@ internal sealed class KioskForm : Form
                 {
                     cardKey = key;
                     if (key == null) CardRemoved();
-                    else CardInserted(identifyCard() ?? new CardIdentity("card:" + reader.ActiveReader + "|" + reader.ActiveAtr, "Karta"));
+                    else CardInserted(identifyCard() ?? UncertifiedCard());
                 }
             }
             if (current is { Locked: false })
@@ -160,6 +160,13 @@ internal sealed class KioskForm : Form
     {
         try { return CardPin.ReadIdentity(reader.ActiveReader); }
         catch (Exception ex) { Audit.Write("card_identity_error", ex.Message); return null; }
+    }
+
+    /// <summary>A card without certificates (e.g. FIDO2): its UID keeps cards of the same model in separate sessions.</summary>
+    private CardIdentity UncertifiedCard()
+    {
+        var uid = CardPin.ReadUid(reader.ActiveReader);
+        return new CardIdentity(uid != null ? "uid:" + uid : "card:" + reader.ActiveReader + "|" + reader.ActiveAtr, "Karta");
     }
 
     private void CardRemoved()
