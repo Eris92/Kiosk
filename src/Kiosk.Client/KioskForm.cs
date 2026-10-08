@@ -588,17 +588,15 @@ internal sealed class KioskForm : Form
         if (current == session && !session.Locked && session.Windows.FirstOrDefault(w => w.Title == "Ekran 1") is { } main && HostOf(main.View) == null) ShowView(main.View);
     }
 
-    /// <summary>The person's own Edge for a screen: a separate browser folder per screen in their profile, so it is
-    /// its own window (Edge would otherwise hand the page to an Edge already open) and keeps their sign-ins.</summary>
+    /// <summary>The person's own Edge (their signed-in profile, SSO) for a screen. When their Edge already runs, it opens
+    /// the window in that copy and the Kiosk view takes the new window over.</summary>
     private static ApplicationEntry EdgeForScreen(UserLogon logon, int n, string url)
     {
-        var profile = logon.ProfileDirectory ?? throw new InvalidOperationException("Profil Windows tej osoby jeszcze nie istnieje.");
-        var folder = Path.Combine(profile, "AppData", "Local", "Kiosk", "Edge", "Ekran" + n);
         return new ApplicationEntry
         {
             Name = "Ekran " + n,
             Path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe"),
-            Arguments = "--user-data-dir=\"" + folder + "\" --no-first-run --new-window " + url
+            Arguments = "--new-window " + url
         };
     }
 

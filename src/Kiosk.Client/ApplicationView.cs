@@ -17,6 +17,11 @@ internal sealed class ApplicationView : Panel
     private readonly HashSet<IntPtr> placedDialogs = new();
     private DateTime windowLostAt = DateTime.MaxValue;
     private uint inputThread;
+    /// <summary>Windows embedded by any view: a program that hands its new window to an already running copy
+    /// (Edge, Office) is recognised by that copy's process, and its new window is taken over (adopted).</summary>
+    private static readonly HashSet<IntPtr> hostedWindows = new();
+    /// <summary>This view shows a window of another view's process: it has no Job of its own.</summary>
+    private bool adopted;
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
@@ -28,6 +33,7 @@ internal sealed class ApplicationView : Panel
     {
         if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
         _ = Handle;
+        var before = WindowsOfHostedProcesses();
         job = AppNative.CreateJobObject(IntPtr.Zero, null);
         if (job.IsInvalid) throw new Win32Exception();
         var limits = new AppNative.JobLimits { Basic = new AppNative.BasicLimits { Flags = 0x2000 } }; // KILL_ON_JOB_CLOSE
@@ -55,12 +61,20 @@ internal sealed class ApplicationView : Panel
         finally { AppNative.CloseHandle(process.Thread); AppNative.CloseHandle(process.Process); }
 
         var deadline = DateTime.UtcNow.AddSeconds(30); // Office and Electron apps can take a while.
+        DateTime? handedOver = null;
         while (!IsDisposed && DateTime.UtcNow < deadline)
         {
             var window = FindMainWindow();
             if (window != IntPtr.Zero) { Embed(window); return; }
             if (ActiveProcesses() == 0)
+            {
+                // The program passed the request to a copy already running in another Kiosk view (e.g. a second Edge window).
+                handedOver ??= DateTime.UtcNow;
+                var handed = FindHandedOverWindow(before);
+                if (handed != IntPtr.Zero) { job?.Dispose(); job = null; adopted = true; Embed(handed); return; }
+                if (DateTime.UtcNow - handedOver < TimeSpan.FromSeconds(10)) { await Task.Delay(100); continue; }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
+            }
             await Task.Delay(50);
         }
         if (!IsDisposed) throw new InvalidOperationException("Brak zgodnego okna aplikacji. Program może używać istniejącej instancji, wymagać administratora lub nie obsługiwać osadzania.");
@@ -76,7 +90,9 @@ internal sealed class ApplicationView : Panel
             throw new Win32Exception();
         AppNative.SetParent(window, Handle);
         if (AppNative.GetParent(window) != Handle) throw new Win32Exception("Aplikacja nie pozwala osadzić swojego okna w Kiosku.");
+        if (HostedWindow != IntPtr.Zero) hostedWindows.Remove(HostedWindow);
         HostedWindow = window;
+        hostedWindows.Add(window);
         Started = true;
         // A child window of another process gets the keyboard only when both threads share input state
         // (otherwise clicks work but typing goes nowhere, e.g. Edge started as another user).
@@ -101,6 +117,7 @@ internal sealed class ApplicationView : Panel
     /// </summary>
     internal bool Refresh()
     {
+        if (adopted) return !IsDisposed && AppNative.IsWindow(HostedWindow); // Lives in another view's process.
         if (job == null || IsDisposed) return false;
         if (HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow))
         {
@@ -134,6 +151,28 @@ internal sealed class ApplicationView : Panel
         placedDialogs.RemoveWhere(w => !AppNative.IsWindow(w));
         return any;
     }
+
+    /// <summary>Visible top-level windows of the processes behind the windows Kiosk already hosts.</summary>
+    private static HashSet<IntPtr> WindowsOfHostedProcesses()
+    {
+        var pids = new HashSet<uint>();
+        foreach (var w in hostedWindows) if (AppNative.IsWindow(w)) { AppNative.GetWindowThreadProcessId(w, out var pid); pids.Add(pid); }
+        var found = new HashSet<IntPtr>();
+        if (pids.Count == 0) return found;
+        AppNative.EnumWindows((window, _) =>
+        {
+            AppNative.GetWindowThreadProcessId(window, out var pid);
+            if (pids.Contains(pid)) found.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>A new main window that appeared in a hosted program's process after this launch.</summary>
+    private static IntPtr FindHandedOverWindow(HashSet<IntPtr> before) => WindowsOfHostedProcesses().FirstOrDefault(w =>
+        !before.Contains(w) && !hostedWindows.Contains(w) && AppNative.IsWindowVisible(w) && AppNative.GetWindow(w, 4) == IntPtr.Zero &&
+        AppNative.GetParent(w) == IntPtr.Zero && !IsDialog(w) && AppNative.GetWindowTextLength(w) > 0 &&
+        AppNative.GetWindowRect(w, out var r) && r.Right - r.Left >= 200 && r.Bottom - r.Top >= 100);
 
     /// <summary>The application's main window: visible, top-level, unowned, titled, not a tool window.</summary>
     private IntPtr FindMainWindow() => JobWindows(includeOwned: false).FirstOrDefault(w => !IsDialog(w) &&
@@ -186,6 +225,9 @@ internal sealed class ApplicationView : Panel
         {
             // Terminate only this launch and its descendants, never a pre-existing instance.
             if (inputThread != 0) { AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false); inputThread = 0; }
+            hostedWindows.Remove(HostedWindow);
+            // An adopted window belongs to another view's process: close just this window.
+            if (adopted && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
             job?.Dispose(); job = null; HostedWindow = IntPtr.Zero;
         }
         base.Dispose(disposing);
@@ -197,6 +239,7 @@ internal static class AppNative
 {
     [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] internal static extern IntPtr SetFocus(IntPtr window);
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] internal static extern bool GetClientRect(IntPtr window, out Rect rect);
