@@ -1053,7 +1053,9 @@ internal sealed class KioskForm : Form
     private RdpHost CreateRdp(RdpConnection connection, bool promptForCredentials, UserLogon? logon = null)
     {
         // "Bieżący użytkownik" after "Zaloguj": the person's own account signs in to the remote desktop.
-        bool asLoggedOnUser = logon != null && connection.Authentication == RdpAuthentication.WindowsCurrentUser;
+        // Signed in with "Zaloguj": the person's own account opens the remote desktop without asking again. Also for
+        // "Karta inteligentna": a FIDO2 card has no certificate for the remote sign-in. Entra ID keeps its own web sign-in.
+        bool asLoggedOnUser = logon != null && connection.Authentication != RdpAuthentication.EntraId;
         if (asLoggedOnUser) promptForCredentials = false;
         var host = new RdpHost { Dock = DockStyle.Fill, Visible = false };
         ((ISupportInitialize)host).BeginInit();
@@ -1090,7 +1092,8 @@ internal sealed class KioskForm : Form
             throw new InvalidOperationException("Nie udało się zastosować zasad pytania o poświadczenia RDP.");
         if (asLoggedOnUser)
         {
-            client.UserName = logon!.Login;
+            // jan@firma.pl rather than AzureAD\jan@firma.pl: the remote server knows the account by its UPN.
+            client.UserName = logon!.Domain == "AzureAD" ? logon.User : logon.Login;
             var password = logon.Reveal();
             try { settings.ClearTextPassword = new string(password, 0, Array.IndexOf(password, '\0')); }
             finally { Array.Clear(password); }
