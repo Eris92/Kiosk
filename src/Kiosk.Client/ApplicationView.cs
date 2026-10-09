@@ -30,6 +30,21 @@ internal sealed class ApplicationView : Panel
     private bool overlay;
     private IntPtr overlayOwner;
     private readonly System.Windows.Forms.Timer overlaySync = new() { Interval = 80 };
+    private static bool overlaysHidden;
+    private static event Action? OverlaysChanged;
+
+    /// <summary>
+    /// While the Kiosk shows something of its own over the programs (the Menu), the Chromium windows step aside:
+    /// as separate windows they would otherwise cover it.
+    /// </summary>
+    internal static void SetOverlaysHidden(bool hidden)
+    {
+        if (overlaysHidden == hidden) return;
+        overlaysHidden = hidden;
+        OverlaysChanged?.Invoke();
+    }
+
+    private void OnOverlaysChanged() => SyncOverlay(null, EventArgs.Empty);
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
@@ -144,6 +159,8 @@ internal sealed class ApplicationView : Panel
         AppNative.ShowWindow(window, 9); // SW_RESTORE
         overlaySync.Tick -= SyncOverlay;
         overlaySync.Tick += SyncOverlay;
+        OverlaysChanged -= OnOverlaysChanged;
+        OverlaysChanged += OnOverlaysChanged;
         overlaySync.Start();
         SyncOverlay(null, EventArgs.Empty);
     }
@@ -152,7 +169,8 @@ internal sealed class ApplicationView : Panel
     {
         if (!overlay || IsDisposed || HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow)) return;
         var form = FindForm();
-        bool show = form != null && Visible && form.Visible && form.WindowState != FormWindowState.Minimized && ClientSize.Width > 0;
+        bool show = form != null && Visible && form.Visible && form.WindowState != FormWindowState.Minimized && ClientSize.Width > 0 &&
+            !(overlaysHidden && form is KioskForm); // The Menu opens on the main Kiosk screen.
         if (!show)
         {
             if (AppNative.IsWindowVisible(HostedWindow)) AppNative.ShowWindow(HostedWindow, 0); // SW_HIDE
@@ -304,6 +322,7 @@ internal sealed class ApplicationView : Panel
             // Terminate only this launch and its descendants, never a pre-existing instance.
             if (inputThread != 0) { AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false); inputThread = 0; }
             overlaySync.Dispose();
+            OverlaysChanged -= OnOverlaysChanged;
             if (overlay && AppNative.IsWindow(HostedWindow) && !adopted) AppNative.ShowWindow(HostedWindow, 0);
             hostedWindows.Remove(HostedWindow);
             // An adopted window belongs to another view's process: close just this window.
