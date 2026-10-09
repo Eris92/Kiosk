@@ -1026,31 +1026,16 @@ internal sealed class KioskForm : Form
 
     /// <summary>
     /// Remote Desktop (mstsc) started as the signed-in person with /remoteGuard: their Kerberos sign-in reaches the
-    /// server without any password leaving this PC. The .rdp settings go in a public folder (the person's process
-    /// must read them; they contain no secrets) and are removed shortly after the start.
+    /// server without any password leaving this PC. Command-line settings only: an unsigned .rdp file would make
+    /// Windows show its "unknown remote connection" warning every time.
     /// </summary>
-    private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection)
+    private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
     {
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Kiosk");
-        Directory.CreateDirectory(folder);
-        var file = Path.Combine(folder, "rdp-" + Guid.NewGuid().ToString("N") + ".rdp");
-        File.WriteAllLines(file,
-        [
-            "full address:s:" + connection.Server + (connection.Port == 3389 ? "" : ":" + connection.Port),
-            "screen mode id:i:1", "smart sizing:i:1", "dynamic resolution:i:1",
-            "desktopwidth:i:" + Math.Max(800, surface.Width), "desktopheight:i:" + Math.Max(600, surface.Height),
-            "prompt for credentials:i:0", "enablecredsspsupport:i:1", "authentication level:i:2",
-            "redirectsmartcards:i:1", "redirectdrives:i:0", "redirectprinters:i:0", "redirectclipboard:i:0",
-            "autoreconnection enabled:i:0", "displayconnectionbar:i:0"
-        ]);
-        _ = Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => { try { File.Delete(file); } catch (IOException) { } });
-        return new ApplicationEntry
-        {
-            Name = connection.Name,
-            Path = Path.Combine(Environment.SystemDirectory, "mstsc.exe"),
-            Arguments = "\"" + file + "\" /remoteGuard"
-        };
-    }
+        Name = connection.Name,
+        Path = Path.Combine(Environment.SystemDirectory, "mstsc.exe"),
+        Arguments = "/v:" + connection.Server + (connection.Port == 3389 ? "" : ":" + connection.Port) + " /remoteGuard" +
+            " /w:" + Math.Max(800, surface.Width) + " /h:" + Math.Max(600, surface.Height)
+    };
 
     private void OpenRdp(RdpConnection connection)
     {
