@@ -20,6 +20,7 @@ internal static class Program
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
+        if (args.Length == 3 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort)) return RdpUserHost.Run(args[1], rdpPort);
         if (args.Length == 2 && args[0] == "--card-info")
         {
             // Diagnostics through the Kiosk Card service (no PIN).

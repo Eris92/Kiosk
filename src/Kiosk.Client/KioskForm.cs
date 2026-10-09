@@ -1024,17 +1024,12 @@ internal sealed class KioskForm : Form
 
     // ---------------------------------------------------------------- remote desktops
 
-    /// <summary>
-    /// Remote Desktop (mstsc) started as the signed-in person with /remoteGuard: their Kerberos sign-in reaches the
-    /// server without any password leaving this PC. Command-line settings only: an unsigned .rdp file would make
-    /// Windows show its "unknown remote connection" warning every time.
-    /// </summary>
-    private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
+    /// <summary>The remote desktop as the signed-in person: this program in RDP-only mode (see <see cref="RdpUserHost"/>).</summary>
+    private static ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
     {
         Name = connection.Name,
-        Path = Path.Combine(Environment.SystemDirectory, "mstsc.exe"),
-        Arguments = "/v:" + connection.Server + (connection.Port == 3389 ? "" : ":" + connection.Port) + " /remoteGuard" +
-            " /w:" + Math.Max(800, surface.Width) + " /h:" + Math.Max(600, surface.Height)
+        Path = Environment.ProcessPath!,
+        Arguments = RdpUserHost.Argument + " " + connection.Server + " " + connection.Port
     };
 
     private void OpenRdp(RdpConnection connection)
