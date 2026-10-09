@@ -94,7 +94,6 @@ internal sealed class KioskForm : Form
         visibleView = desktop;
 
         taskbar.MenuButton.Click += (_, _) => ToggleMenu();
-        menu.VisibleChanged += (_, _) => ApplicationView.SetOverlaysHidden(menu.Visible);
         taskbar.TaskClicked += ActivateWindow;
         taskbar.TaskCloseRequested += key => { if (ConfirmClose(key)) CloseWindow(key, "window_closed"); };
         taskbar.TaskMenuRequested += ShowTaskMenu;

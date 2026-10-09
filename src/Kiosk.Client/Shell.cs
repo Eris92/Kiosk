@@ -218,6 +218,8 @@ internal sealed class StartMenu : Form
         BackColor = KioskTheme.Border;
         Padding = new Padding(1);
         KeyPreview = true;
+        // Above everything, including programs shown as their own windows over the Kiosk (Edge).
+        TopMost = true;
         Controls.Add(content);
         Deactivate += (_, _) => HideMenu();
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) HideMenu(); };
