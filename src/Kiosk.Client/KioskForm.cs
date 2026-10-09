@@ -750,7 +750,7 @@ internal sealed class KioskForm : Form
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
         taskbar.LogoutButton.Enabled = current != null;
-        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(current, w); return (w.Key, w.Title, w.View == visibleView, glyph, icon); }).ToArray() : []);
+        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(current, w); return (w.Key, w.Title, w.View == visibleView, glyph, icon, HostOf(w.View) != null); }).ToArray() : []);
         taskbar.Status.Text = current == null ? (requireRemoval ? "Wyjmij kartę" : "Brak karty") + (others > 0 ? " · zachowane sesje: " + others : "") :
             (current.Locked ? "🔒 " : "● ") + current.Name + (others > 0 ? " · inne sesje: " + others : "");
         taskbar.Status.ForeColor = CanUseApps ? Color.FromArgb(110, 214, 150) : KioskTheme.Muted;
@@ -956,6 +956,7 @@ internal sealed class KioskForm : Form
         foreach (Control child in surface.Controls) child.Visible = child == view;
         view.BringToFront();
         view.Focus();
+        (view as ApplicationView)?.BringToUser();
         visibleView = view;
         if (view != desktop && current != null) current.LastView = view;
         RefreshChrome();
@@ -966,7 +967,7 @@ internal sealed class KioskForm : Form
         if (!CanUseApps) return;
         var window = current!.Windows.FirstOrDefault(w => w.Key == key);
         if (window == null) return;
-        if (HostOf(window.View) is { } host) { host.Activate(); return; } // On another screen.
+        if (HostOf(window.View) is { } host) { host.Activate(); (window.View as ApplicationView)?.BringToUser(); return; } // On another screen.
         // Like the Windows taskbar: clicking the active window shows the desktop.
         ShowView(visibleView == window.View ? desktop : window.View);
     }
@@ -974,7 +975,7 @@ internal sealed class KioskForm : Form
     private void ActivateExisting(string key)
     {
         var window = current?.Windows.FirstOrDefault(w => w.Key == key);
-        if (window != null && CanUseApps && HostOf(window.View) is { } host) { host.Activate(); return; }
+        if (window != null && CanUseApps && HostOf(window.View) is { } host) { host.Activate(); (window.View as ApplicationView)?.BringToUser(); return; }
         if (window != null && CanUseApps) ShowView(window.View);
     }
 

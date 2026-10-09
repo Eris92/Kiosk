@@ -293,9 +293,18 @@ internal sealed class ApplicationView : Panel
     {
         base.OnGotFocus(e);
         if (HostedWindow == IntPtr.Zero) return;
+        // A Chromium window is its own top-level window: it is brought forward only when the person picks it
+        // (BringToUser) — taking the foreground here would steal it from the Kiosk's Menu and taskbar.
+        if (!overlay) AppNative.SetFocus(HostedWindow);
+    }
+    /// <summary>The person chose this window (taskbar, Menu): give it the keyboard.</summary>
+    internal void BringToUser()
+    {
+        if (HostedWindow == IntPtr.Zero) return;
         if (overlay) { SyncOverlay(null, EventArgs.Empty); AppNative.SetForegroundWindow(HostedWindow); }
         else AppNative.SetFocus(HostedWindow);
     }
+
     protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (overlay) SyncOverlay(null, EventArgs.Empty); }
     private void ResizeChild()
     {

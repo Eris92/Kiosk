@@ -126,9 +126,10 @@ internal sealed class Taskbar : Panel
     }
 
     /// <summary>Rebuilds window buttons only when the set of windows or the active one changes.</summary>
-    internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active, string? Glyph, Image? Icon)> windows)
+    /// <param name="windows">OtherScreen: the window is on another screen; its button sits on the right, by the clock.</param>
+    internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active, string? Glyph, Image? Icon, bool OtherScreen)> windows)
     {
-        var signature = string.Join("|", windows.Select(w => w.Key + "=" + w.Title));
+        var signature = string.Join("|", windows.Select(w => w.Key + "=" + w.Title + (w.OtherScreen ? "@" : "")));
         if (signature != taskSignature)
         {
             taskSignature = signature;
@@ -138,7 +139,7 @@ internal sealed class Taskbar : Panel
             {
                 // Same look as a browser tab: title plus its own × close button.
                 // Icon only; the name is in the tooltip. Middle click or the right-click menu closes the window.
-                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold), Glyph = window.Glyph, IconImage = window.Icon };
+                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold), Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
                 tips.SetToolTip(button, window.Title);
                 var key = window.Key;
                 button.Selected += () => TaskClicked?.Invoke(key);
@@ -179,10 +180,17 @@ internal sealed class Taskbar : Panel
             right -= statusWidth + gap;
         }
 
-        int left = MenuButton.Right + Scale(18);
-        int available = Math.Max(0, right - left);
         int each = Scale(58);
-        foreach (var task in tasks)
+        // Windows on other screens: on the right, next to the clock (newest nearest the clock).
+        foreach (var task in tasks.Where(t => t.OtherScreen).Reverse())
+        {
+            right -= each;
+            task.SetBounds(right, top, each, height);
+            task.Visible = right > MenuButton.Right;
+            right -= gap;
+        }
+        int left = MenuButton.Right + Scale(18);
+        foreach (var task in tasks.Where(t => !t.OtherScreen))
         {
             task.SetBounds(left, top, each, height);
             task.Visible = task.Right <= right;
@@ -307,6 +315,7 @@ internal sealed class TabButton : Control
     internal event Action<Point>? MenuRequested;
     internal string? Glyph { get; init; }
     internal Image? IconImage { get; init; }
+    internal bool OtherScreen { get; init; }
     private bool IconOnly => Glyph != null || IconImage != null;
 
     internal bool Active
