@@ -129,7 +129,8 @@ internal sealed class Taskbar : Panel
     /// <param name="windows">OtherScreen: the window is on another screen; its button sits on the right, by the clock.</param>
     internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active, string? Glyph, Image? Icon, bool OtherScreen)> windows)
     {
-        var signature = string.Join("|", windows.Select(w => w.Key + "=" + w.Title + (w.OtherScreen ? "@" : "")));
+        // The icon is part of it: a program's own icon is known only once it has started.
+        var signature = string.Join("|", windows.Select(w => w.Key + "=" + w.Title + (w.OtherScreen ? "@" : "") + (w.Icon != null ? "#" + w.Icon.GetHashCode() : w.Glyph)));
         if (signature != taskSignature)
         {
             taskSignature = signature;
@@ -292,7 +293,7 @@ internal sealed class StartMenu : Form
         if (Owner != owner) Owner = owner;
         Show();
         Activate();
-        content.Controls.OfType<MenuTile>().FirstOrDefault(t => t.Enabled)?.Focus();
+        content.Focus(); // No tile looks selected until the keyboard (Tab / arrows) is used.
     }
 }
 

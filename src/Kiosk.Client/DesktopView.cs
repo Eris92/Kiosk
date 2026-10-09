@@ -368,9 +368,10 @@ internal sealed class MenuTile : Button
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+        g.Clear(Parent?.BackColor ?? KioskTheme.Surface); // Rounded corners show the menu, not black.
         using var tile = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(12));
         using var fill = new SolidBrush(pressed ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.22) : hovered ? Color.FromArgb(32, 48, 69) : KioskTheme.Surface);
-        using var stroke = new Pen(hovered || Focused ? KioskTheme.AccentLine : KioskTheme.Border);
+        using var stroke = new Pen(hovered || Focused && ShowFocusCues ? KioskTheme.AccentLine : KioskTheme.Border);
         g.FillPath(fill, tile);
         g.DrawPath(stroke, tile);
         var textColor = Enabled ? KioskTheme.Text : KioskTheme.Muted;
