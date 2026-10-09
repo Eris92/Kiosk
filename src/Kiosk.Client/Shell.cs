@@ -100,6 +100,8 @@ internal sealed class Taskbar : Panel
         clock.Font = new Font("Segoe UI", 9.5f);
         clock.ForeColor = KioskTheme.Text;
         Controls.AddRange(new Control[] { MenuButton, LockButton, LogoutButton, ExitButton, Status, clock });
+        // A clean bar: Menu, windows and the clock. Lock, sign-out and close live in Menu → System.
+        LockButton.Visible = LogoutButton.Visible = ExitButton.Visible = Status.Visible = false;
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -170,9 +172,12 @@ internal sealed class Taskbar : Panel
             button.SetBounds(right - width, top, width, height);
             right -= width + gap;
         }
-        int statusWidth = Scale(220);
-        Status.SetBounds(right - statusWidth, top, statusWidth, height);
-        right -= statusWidth + gap;
+        if (Status.Visible)
+        {
+            int statusWidth = Scale(220);
+            Status.SetBounds(right - statusWidth, top, statusWidth, height);
+            right -= statusWidth + gap;
+        }
 
         int left = MenuButton.Right + Scale(18);
         int available = Math.Max(0, right - left);

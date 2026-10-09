@@ -76,6 +76,12 @@ internal static class Program
             var config = Configuration.Load(path);
             KioskTheme.SetAccent(config.AccentColor);
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
+            // "Uruchom ponownie": the previous copy may still be closing — wait for it a moment.
+            if (!first)
+            {
+                try { first = instance.WaitOne(TimeSpan.FromSeconds(15)); }
+                catch (AbandonedMutexException) { first = true; }
+            }
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
             Application.Run(new KioskForm(config, path));
             return 0;

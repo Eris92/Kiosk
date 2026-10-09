@@ -99,7 +99,6 @@ internal sealed class KioskForm : Form
         taskbar.TaskMenuRequested += ShowTaskMenu;
         taskbar.LockButton.Click += (_, _) => Lock("manual_lock", 0);
         taskbar.LogoutButton.Click += (_, _) => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); };
-        taskbar.ExitButton.Visible = config.TestMode;
         taskbar.ExitButton.Click += (_, _) => Close();
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
@@ -821,6 +820,9 @@ internal sealed class KioskForm : Form
             system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
             system.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
         }
+        // Closing the shell itself: in test mode, or for a Kiosk administrator.
+        if (config.TestMode || s != null && IsAdmin(s))
+            system.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
         var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
             KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
         return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems), new("System", system)];
@@ -887,6 +889,35 @@ internal sealed class KioskForm : Form
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+
+    /// <summary>Menu → Zamknij: close the Kiosk or start it again (same program, same configuration).</summary>
+    private void AskCloseOrRestart()
+    {
+        var restart = new TaskDialogButton("Uruchom ponownie");
+        var close = new TaskDialogButton("Zamknij");
+        var page = new TaskDialogPage
+        {
+            Caption = "Kiosk", Heading = "Zamknąć Kiosk?",
+            Text = "„Uruchom ponownie” zamyka Kiosk i od razu otwiera go od nowa (np. po zmianie konfiguracji).",
+            Buttons = { restart, close, TaskDialogButton.Cancel }
+        };
+        var result = TaskDialog.ShowDialog(this, page);
+        if (result == close) { Audit.Write("client_close_requested"); Close(); }
+        else if (result == restart)
+        {
+            Audit.Write("client_restart_requested");
+            closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
+            if (!closeConfirmed) return;
+            // The new copy waits until this one has released its single-instance lock.
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = AppContext.BaseDirectory,
+                Arguments = string.Join(" ", Environment.GetCommandLineArgs().Skip(1).Select(a => "\"" + a + "\""))
+            });
+            Close();
+        }
+    }
 
     /// <summary>Menu → Odśwież ekrany: the screens' content starts again (pages reload, programs restart).</summary>
     private void RefreshScreens()
