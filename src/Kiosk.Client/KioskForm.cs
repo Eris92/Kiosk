@@ -1024,12 +1024,47 @@ internal sealed class KioskForm : Form
 
     // ---------------------------------------------------------------- remote desktops
 
+    /// <summary>
+    /// Remote Desktop (mstsc) started as the signed-in person with /remoteGuard: their Kerberos sign-in reaches the
+    /// server without any password leaving this PC. The .rdp settings go in a public folder (the person's process
+    /// must read them; they contain no secrets) and are removed shortly after the start.
+    /// </summary>
+    private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection)
+    {
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Kiosk");
+        Directory.CreateDirectory(folder);
+        var file = Path.Combine(folder, "rdp-" + Guid.NewGuid().ToString("N") + ".rdp");
+        File.WriteAllLines(file,
+        [
+            "full address:s:" + connection.Server + (connection.Port == 3389 ? "" : ":" + connection.Port),
+            "screen mode id:i:1", "smart sizing:i:1", "dynamic resolution:i:1",
+            "desktopwidth:i:" + Math.Max(800, surface.Width), "desktopheight:i:" + Math.Max(600, surface.Height),
+            "prompt for credentials:i:0", "enablecredsspsupport:i:1", "authentication level:i:2",
+            "redirectsmartcards:i:1", "redirectdrives:i:0", "redirectprinters:i:0", "redirectclipboard:i:0",
+            "autoreconnection enabled:i:0", "displayconnectionbar:i:0"
+        ]);
+        _ = Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => { try { File.Delete(file); } catch (IOException) { } });
+        return new ApplicationEntry
+        {
+            Name = connection.Name,
+            Path = Path.Combine(Environment.SystemDirectory, "mstsc.exe"),
+            Arguments = "\"" + file + "\" /remoteGuard"
+        };
+    }
+
     private void OpenRdp(RdpConnection connection)
     {
         var key = "rdp:" + connection.Name;
         if (current?.Rdp.ContainsKey(connection.Name) == true) { ActivateExisting(key); return; }
         if (!CheckCard()) return;
         var session = current!;
+        if (session.Logon != null && connection.Authentication != RdpAuthentication.EntraId)
+        {
+            // Signed in with "Zaloguj": the remote desktop runs as the person, with Remote Credential Guard (Kerberos).
+            // No password is sent — Credential Guard on this PC refuses to hand saved passwords to RDP anyway.
+            _ = OpenApplicationAsync(RemoteDesktopAsUser(connection));
+            return;
+        }
         RdpHost? host = null;
         try
         {
