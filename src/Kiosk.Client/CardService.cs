@@ -23,7 +23,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | update
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | update
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
         public string? CredentialId { get; set; }
@@ -72,6 +72,15 @@ internal static class CardService
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
             using var card = new CtapCard(request.Reader);
             if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
+            if (request.Op == "haspin") return new Response { Code = card.HasPin() ? 0 : 0x35 };
+            if (request.Op == "setpin")
+            {
+                // Only a card that has no PIN yet: changing an existing PIN is not something Kiosk does.
+                if (card.HasPin()) return new Response { Code = -2, Message = "Karta ma już PIN." };
+                step = "ustawianie PIN-u";
+                card.SetPin(request.Pin);
+                return new Response { Message = "PIN karty ustawiony." };
+            }
             step = "PIN";
             card.UsePin(request.Pin);
             switch (request.Op)

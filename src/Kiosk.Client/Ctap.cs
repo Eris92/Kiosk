@@ -77,6 +77,35 @@ internal sealed class CtapCard : IDisposable
         pinToken = Decrypt((byte[])reply[2L]);
     }
 
+    /// <summary>Whether the card already has a FIDO2 PIN (authenticatorGetInfo options.clientPin).</summary>
+    internal bool HasPin()
+    {
+        var info = Command(0x04, null);
+        return info.TryGetValue(4L, out var options) && options is Dictionary<object, object> o && o.TryGetValue("clientPin", out var set) && set is true;
+    }
+
+    /// <summary>A new card without a PIN: sets <paramref name="pin"/> (clientPIN setPIN, PIN protocol 1).</summary>
+    internal void SetPin(string pin)
+    {
+        var bytes = Encoding.UTF8.GetBytes(pin);
+        if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
+        var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
+        var cardKey = ECDiffieHellman.Create(new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
+        });
+        platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
+        var padded = new byte[64];
+        bytes.CopyTo(padded, 0);
+        var newPinEnc = Encrypt(padded);
+        Array.Clear(padded);
+        Array.Clear(bytes);
+        var pinAuth = HMACSHA256.HashData(shared, newPinEnc).AsSpan(0, 16).ToArray();
+        Command(0x06, Cbor.Map((1L, 1L), (2L, 3L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc)));
+    }
+
     /// <summary>The only relying party Kiosk ever uses on the card.</summary>
     internal const string RelyingParty = "kiosk.local";
 

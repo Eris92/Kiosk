@@ -283,8 +283,10 @@ internal sealed class KioskForm : Form
             try
             {
                 string message = "Wpisz PIN karty, aby ją zapamiętać. Następnym razem wystarczy sam PIN.";
-                while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
+                var first = await EnsureCardPinAsync(readerName);
+                while ((first ?? await desktop.AskPinAsync(message, cardPresent)) is { } pin)
                 {
+                    first = null;
                     var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
                     Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code + " " + saved.Message);
                     if (saved.Code == CardPin.WrongPin) { message = saved.Message + " Spróbuj ponownie."; continue; }
@@ -296,6 +298,29 @@ internal sealed class KioskForm : Form
             finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
         }
         Unlock(session);
+    }
+
+    /// <summary>
+    /// A new card without a FIDO2 PIN: the person chooses one here (typed twice) and the card stores it.
+    /// Returns the new PIN to continue with, or null when the card already had one (or setting it was cancelled).
+    /// </summary>
+    private async Task<string?> EnsureCardPinAsync(string readerName)
+    {
+        var state = await Task.Run(() => CardService.Call(new CardService.Request { Op = "haspin", Reader = readerName }));
+        if (state.Code != 0x35) return null;
+        string message = "Karta nie ma jeszcze PIN-u. Ustaw nowy PIN (od 4 znaków) – będziesz go podawać przy logowaniu.";
+        while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
+        {
+            if (pin.Length < 4) { message = "PIN musi mieć co najmniej 4 znaki. Ustaw nowy PIN."; continue; }
+            var again = await desktop.AskPinAsync("Wpisz nowy PIN jeszcze raz.", cardPresent);
+            if (again == null) break;
+            if (again != pin) { message = "PIN-y się różnią. Ustaw nowy PIN."; continue; }
+            var set = await Task.Run(() => CardService.Call(new CardService.Request { Op = "setpin", Reader = readerName, Pin = pin }));
+            Audit.Write(set.Code == 0 ? "card_pin_set" : "card_pin_set_failed", set.Code + " " + set.Message);
+            if (set.Code == 0) return pin;
+            message = set.Message + " Spróbuj ponownie.";
+        }
+        return null;
     }
 
     /// <summary>Someone who never signed in to this PC: create their Windows profile before Edge and the apps start.</summary>
@@ -317,8 +342,10 @@ internal sealed class KioskForm : Form
     {
         var readerName = reader.ActiveReader;
         string message = "Wpisz PIN karty.";
-        while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
+        var first = await EnsureCardPinAsync(readerName);
+        while ((first ?? await desktop.AskPinAsync(message, cardPresent)) is { } pin)
         {
+            first = null;
             var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "verify", Reader = readerName, Pin = pin }));
             if (answer.Code == 0) return new(CardPin.Verified, answer.Message);
             if (answer.Code != 0x31) return new(CardPin.Failed, answer.Message);
