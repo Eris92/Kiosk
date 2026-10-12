@@ -351,7 +351,10 @@ internal sealed class SettingsView : UserControl
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         // The label wraps inside its column; fixed-width controls keep their width (Dock = Left in a cell collapsed them).
         panel.Controls.Add(new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 4, 0) }, 0, row);
-        if (control.Dock == DockStyle.None) control.Anchor = AnchorStyles.Left;
+        // A table cell shrinks a too-wide control to fit before the table has its real width (at 250 % it stayed 0 px wide):
+        // the minimum width keeps number fields visible; drop-downs take the column's width, so long choices are not cut off.
+        if (control is ComboBox) control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        else if (control.Dock == DockStyle.None) { control.Anchor = AnchorStyles.Left; control.MinimumSize = new Size(control.Width, 0); }
         panel.Controls.Add(control, 1, row);
     }
 
