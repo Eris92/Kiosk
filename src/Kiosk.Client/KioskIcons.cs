@@ -7,7 +7,8 @@ namespace Kiosk.Client;
 internal static class KioskIcons
 {
     internal const string Menu = "", Browser = "", Remote = "", Notes = "", Settings = "",
-        Lock = "", Logout = "", Desktop = "", Command = "", Refresh = "", App = "", Screens = "";
+        Lock = "", Logout = "", Desktop = "", Command = "", Refresh = "", App = "", Screens = "",
+        Power = "\uE7E8", Restart = "\uE777", CloseApp = "\uE711";
 
     private static readonly string Family = new System.Drawing.Text.InstalledFontCollection().Families
         .Select(f => f.Name).FirstOrDefault(n => n is "Segoe Fluent Icons" or "Segoe MDL2 Assets") ?? "Segoe UI Symbol";

@@ -243,7 +243,7 @@ internal sealed record MenuItemSpec(string Title, string Category, Action Run, b
 internal sealed record MenuSection(string Title, IReadOnlyList<MenuItemSpec> Items);
 
 /// <summary>The Start menu (Windows 11 26H2 look): rounded panel above the taskbar, sections of pinned icons, and a
-/// darker footer with Pulpit / Konfiguracja on the left and the power button (Zablokuj, Wyloguj, Zamknij) on the right.</summary>
+/// darker footer with Pulpit / Konfiguracja on the left and the power button (Zablokuj, Wyloguj, Uruchom ponownie, Wyłącz, Zamknij aplikację) on the right.</summary>
 internal sealed class StartMenu : Form
 {
     private readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = KioskTheme.MenuBack };

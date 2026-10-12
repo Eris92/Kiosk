@@ -860,7 +860,8 @@ internal sealed class KioskForm : Form
         return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems)];
     }
 
-    /// <summary>The menu's footer, as in Windows 11: Pulpit and Konfiguracja on the left; the power button (Zablokuj, Wyloguj, Zamknij) on the right.</summary>
+    /// <summary>The menu's footer, as in Windows 11: Pulpit and Konfiguracja on the left; the power button
+    /// (Zablokuj, Wyloguj, Uruchom ponownie, Wyłącz, Zamknij aplikację) on the right.</summary>
     private (List<MenuItemSpec> Left, List<MenuItemSpec> Power) BuildMenuFooter()
     {
         bool can = CanUseApps;
@@ -875,10 +876,12 @@ internal sealed class KioskForm : Form
         {
             power.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
             power.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
+            power.Add(new MenuItemSpec("Uruchom ponownie", "Uruchom ponownie komputer", () => PowerOffComputer(restart: true), true, KioskIcons.Restart));
+            power.Add(new MenuItemSpec("Wyłącz", "Wyłącz komputer", () => PowerOffComputer(restart: false), true, KioskIcons.Power));
         }
         // Closing the shell itself: in test mode, or for a Kiosk administrator.
         if (config.TestMode || s != null && IsAdmin(s))
-            power.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
+            power.Add(new MenuItemSpec("Zamknij aplikację", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, KioskIcons.CloseApp));
         return (left, power);
     }
 
@@ -950,11 +953,36 @@ internal sealed class KioskForm : Form
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 
-    /// <summary>Menu → Zamknij: close the Kiosk or start it again (same program, same configuration).</summary>
+    /// <summary>Menu → Uruchom ponownie / Wyłącz: restarts or shuts down the computer (all sessions end).</summary>
+    private void PowerOffComputer(bool restart)
+    {
+        string action = restart ? "Uruchomić ponownie komputer?" : "Wyłączyć komputer?";
+        string text = sessions.Values.Any(x => x.HasWork)
+            ? "Wszystkie sesje zostaną zakończone: niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte."
+            : "Wszystkie sesje zostaną zakończone.";
+        if (MessageBox.Show(this, text, action, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        Audit.Write(restart ? "computer_restart_requested" : "computer_shutdown_requested", current?.Identity.Name ?? "");
+        if (config.TestMode) { notice = "Tryb testowy: komputer nie został " + (restart ? "uruchomiony ponownie." : "wyłączony."); RefreshChrome(); return; }
+        closeConfirmed = true;
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "shutdown.exe"),
+                (restart ? "/r" : "/s") + " /t 0") { UseShellExecute = false, CreateNoWindow = true });
+        }
+        catch (Exception ex)
+        {
+            closeConfirmed = false;
+            notice = "Nie udało się " + (restart ? "uruchomić ponownie" : "wyłączyć") + " komputera: " + ex.Message;
+            Audit.Write("computer_power_failed", ex.Message);
+            RefreshChrome();
+        }
+    }
+
+    /// <summary>Menu → Zamknij aplikację: close the Kiosk or start it again (same program, same configuration).</summary>
     private void AskCloseOrRestart()
     {
         var restart = new TaskDialogButton("Uruchom ponownie");
-        var close = new TaskDialogButton("Zamknij");
+        var close = new TaskDialogButton("Zamknij aplikację");
         var page = new TaskDialogPage
         {
             Caption = "Kiosk", Heading = "Zamknąć Kiosk?",
