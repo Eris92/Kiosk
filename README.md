@@ -11,6 +11,18 @@ reconnection must be tested with your reader, middleware, PKI and RDS.
 Fullscreen is not an OS security boundary. No OS lockdown, auto-logon,
 firewall/registry changes or credential storage are performed by these files.
 
+
+## Download for a new PC
+
+Every push to `main` or `kiosk-explorer` (and every `v*` tag) builds a GitHub
+Release. Latest package:
+https://github.com/Eris92/Kiosk/releases/latest/download/Kiosk-win-x64.zip
+
+Unzip it to e.g. `C:\Kiosk` (it keeps the repository layout: `out\client`,
+`scripts`, `config`), edit `config\client.json`, then run the setup scripts
+below as administrator. No .NET installation is needed. `client.local.json`
+is never part of the package.
+
 ## Prerequisites
 
 - Windows 11 x64 client with a PC/SC reader and certificate smart card, such as

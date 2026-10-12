@@ -1,11 +1,12 @@
 name: Build Windows client
 on:
   push:
-    branches: [main]
+    branches: [main, kiosk-explorer]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -34,14 +35,32 @@ jobs:
           if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Smoke test timed out.' }
           Get-Content ./out/client/self-test.txt
           if ($process.ExitCode -ne 0) { throw 'Windows embedded UI smoke test failed.' }
-      - name: Package test files
+      # Same layout as the repository, so scripts\Install-*.ps1 find out\client and config\ without parameters.
+      - name: Package
         shell: pwsh
         run: |
-          Copy-Item scripts out/scripts -Recurse
-          Copy-Item config out/config -Recurse
-          Copy-Item README.md out/README.md
+          Remove-Item out/client/self-test.txt -ErrorAction SilentlyContinue
+          $package = 'package/Kiosk'
+          New-Item -ItemType Directory -Path "$package/out" -Force | Out-Null
+          Copy-Item out/client "$package/out/client" -Recurse
+          Copy-Item scripts "$package/scripts" -Recurse
+          Copy-Item config "$package/config" -Recurse
+          Copy-Item README.md "$package/README.md"
+          Get-ChildItem package -Recurse -Filter '*.local.json' | Remove-Item
+          Compress-Archive -Path "$package/*" -DestinationPath package/Kiosk-win-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Kiosk-win-x64
-          path: out/
+          path: package/Kiosk/
           retention-days: 30
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') { $tag = '${{ github.ref_name }}' }
+          else { $tag = 'build-${{ github.run_number }}' }
+          $sha = '${{ github.sha }}'.Substring(0, 7)
+          $notes = "Branch/tag: ${{ github.ref_name }}, commit $sha.`n`nInstall: unzip to e.g. C:\Kiosk, then run as administrator scripts\Install-KioskShell.ps1 (see README)."
+          gh release create $tag package/Kiosk-win-x64.zip --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes
