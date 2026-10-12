@@ -135,6 +135,26 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(password); }
     }
 
+    /// <summary>
+    /// First use on this PC: Windows creates the person's profile (C:\Users\…) when a program first starts as them.
+    /// Do it once with a hidden "cmd /c exit" and wait, so Edge and the apps start in a finished profile instead of
+    /// racing its creation. Returns false when Windows still has no profile for them.
+    /// </summary>
+    internal bool EnsureProfile()
+    {
+        if (ProfileDirectory != null) return true;
+        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var (process, thread) = Start(cmd, "\"" + cmd + "\" /c exit", Environment.SystemDirectory, show: 0);
+        try
+        {
+            ResumeThread(thread);
+            WaitForSingleObject(process, 120000);
+        }
+        finally { CloseHandle(thread); CloseHandle(process); }
+        Audit.Write(ProfileDirectory != null ? "profile_created" : "profile_missing", DisplayName);
+        return ProfileDirectory != null;
+    }
+
     /// <summary>The password for the RDP control; the caller clears it as soon as it is handed over.</summary>
     internal char[] Reveal()
     {
@@ -156,6 +176,9 @@ internal sealed class UserLogon : IDisposable
     private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
 
+    [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("credui.dll", CharSet = CharSet.Unicode)]
     private static extern int CredUIPromptForWindowsCredentials(ref CredUiInfo info, int error, ref uint package, IntPtr inBuffer, uint inSize,
         out IntPtr outBuffer, out uint outSize, ref bool save, int flags);

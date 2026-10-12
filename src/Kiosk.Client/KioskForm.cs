@@ -274,6 +274,7 @@ internal sealed class KioskForm : Form
             catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
             if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             Audit.Write("signed_in_as_user", session.Logon.DisplayName);
+            await PrepareProfileAsync(session);
             // Remember the account for this card: next time the card and its PIN are enough.
             var logon = session.Logon;
             var id = session.Identity.Id;
@@ -295,6 +296,21 @@ internal sealed class KioskForm : Form
             finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
         }
         Unlock(session);
+    }
+
+    /// <summary>Someone who never signed in to this PC: create their Windows profile before Edge and the apps start.</summary>
+    private async Task PrepareProfileAsync(UserSession session)
+    {
+        var logon = session.Logon!;
+        if (logon.ProfileDirectory != null) return;
+        session.Notice = "Pierwsze logowanie na tym komputerze: tworzę profil Windows…";
+        RefreshChrome();
+        bool ready;
+        try { ready = await Task.Run(logon.EnsureProfile); }
+        catch (Exception ex) { ready = false; Audit.Write("profile_failed", ex.Message); }
+        session.Notice = ready ? null
+            : "Windows nie utworzył profilu dla " + logon.DisplayName + ". Zaloguj się raz do Windows na tym komputerze kartą, potem wróć do Kiosku.";
+        RefreshChrome();
     }
 
     private async Task<CardPin.Result> VerifyFidoPinAsync()
@@ -325,7 +341,7 @@ internal sealed class KioskForm : Form
                 var pin = await desktop.AskPinAsync(message, cardPresent);
                 if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
                 var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
-                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
+                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); await PrepareProfileAsync(session); return true; }
                 Audit.Write("card_vault_failed", opened.Code + " " + opened.Message);
                 if (opened.Code == CardPin.WrongPin) { message = opened.Message + " Spróbuj ponownie."; continue; }
                 if (opened.Code == CardPin.NoKey) { session.Notice = opened.Message; return true; } // Set the card up again below.
