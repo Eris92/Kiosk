@@ -54,11 +54,16 @@ internal static class News
     }
 
     /// <summary>A relative file (e.g. zglos-problem.html next to the json) becomes a file:// address for the browser.</summary>
-    private static string ResolveAction(string action, string folder)
+    /// <remarks>"https:// wp.pl" and "wp.pl" both become https://wp.pl.</remarks>
+    internal static string ResolveAction(string action, string folder)
     {
         action = action.Trim();
-        if (action.Length == 0 || action.Contains("://") || action.Contains(':') && !Path.IsPathFullyQualified(action)) return action;
+        if (action.Length == 0) return action;
+        if (action.Contains("://")) return string.Concat(action.Where(c => !char.IsWhiteSpace(c)));
+        if (action.Contains(':') && !Path.IsPathFullyQualified(action)) return action; // app:, rdp:, cmd:, mailto:…
         var path = Path.IsPathFullyQualified(action) ? action : Path.Combine(folder, action);
+        if (!Path.IsPathFullyQualified(action) && !File.Exists(path) && !action.Contains('\\') && !action.Contains(' ') && action.Contains('.'))
+            return "https://" + action; // A site name without https://
         return new Uri(path).AbsoluteUri;
     }
 }

@@ -239,7 +239,7 @@ internal sealed class BrowserView : UserControl
         core.NavigationStarting += (_, e) =>
         {
             // NavigateToString uses an internal data document (also used by the smoke test).
-            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)) e.Cancel = true;
+            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase) && !policy.Allows(e.Uri)) e.Cancel = true;
             else if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
             {
                 e.Cancel = true;
@@ -301,7 +301,8 @@ internal sealed class BrowserView : UserControl
 
     /// <summary>Opens a new tab with the start page (also used by the self-test).</summary>
     internal Task OpenTabAsync() => AddTabAsync(homeUrl);
-    internal Task OpenTabAsync(string url) => AddTabAsync(url);
+    /// <summary>A page of a company message, in a new tab (allowed even outside the bookmarks).</summary>
+    internal Task OpenTrustedTabAsync(string url) { policy.Trust(url); return AddTabAsync(url); }
     internal void CloseActiveTab() { if (active != null) CloseTab(active); }
 
     private static bool IsWebAddress(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
@@ -338,6 +339,9 @@ internal sealed class BrowserView : UserControl
 internal sealed class SitePolicy
 {
     private readonly string[]? hosts;
+    // Pages of company messages (Konfiguracja → Komunikaty): allowed even with "only bookmarks", their folder too.
+    private readonly HashSet<string> trustedHosts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> trustedFolders = new(StringComparer.OrdinalIgnoreCase);
 
     internal SitePolicy(bool onlyBookmarks, IEnumerable<Bookmark> bookmarks, IEnumerable<string> extraDomains)
     {
@@ -352,11 +356,22 @@ internal sealed class SitePolicy
 
     internal bool Restricted => hosts != null;
 
+    /// <summary>An address the administrator put in a company message: its site, or for a file its folder.</summary>
+    internal void Trust(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        if (uri.IsFile) trustedFolders.Add(uri.AbsoluteUri[..(uri.AbsoluteUri.LastIndexOf('/') + 1)]);
+        else if (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) trustedHosts.Add(uri.Host.TrimEnd('.'));
+    }
+
     internal bool Allows(string url)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        if (uri.IsFile) return trustedFolders.Any(f => uri.AbsoluteUri.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
         if (hosts == null) return true;
         var host = uri.Host.TrimEnd('.').ToLowerInvariant();
+        if (trustedHosts.Contains(host)) return true;
         return hosts.Any(h => host == h || host.EndsWith("." + h, StringComparison.Ordinal));
     }
 }

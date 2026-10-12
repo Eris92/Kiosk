@@ -1344,7 +1344,7 @@ internal sealed class KioskForm : Form
         if (current?.Browser != null && url != null && current.Logon == null)
         {
             ActivateExisting(BrowserKey);
-            await current.Browser.OpenTabAsync(url);
+            await current.Browser.OpenTrustedTabAsync(url);
             return;
         }
         if (current?.Browser != null && url == null)
@@ -1358,10 +1358,26 @@ internal sealed class KioskForm : Form
         if (session.Logon != null)
         {
             // Signed in as the person: their own Edge, with their profile, bookmarks and SSO (like runas).
-            await OpenApplicationAsync(url == null ? EdgeAsUser : EdgeAsUser with { Arguments = "--new-window " + url }, another: url != null);
+            if (url == null) { await OpenApplicationAsync(EdgeAsUser); return; }
+            if (session.Applications.ContainsKey(EdgeAsUser.Name))
+            {
+                // Edge is already open as the person: the page opens as a new tab of its window (a second Edge process only hands it over).
+                try
+                {
+                    var edge = EdgeAsUser.Path;
+                    var (process, thread) = session.Logon.Start(edge, "\"" + edge + "\" \"" + url + "\"", Path.GetDirectoryName(edge), show: 1);
+                    AppNative.ResumeThread(thread);
+                    AppNative.CloseHandle(thread);
+                    AppNative.CloseHandle(process);
+                    ActivateExisting("app:" + EdgeAsUser.Name);
+                }
+                catch (Exception ex) { notice = "Nie udało się otworzyć strony: " + ex.Message; Audit.Write("news_open_failed", ex.Message); }
+            }
+            else await OpenApplicationAsync(EdgeAsUser with { Arguments = "--new-window \"" + url + "\"" });
             return;
         }
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
+        if (url != null) policy.Trust(url);
         var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
         session.Browser = requested;
         AddWindow(session, BrowserKey, config.Applications.FirstOrDefault(a => a.IsBuiltInBrowser)?.Name ?? "Przeglądarka", requested);
@@ -1576,6 +1592,15 @@ internal sealed class KioskForm : Form
             var items = News.Load(folder);
             if (items.Count != 2 || items[0].Picture == null || !items[1].Action.StartsWith("file:///", StringComparison.Ordinal) || News.Load("").Count != 0)
                 throw new InvalidOperationException("Company messages were not read correctly.");
+            if (News.ResolveAction("https:// wp.pl", folder) != "https://wp.pl" || News.ResolveAction("wp.pl", folder) != "https://wp.pl" ||
+                News.ResolveAction("app:Excel", folder) != "app:Excel")
+                throw new InvalidOperationException("Company message addresses were not normalised.");
+            var trusted = new SitePolicy(true, [new Bookmark { Name = "G", Url = "https://www.google.com" }], []);
+            trusted.Trust(items[1].Action);
+            trusted.Trust("https://wp.pl");
+            if (!trusted.Allows(items[1].Action) || !trusted.Allows("https://wp.pl/news") || trusted.Allows("https://example.org") ||
+                trusted.Allows(new Uri(Path.Combine(Path.GetTempPath(), "other.html")).AbsoluteUri))
+                throw new InvalidOperationException("Company message pages are not allowed in the browser.");
             desktop.SetNews(items, 8);
             if (desktop.News.Count != 2) throw new InvalidOperationException("Company messages are not on the desktop.");
             var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
