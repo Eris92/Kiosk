@@ -14,9 +14,9 @@ internal sealed record NewsItem
     public string Button { get; init; } = "";
     /// <summary>https://… page or a file (opened in the Kiosk browser), app:Name, rdp:Name, cmd:Name; empty = information only.</summary>
     public string Action { get; init; } = "";
-    /// <summary>Optional: shown only from / until this day (yyyy-MM-dd).</summary>
-    public DateTime? From { get; init; }
-    public DateTime? Until { get; init; }
+    /// <summary>Optional: shown only from / until this moment: "yyyy-MM-dd HH:mm", or "yyyy-MM-dd" for the whole day.</summary>
+    public string From { get; init; } = "";
+    public string Until { get; init; } = "";
     /// <summary>"Pasek": a bar across the top of the desktop (e.g. "Nie działa system XXX, trwa naprawa") instead of a slide.</summary>
     public string Kind { get; init; } = "";
     /// <summary>The bar's colours: a name (red, orange, green…) or #RRGGBB; default red with white text.</summary>
@@ -49,7 +49,7 @@ internal static class News
         foreach (var item in list)
         {
             if (item == null || !item.Enabled || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0) continue;
-            if (item.From is { } from && today < from.Date || item.Until is { } until && today > until.Date) continue;
+            if (!Shown(item, DateTime.Now)) continue;
             Image? picture = null;
             if (item.Image.Length > 0)
             {
@@ -76,6 +76,21 @@ internal static class News
         }
         return merged;
     }
+
+    private static readonly string[] Formats = ["yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"];
+
+    /// <summary>A date and time from From / Until; a day alone means its start (From) or its end (Until). Unreadable = no limit.</summary>
+    internal static DateTime? ParseMoment(string text, bool end)
+    {
+        text ??= "";
+        if (!DateTime.TryParseExact(text.Trim(), Formats, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal, out var moment)) return null;
+        return end && text.Trim().Length == 10 ? moment.Date.AddDays(1).AddTicks(-1) : moment;
+    }
+
+    /// <summary>Within From – Until (both optional).</summary>
+    internal static bool Shown(NewsItem item, DateTime now) =>
+        !(ParseMoment(item.From, false) is { } from && now < from) && !(ParseMoment(item.Until, true) is { } until && now > until);
 
     /// <summary>"red", "#C62828" or "198,40,40"; anything else gives the fallback.</summary>
     internal static System.Drawing.Color ParseColor(string text, System.Drawing.Color fallback)

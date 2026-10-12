@@ -1,7 +1,7 @@
 // Komunikaty Kiosku: przewijają się na dole pulpitu (Konfiguracja → Komunikaty → folder z tym plikiem).
 // Title, Text, Image (plik w tym folderze), Button (napis przycisku),
 // Action: https://… | plik z tego folderu (np. zglos-problem.html) | app:Nazwa | rdp:Nazwa | cmd:Nazwa
-// From / Until (yyyy-MM-dd): opcjonalnie, od kiedy / do kiedy pokazywać.
+// From / Until: opcjonalnie, od kiedy / do kiedy pokazywać: "2026-10-20 16:00" (dzień i godzina) albo "2026-10-20" (cały dzień).
 // "Kind": "Pasek": pasek na górze pulpitu zamiast slajdu; Color (tło) i TextColor (tekst): nazwa (red, orange, green…) albo #RRGGBB.
 // "Enabled": true / false: włącza i wyłącza wpis bez usuwania (przygotuj kilka pasków i włączaj potrzebny).
 [
@@ -20,8 +20,8 @@
     "Kind": "Pasek",
     "Title": "Prace serwisowe",
     "Text": "20 października 16:00–17:00 system XXX może działać wolniej.",
-    "From": "2026-10-19",
-    "Until": "2026-10-20",
+    "From": "2026-10-20 15:30",
+    "Until": "2026-10-20 17:00",
     "Color": "#E67E22",
     "TextColor": "black"
   },
@@ -58,13 +58,13 @@
     "Action": "zglos-problem.html"
   },
   {
-    // Z datami: pokazuje się tylko od From do Until (włącznie), potem znika sam.
+    // Z datami: pokazuje się od 1 października 8:00 do końca 31 grudnia, potem znika sam.
     "Enabled": true,
     "Title": "Szkolenie z bezpieczeństwa",
     "Text": "Do końca roku każdy przechodzi krótkie szkolenie online. Zajmie 15 minut.",
     "Button": "Szczegóły",
     "Action": "aktualizacja.html",
-    "From": "2026-10-01",
+    "From": "2026-10-01 08:00",
     "Until": "2026-12-31"
   },
   {

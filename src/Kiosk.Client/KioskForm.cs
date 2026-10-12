@@ -1728,6 +1728,11 @@ internal sealed class KioskForm : Form
             if (all.Count(i => i.IsBar) != 1 || News.ParseColor("red", Color.Empty).ToArgb() != Color.Red.ToArgb() ||
                 News.ParseColor("#00FF00", Color.Empty).ToArgb() != Color.Lime.ToArgb() || News.ParseColor("nic", Color.Blue) != Color.Blue)
                 throw new InvalidOperationException("The bar message was not read.");
+            var at = new DateTime(2026, 10, 20, 16, 30, 0);
+            if (!News.Shown(new NewsItem { From = "2026-10-20 16:00", Until = "2026-10-20 17:00" }, at) ||
+                News.Shown(new NewsItem { From = "2026-10-20 16:45" }, at) || News.Shown(new NewsItem { Until = "2026-10-20 16:15" }, at) ||
+                !News.Shown(new NewsItem { From = "2026-10-20", Until = "2026-10-20" }, at) || !News.Shown(new NewsItem { Until = "2026-10-20T16:30" }, at))
+                throw new InvalidOperationException("From / Until with hours were not applied.");
             if (items.Count != 2 || items[0].Picture == null || !items[1].Action.StartsWith("file:///", StringComparison.Ordinal) || News.Load("").Count != 0)
                 throw new InvalidOperationException("Company messages were not read correctly.");
             if (News.ResolveAction("https:// wp.pl", folder) != "https://wp.pl" || News.ResolveAction("wp.pl", folder) != "https://wp.pl" ||
