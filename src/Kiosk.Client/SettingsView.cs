@@ -34,7 +34,6 @@ internal sealed class SettingsView : UserControl
     private static readonly Color Card = Color.FromArgb(43, 43, 43);
     private const int RowHeight = 54;
     private const string CustomAccent = "Własny kolor…";
-    private readonly CheckBox enableBrowser = new() { Text = "Przeglądarka włączona (widoczna w Menu)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 2), Font = new Font("Segoe UI", 10, FontStyle.Bold) };
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
     private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” pyta o login i hasło konta (jak runas): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
@@ -190,13 +189,11 @@ internal sealed class SettingsView : UserControl
         webOptions.Controls.Add(new Label { Text = "Dodatkowe dozwolone domeny (np. strona logowania)", AutoSize = true, Padding = new Padding(4, 8, 4, 4) }, 0, 1);
         webOptions.Controls.Add(allowedDomains, 1, 1);
         web.Controls.Add(webOptions);
-        enableBrowser.Checked = config.EnableBrowser;
-        web.Controls.Add(enableBrowser);
         onlyBookmarks.Checked = config.BrowserOnlyBookmarks;
         allowedDomains.Text = string.Join(", ", config.BrowserAllowedDomains);
         allowedDomains.Enabled = onlyBookmarks.Checked;
         onlyBookmarks.CheckedChanged += (_, _) => allowedDomains.Enabled = onlyBookmarks.Checked;
-        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Notatnik (" + ApplicationEntry.BuiltInNotes + ") to przykładowa wbudowana aplikacja: usuń wiersz, aby ją wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32.");
+        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Przeglądarka (" + ApplicationEntry.BuiltInBrowser + ") i Notatnik (" + ApplicationEntry.BuiltInNotes + ") to aplikacje wbudowane: usuń wiersz, aby je wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32.");
         var choose = new Button { Text = "Wybierz plik EXE…", AutoSize = true, Dock = DockStyle.Bottom };
         choose.Click += (_, _) => ChooseExecutable();
         applications.Controls.Add(choose);
@@ -207,6 +204,13 @@ internal sealed class SettingsView : UserControl
             apps.Rows.Add(ApplicationEntry.Notes.Name, ApplicationEntry.BuiltInNotes, "", "");
         };
         applications.Controls.Add(addNotes);
+        var addBrowser = new Button { Text = "Dodaj wbudowaną przeglądarkę", AutoSize = true, Dock = DockStyle.Bottom };
+        addBrowser.Click += (_, _) =>
+        {
+            if (apps.Rows.Cast<DataGridViewRow>().Any(r => !r.IsNewRow && string.Equals(Cell(r, "Path"), ApplicationEntry.BuiltInBrowser, StringComparison.OrdinalIgnoreCase))) return;
+            apps.Rows.Insert(0, ApplicationEntry.Browser.Name, ApplicationEntry.BuiltInBrowser, "", "");
+        };
+        applications.Controls.Add(addBrowser);
 
         var screens = new TabPage("Ekrany") { Padding = new Padding(12) };
         tabs.TabPages.Insert(tabs.TabPages.IndexOf(admins), screens);
@@ -567,7 +571,6 @@ internal sealed class SettingsView : UserControl
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,
             AccentColor = accentHex,
             TaskbarAlignment = (TaskbarAlignment)Math.Max(0, taskbarAlign.SelectedIndex),
-            EnableBrowser = enableBrowser.Checked,
             BrowserOnlyBookmarks = onlyBookmarks.Checked,
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id") }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
@@ -591,6 +594,7 @@ internal sealed class SettingsView : UserControl
                 Url = Cell(r, "Url"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments")
             }).ToArray()
         };
+        result = result with { EnableBrowser = result.Applications.Any(a => a.IsBuiltInBrowser) };
         result.Validate();
         return result;
     }
@@ -604,7 +608,7 @@ internal sealed class SettingsView : UserControl
                 throw new InvalidDataException("Po zapisie nie miałbyś dostępu do Konfiguracji. Dodaj swoją kartę na liście administratorów.");
             foreach (var app in result.Applications)
             {
-                if (app.IsBuiltInNotes) continue;
+                if (app.IsBuiltIn) continue;
                 if (!File.Exists(app.Path)) throw new InvalidDataException("Nie znaleziono pliku: " + app.Path);
                 if (app.WorkingDirectory.Length > 0 && !Directory.Exists(app.WorkingDirectory))
                     throw new InvalidDataException("Nie znaleziono katalogu: " + app.WorkingDirectory);

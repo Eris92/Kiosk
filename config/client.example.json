@@ -25,6 +25,12 @@
   "BrowserAllowedDomains": [],
   "Applications": [
     {
+      "Name": "Przeglądarka",
+      "Path": "kiosk:przegladarka",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    },
+    {
       "Name": "Notatnik",
       "Path": "kiosk:notatnik",
       "Arguments": "",
@@ -61,5 +67,5 @@
   "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
   "TestMode": true,
-  "ConfigVersion": 2
+  "ConfigVersion": 3
 }

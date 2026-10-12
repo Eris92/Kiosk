@@ -846,10 +846,11 @@ internal sealed class KioskForm : Form
             () => OpenRdp(c), can, KioskIcons.Remote)).ToList();
         if (remote.Count == 0) remote.Add(new MenuItemSpec("Brak połączeń", "Dodaj je w Konfiguracji", () => { }, false));
         var apps = new List<MenuItemSpec>();
-        if (config.EnableBrowser) apps.Add(new("Przeglądarka", s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can,
-            KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null));
-        // The built-in Notatnik is an ordinary entry of the application list, so it can be removed there.
-        apps.AddRange(config.Applications.Select(a => a.IsBuiltInNotes
+        // The built-in browser and Notatnik are ordinary entries of the application list, so they can be removed there.
+        apps.AddRange(config.Applications.Select(a => a.IsBuiltInBrowser
+            ? new MenuItemSpec(a.Name, s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can,
+                KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null)
+            : a.IsBuiltInNotes
             ? new MenuItemSpec(a.Name, s?.Notes != null ? "Otwarty" : "Notatki tekstowe", OpenNotes, can, KioskIcons.Notes)
             : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can,
                 KioskIcons.App, KioskIcons.ForProgram(a.Path))));
@@ -1239,7 +1240,7 @@ internal sealed class KioskForm : Form
 
     private async Task OpenBrowserAsync()
     {
-        if (!config.EnableBrowser) return;
+        if (!config.Applications.Any(a => a.IsBuiltInBrowser)) return;
         if (current?.Browser != null)
         {
             // Already on another screen: a new browser window for this one.
@@ -1257,7 +1258,7 @@ internal sealed class KioskForm : Form
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
         var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
         session.Browser = requested;
-        AddWindow(session, BrowserKey, "Przeglądarka", requested);
+        AddWindow(session, BrowserKey, config.Applications.FirstOrDefault(a => a.IsBuiltInBrowser)?.Name ?? "Przeglądarka", requested);
         try
         {
             // With "only bookmarks" a start page outside the list opens the first bookmark instead.
@@ -1277,6 +1278,7 @@ internal sealed class KioskForm : Form
     private async Task OpenApplicationAsync(ApplicationEntry entry, bool another = false)
     {
         if (entry.IsBuiltInNotes) { OpenNotes(); return; }
+        if (entry.IsBuiltInBrowser) { await OpenBrowserAsync(); return; }
         var key = "app:" + entry.Name;
         if (current?.Applications.TryGetValue(entry.Name, out var existing) == true)
         {
@@ -1489,7 +1491,8 @@ internal sealed class KioskForm : Form
         legacy.Validate();
         if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
-            !legacy.Applications.Single().IsBuiltInNotes || legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 1)
+            legacy.Applications.Length != 2 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.EnableBrowser ||
+            legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 2)
             throw new InvalidOperationException("Legacy configuration migration failed.");
         foreach (var invalid in new[]
         {

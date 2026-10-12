@@ -19,6 +19,12 @@ internal sealed record ApplicationEntry
     internal const string BuiltInNotes = "kiosk:notatnik";
     internal static ApplicationEntry Notes => new() { Name = "Notatnik", Path = BuiltInNotes };
     internal bool IsBuiltInNotes => string.Equals(Path, BuiltInNotes, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Path of the built-in Kiosk browser (Edge); removing the entry turns the browser off.</summary>
+    internal const string BuiltInBrowser = "kiosk:przegladarka";
+    internal static ApplicationEntry Browser => new() { Name = "Przeglądarka", Path = BuiltInBrowser };
+    internal bool IsBuiltInBrowser => string.Equals(Path, BuiltInBrowser, StringComparison.OrdinalIgnoreCase);
+    internal bool IsBuiltIn => IsBuiltInNotes || IsBuiltInBrowser;
 }
 
 internal static class Configuration

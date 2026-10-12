@@ -92,7 +92,7 @@ internal sealed record Config
     public bool TestMode { get; init; } = true;
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
-    internal const int CurrentVersion = 2;
+    internal const int CurrentVersion = 3;
 
     // Read older installations without losing their target or settings.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Server { get; init; }
@@ -102,6 +102,9 @@ internal sealed record Config
     internal Config Migrate()
     {
         if (RdpConnections == null) throw new InvalidDataException("Lista RDP nie może być null.");
+        var applications = ConfigVersion < 2 && Applications != null && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications!;
+        // Version 3: the browser became an entry of the application list instead of the EnableBrowser switch.
+        if (ConfigVersion < 3 && applications != null && EnableBrowser && !applications.Any(a => a.IsBuiltInBrowser)) applications = [ApplicationEntry.Browser, .. applications];
         return this with
         {
             RdpConnections = RdpConnections.Length == 0 && !string.IsNullOrWhiteSpace(Server)
@@ -109,7 +112,8 @@ internal sealed record Config
                 : RdpConnections,
             LockAfterSeconds = IdleSeconds ?? LockAfterSeconds,
             ChangeUserAfterSeconds = IdleSeconds.HasValue ? Math.Max(ChangeUserAfterSeconds, IdleSeconds.Value * 2) : ChangeUserAfterSeconds,
-            Applications = ConfigVersion < 2 && Applications != null && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications!,
+            Applications = applications,
+            EnableBrowser = applications?.Any(a => a.IsBuiltInBrowser) == true,
             ConfigVersion = CurrentVersion,
             Server = null, Port = null, IdleSeconds = null
         };
@@ -163,7 +167,7 @@ internal sealed record Config
         foreach (var app in Applications)
             if (app == null || string.IsNullOrWhiteSpace(app.Name) || app.Arguments == null || app.WorkingDirectory == null)
                 throw new InvalidDataException("Aplikacja wymaga nazwy i pełnej ścieżki do pliku EXE.");
-            else if (!app.IsBuiltInNotes && (!Path.IsPathFullyQualified(app.Path) ||
+            else if (!app.IsBuiltIn && (!Path.IsPathFullyQualified(app.Path) ||
                 !string.Equals(Path.GetExtension(app.Path), ".exe", StringComparison.OrdinalIgnoreCase) ||
                 app.Arguments == null || app.WorkingDirectory == null ||
                 (app.WorkingDirectory.Length > 0 && !Path.IsPathFullyQualified(app.WorkingDirectory))))
@@ -171,5 +175,6 @@ internal sealed record Config
         if (Applications.Select(a => a.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != Applications.Length)
             throw new InvalidDataException("Nazwy aplikacji muszą być unikalne.");
         if (Applications.Count(a => a.IsBuiltInNotes) > 1) throw new InvalidDataException("Wbudowany Notatnik może być na liście tylko raz.");
+        if (Applications.Count(a => a.IsBuiltInBrowser) > 1) throw new InvalidDataException("Wbudowana przeglądarka może być na liście tylko raz.");
     }
 }
