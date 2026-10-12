@@ -3,9 +3,10 @@
 // Action: https://… | plik z tego folderu (np. zglos-problem.html) | app:Nazwa | rdp:Nazwa | cmd:Nazwa
 // From / Until (yyyy-MM-dd): opcjonalnie, od kiedy / do kiedy pokazywać.
 // "Kind": "Pasek": pasek na górze pulpitu zamiast slajdu; Color (tło) i TextColor (tekst): nazwa (red, orange, green…) albo #RRGGBB.
-// Przykładowy pasek poniżej: usuń go albo ustaw Until, gdy awaria minie.
+// "Enabled": true / false: włącza i wyłącza wpis bez usuwania (przygotuj kilka pasków i włączaj potrzebny).
 [
   {
+    "Enabled": true,
     "Kind": "Pasek",
     "Title": "Nie działa system XXX",
     "Text": "Trwa naprawa. Przepraszamy za utrudnienia.",
@@ -15,6 +16,31 @@
     "Action": "zglos-problem.html"
   },
   {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "Prace serwisowe",
+    "Text": "Dziś 16:00–17:00 system XXX może działać wolniej.",
+    "Color": "#E67E22",
+    "TextColor": "black"
+  },
+  {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "System XXX znów działa",
+    "Text": "Dziękujemy za cierpliwość.",
+    "Color": "#2E7D32",
+    "TextColor": "white"
+  },
+  {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "Informacja",
+    "Text": "Nowa wersja Kiosku jest już dostępna.",
+    "Color": "#1565C0",
+    "TextColor": "white"
+  },
+  {
+    "Enabled": true,
     "Title": "Aktualizacja A",
     "Text": "W piątek po 18:00 aktualizujemy system. Zapisz pracę przed wyjściem.",
     "Image": "aktualizacja.png",
@@ -22,6 +48,7 @@
     "Action": "aktualizacja.html"
   },
   {
+    "Enabled": true,
     "Title": "Zgłoś problem",
     "Text": "Coś nie działa? Wyślij zgłoszenie do działu IT, odpowiemy jak najszybciej.",
     "Image": "zglos-problem.png",
@@ -29,6 +56,7 @@
     "Action": "zglos-problem.html"
   },
   {
+    "Enabled": true,
     "Title": "Witamy w Kiosku",
     "Text": "Przyłóż kartę, otwórz Menu na dole i wybierz aplikację lub pulpit zdalny.",
     "Image": "witamy.png"

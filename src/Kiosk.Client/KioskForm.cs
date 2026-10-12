@@ -1718,6 +1718,7 @@ internal sealed class KioskForm : Form
                   { "Title": "Aktualizacja A", "Text": "W piątek po 18:00 aktualizujemy system kadrowy.", "Image": "a.png", "Button": "Szczegóły", "Action": "https://example.com/aktualizacja" },
                   { "Title": "Zgłoś problem", "Text": "Coś nie działa? Wyślij zgłoszenie do IT.", "Button": "Zgłoś", "Action": "pomoc.html" },
                   { "Title": "Stary", "Until": "2020-01-01" },
+                  { "Kind": "Pasek", "Title": "Wyłączony", "Color": "orange", "Enabled": false },
                   { "Kind": "Pasek", "Title": "Nie działa system XXX", "Text": "Trwa naprawa.", "Color": "red", "TextColor": "white" },
                 ]
                 """);

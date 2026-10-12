@@ -22,6 +22,8 @@ internal sealed record NewsItem
     /// <summary>The bar's colours: a name (red, orange, green…) or #RRGGBB; default red with white text.</summary>
     public string Color { get; init; } = "";
     public string TextColor { get; init; } = "";
+    /// <summary>false: the entry stays in the file (ready for next time) but is not shown.</summary>
+    public bool Enabled { get; init; } = true;
 
     [System.Text.Json.Serialization.JsonIgnore]
     internal bool IsBar => Kind.Equals("pasek", StringComparison.OrdinalIgnoreCase) || Kind.Equals("bar", StringComparison.OrdinalIgnoreCase);
@@ -46,7 +48,7 @@ internal static class News
         var today = DateTime.Today;
         foreach (var item in list)
         {
-            if (item == null || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0) continue;
+            if (item == null || !item.Enabled || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0) continue;
             if (item.From is { } from && today < from.Date || item.Until is { } until && today > until.Date) continue;
             Image? picture = null;
             if (item.Image.Length > 0)

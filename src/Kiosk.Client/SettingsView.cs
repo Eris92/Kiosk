@@ -366,7 +366,7 @@ internal sealed class SettingsView : UserControl
                    "testowo C:\\ProgramData\\Kiosk\\news) leży plik " + News.FileName + " z listą: Title (tytuł), Text (opis), Image (obraz w tym folderze), " +
                    "Button (napis przycisku), Action (co robi przycisk: adres https://…, plik z folderu np. zglos-problem.html, app:Nazwa, rdp:Nazwa, cmd:Nazwa), " +
                    "opcjonalnie From / Until (yyyy-MM-dd). \"Kind\": \"Pasek\" robi z wpisu pasek na górze pulpitu (np. „Nie działa system XXX, trwa naprawa”), " +
-                   "Color i TextColor to kolor tła i tekstu (red, white, #RRGGBB). Kiosk czyta folder co minutę. Folder musi być do odczytu dla wszystkich kont. " +
+                   "Color i TextColor to kolor tła i tekstu (red, white, #RRGGBB), \"Enabled\": false wyłącza wpis bez usuwania. Kiosk czyta folder co minutę. Folder musi być do odczytu dla wszystkich kont. " +
                    "„Użyj przykładu” wskazuje przykład zainstalowany z Kioskiem (do testu); własny folder zacznij od jego kopii (config\\news w paczce). " +
                    "SharePoint: adres witryny, z której Kiosk co 10 minut bierze najnowsze strony opublikowane jako aktualności (tytuł, opis, baner, przycisk „Czytaj”). " +
                    "Czyta je konto Windows, na którym działa Kiosk (logowanie jednokrotne Entra ID), więc to konto musi mieć dostęp do witryny. " +
