@@ -1266,7 +1266,7 @@ internal sealed class KioskForm : Form
     }
 
     // Includes the deny-only Administrators SID of a UAC-filtered admin token.
-    private static readonly bool RunningAsWindowsAdmin = IsWindowsAdminToken();
+    private static bool RunningAsWindowsAdmin = IsWindowsAdminToken();
     private static bool IsWindowsAdminToken()
     {
         using var token = System.Security.Principal.WindowsIdentity.GetCurrent();
@@ -1481,6 +1481,8 @@ internal sealed class KioskForm : Form
 
         // Konfiguracja is for admins: a listed card or a Windows administrator; test mode alone does not open it.
         var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
+        var runningAsAdmin = RunningAsWindowsAdmin;   // CI runs as an administrator
+        RunningAsWindowsAdmin = false;
         var bobSession = new UserSession { Identity = bob };
         if (!IsAdmin(aliceSession, adminTest) || IsAdmin(bobSession, adminTest) ||
             IsAdmin(bobSession, config with { TestMode = true, AdminCards = [], AllowWindowsAdministrators = false }))
@@ -1488,6 +1490,11 @@ internal sealed class KioskForm : Form
         bobSession.IsWindowsAdmin = true;
         if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Windows administrator check failed.");
+        bobSession.IsWindowsAdmin = false;
+        RunningAsWindowsAdmin = true;   // an administrator started Kiosk to set it up
+        if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
+            throw new InvalidOperationException("Administrator running Kiosk check failed.");
+        RunningAsWindowsAdmin = runningAsAdmin;
         if (!LocalAdministrators.Matches(@"INVESTA\k.lechmyc", "k.lechmyc", "investa.pl") || !LocalAdministrators.Matches(@"AzureAD\JanKowalski", "JanKowalski", "AzureAD") ||
             LocalAdministrators.Matches(@"OTHER\k.lechmyc", "k.lechmyc", "investa.pl") || LocalAdministrators.Matches("Kris", "Kris", "x.pl"))
             throw new InvalidOperationException("Administrators group matching failed.");
