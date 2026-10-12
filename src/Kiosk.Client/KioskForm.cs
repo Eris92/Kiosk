@@ -1110,8 +1110,16 @@ internal sealed class KioskForm : Form
         if (!CardForHelp(out _)) return;
         var id = identifyCard()?.Id;
         if (id == null) { ShowHelpResult("Nie udało się odczytać karty."); return; }
-        if (!HelpConfirm.Ask(this, "Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
-                "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", config.HelpCloseSeconds)) return;
+        // While the question is open the card and idle screens wait (taking the card away must not switch the desktop under it).
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
+                "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", config.HelpCloseSeconds);
+        }
+        finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
+        if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
         CardVault.Forget(id);
         Audit.Write("card_forgotten");
         ShowHelpResult("Karta zostanie skonfigurowana od nowa przy następnym logowaniu: podasz login, hasło i PIN.");
@@ -1124,10 +1132,17 @@ internal sealed class KioskForm : Form
     private async Task ResetCardAsync()
     {
         if (!CardForHelp(out var readerName)) return;
-        if (!HelpConfirm.Ask(this, "Resetuj kartę", "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Resetuj kartę", "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
                 "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).\n\nZresetować kartę?",
-                config.HelpCloseSeconds, warning: true)) return;
-        if (!HelpConfirm.Ask(this, "Resetuj kartę", "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", config.HelpCloseSeconds, warning: true)) return;
+                config.HelpCloseSeconds, warning: true) &&
+                HelpConfirm.Ask(this, "Resetuj kartę", "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", config.HelpCloseSeconds, warning: true);
+        }
+        finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
+        if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
         var id = identifyCard()?.Id;
         verifying = true;
         try

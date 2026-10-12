@@ -195,48 +195,76 @@ internal sealed class HelpBrowserForm : Form
     }
 }
 
-/// <summary>A yes / no question for Szybka pomoc that answers "no" by itself after the help time without activity.</summary>
+/// <summary>
+/// A yes / no question for Szybka pomoc, drawn like the rest of the Kiosk (no title bar). Nobody answers, moves the mouse
+/// or presses a key for the help time (at least 15 s, the text needs reading): it answers "no" by itself. The bar shows the time left.
+/// </summary>
 internal sealed class HelpConfirm : Form
 {
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
+    internal const int MinimumSeconds = 15;
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 200 };
+    private readonly int seconds;
     private DateTime lastActivity = DateTime.UtcNow;
+    private readonly Panel progress = new() { Dock = DockStyle.Bottom, Height = 4 };
+    private readonly Label countdown;
 
     private HelpConfirm(string title, string text, int idleSeconds, bool warning)
     {
+        seconds = Math.Max(MinimumSeconds, idleSeconds);
         Text = title;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
-        MinimizeBox = MaximizeBox = false;
         ShowInTaskbar = false;
         TopMost = true;
+        KeyPreview = true;
         BackColor = KioskTheme.Surface;
         ForeColor = KioskTheme.Text;
         Font = new Font("Segoe UI", 10.5f);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 250);
-        var message = new Label { Text = text, Dock = DockStyle.Fill, Padding = new Padding(24, 20, 24, 8) };
-        var countdown = new Label { Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(24, 0, 24, 0), ForeColor = KioskTheme.Muted };
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10) };
+        ClientSize = new Size(600, 290);
+        Padding = new Padding(1);
+        var heading = new Label { Text = title, Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
+        var message = new Label { Text = text, Dock = DockStyle.Fill, Padding = new Padding(24, 10, 24, 8) };
+        countdown = new Label { Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(24, 0, 24, 0), ForeColor = KioskTheme.Muted };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Color.Transparent };
         var no = new Button { Text = "Nie", Width = 140, Height = 40, DialogResult = DialogResult.No };
         var yes = new Button { Text = warning ? "Tak, wykonaj" : "Tak", Width = 160, Height = 40, DialogResult = DialogResult.Yes };
         KioskTheme.StyleButton(no, primary: warning);
         KioskTheme.StyleButton(yes, primary: !warning);
         buttons.Controls.Add(no);
         buttons.Controls.Add(yes);
+        progress.BackColor = warning ? Color.FromArgb(198, 40, 40) : KioskTheme.AccentLine;
         Controls.Add(message);
+        Controls.Add(heading);
         Controls.Add(countdown);
         Controls.Add(buttons);
+        Controls.Add(progress);
         AcceptButton = warning ? no : yes; // A dangerous step is never the default.
         CancelButton = no;
-        void Touched() => lastActivity = DateTime.UtcNow;
-        foreach (Control c in new Control[] { this, message, countdown, buttons, no, yes }) { c.MouseMove += (_, _) => Touched(); c.KeyDown += (_, _) => Touched(); }
-        timer.Tick += (_, _) =>
-        {
-            int left = idleSeconds - (int)(DateTime.UtcNow - lastActivity).TotalSeconds;
-            if (left <= 0) { DialogResult = DialogResult.No; Close(); return; }
-            countdown.Text = "Bez odpowiedzi okno zamknie się za " + left + " s.";
-        };
-        Shown += (_, _) => { Touched(); timer.Start(); };
+        Paint += (_, e) => { using var border = new Pen(KioskTheme.Border); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); };
+        KeyDown += (_, _) => Touched();
+        Watch(this);
+        timer.Tick += (_, _) => ShowLeft();
+        Shown += (_, _) => { Touched(); ShowLeft(); timer.Start(); };
+    }
+
+    private void Watch(Control control)
+    {
+        control.MouseMove += (_, _) => Touched();
+        control.MouseDown += (_, _) => Touched();
+        foreach (Control child in control.Controls) Watch(child);
+    }
+
+    private void Touched() => lastActivity = DateTime.UtcNow;
+
+    private void ShowLeft()
+    {
+        double left = seconds - (DateTime.UtcNow - lastActivity).TotalSeconds;
+        if (left <= 0) { timer.Stop(); DialogResult = DialogResult.No; return; }
+        countdown.Text = "Bez odpowiedzi okno zamknie się za " + (int)Math.Ceiling(left) + " s (ruch myszy wydłuża czas).";
+        progress.Width = (int)(ClientSize.Width * left / seconds);
+        progress.Dock = DockStyle.None;
+        progress.SetBounds(0, ClientSize.Height - progress.Height, progress.Width, progress.Height);
     }
 
     internal static bool Ask(IWin32Window owner, string title, string text, int idleSeconds, bool warning = false)
