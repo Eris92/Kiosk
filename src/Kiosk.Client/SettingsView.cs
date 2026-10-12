@@ -308,8 +308,8 @@ internal sealed class SettingsView : UserControl
         void MarkSelected() { foreach (NavItem item in nav.Controls) item.Selected = item.Text == tabs.SelectedTab?.Text; }
         tabs.SelectedIndexChanged += (_, _) => MarkSelected();
         MarkSelected();
-        ApplyDark(this);
         Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(header);
+        ApplyDark(this);
     }
 
     /// <summary>Dark Windows 11 colours for everything inside (inputs, lists, buttons, help text).</summary>
