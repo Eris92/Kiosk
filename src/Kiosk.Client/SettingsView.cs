@@ -39,6 +39,8 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView commands = Grid();
     private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
     private bool scaled;
+    /// <summary>Self-test pictures: lays the view out as on a screen with this scale.</summary>
+    internal static float? ScaleOverride;
     /// <summary>Shows each screen's number on the screen itself.</summary>
     internal event Action? IdentifyScreensRequested;
     /// <summary>A new version is downloaded (folder with its Kiosk.Client.exe); Kiosk closes and the new copy installs itself.</summary>
@@ -320,7 +322,7 @@ internal sealed class SettingsView : UserControl
         base.OnHandleCreated(e);
         if (scaled) return;
         scaled = true;
-        float factor = DeviceDpi / 96f;
+        float factor = ScaleOverride ?? DeviceDpi / 96f;
         if (Math.Abs(factor - 1) < 0.01) return;
         Scale(new SizeF(factor, factor));
         foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands })

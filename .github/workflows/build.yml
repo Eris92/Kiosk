@@ -61,6 +61,16 @@ jobs:
           name: Kiosk-win-x64
           path: package/Kiosk/
           retention-days: 30
+      - name: Publish settings pictures
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path out/screenshots/* -DestinationPath out/settings-screenshots.zip -Force
+          gh release view ci-screenshots *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create ci-screenshots --prerelease --title 'CI: settings pictures' --notes 'Pictures of Konfiguracja from the latest CI build (not a Kiosk version).' }
+          gh release upload ci-screenshots out/settings-screenshots.zip --clobber
       - name: Publish release
         if: github.event_name != 'pull_request'
         shell: pwsh

@@ -1313,8 +1313,9 @@ internal sealed class KioskForm : Form
     {
         var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));   // out\screenshots, outside the package
         Directory.CreateDirectory(folder);
-        foreach (var size in new[] { new Size(1280, 720), new Size(1024, 576) })
+        foreach (var (size, scale) in new[] { (new Size(1280, 720), 1f), (new Size(1920, 1080), 1.5f) })
         {
+            SettingsView.ScaleOverride = scale;
             using var form = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, Location = new Point(0, 0), ClientSize = size, ShowInTaskbar = false };
             var view = new SettingsView(settings);
             form.Controls.Add(view);
@@ -1330,6 +1331,7 @@ internal sealed class KioskForm : Form
             }
             form.Close();
         }
+        SettingsView.ScaleOverride = null;
     }
 
     internal void SmokeTest()
