@@ -122,11 +122,8 @@ internal sealed class HelpBrowserForm : Form
 
     private readonly BrowserView browser;
     private readonly string url;
-    private readonly System.Windows.Forms.Timer limit = new() { Interval = 1000 };
     private readonly int idleSeconds;
-    private DateTime lastActivity = DateTime.UtcNow;
-    private readonly Label heading;
-    private readonly string headingText;
+    private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
 
     internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60)
     {
@@ -144,10 +141,9 @@ internal sealed class HelpBrowserForm : Form
         policy.Trust(url);
         browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true) { Dock = DockStyle.Fill };
         var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
-        headingText = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane  ·  zamknie się po " + idleSeconds + " s bez aktywności";
-        heading = new Label
+        var heading = new Label
         {
-            Text = headingText, AutoSize = false, Dock = DockStyle.Fill,
+            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane", AutoSize = false, Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
         };
         var close = new Button { Text = "Zamknij", Dock = DockStyle.Right, Width = 140 };
@@ -155,33 +151,25 @@ internal sealed class HelpBrowserForm : Form
         close.Click += (_, _) => Close();
         header.Controls.Add(heading);
         header.Controls.Add(close);
+        countdown.BackColor = KioskTheme.ShellBar;
+        countdown.Expired += Close;
         Controls.Add(browser);
+        Controls.Add(countdown);
         Controls.Add(header);
         // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
         // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
         browser.Activity += Touched;
-        // Only a real move counts: Windows repeats "mouse move" over a resting cursor when the heading text changes.
-        var lastCursor = Cursor.Position;
-        void Moved(object? s, MouseEventArgs e) { if (Cursor.Position != lastCursor) { lastCursor = Cursor.Position; Touched(); } }
-        header.MouseMove += Moved;
-        heading.MouseMove += Moved;
-        limit.Tick += (_, _) =>
-        {
-            var left = idleSeconds - (int)(DateTime.UtcNow - lastActivity).TotalSeconds;
-            if (left <= 0) { Close(); return; }
-            heading.Text = left <= 5 ? title + "  ·  brak aktywności: okno zamknie się za " + left + " s" : headingText;
-        };
+        HelpCountdown.Watch(this, Touched);
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
 
-    private void Touched() => lastActivity = DateTime.UtcNow;
+    private void Touched() => countdown.Restart();
 
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        Touched();
-        limit.Start();
+        countdown.Start(idleSeconds);
         try { await browser.InitializeAsync(url); }
         catch (Exception ex)
         {
@@ -191,11 +179,6 @@ internal sealed class HelpBrowserForm : Form
         }
     }
 
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) limit.Dispose();
-        base.Dispose(disposing);
-    }
 }
 
 /// <summary>
@@ -204,15 +187,10 @@ internal sealed class HelpBrowserForm : Form
 /// </summary>
 internal sealed class HelpConfirm : Form
 {
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 200 };
-    private readonly int seconds;
-    private DateTime lastActivity = DateTime.UtcNow;
-    private readonly Panel progress = new() { Dock = DockStyle.Bottom, Height = 4 };
-    private readonly Label countdown;
+    private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
 
     private HelpConfirm(string title, string text, int idleSeconds, bool warning)
     {
-        seconds = Math.Max(1, idleSeconds);
         Text = title;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
@@ -227,7 +205,6 @@ internal sealed class HelpConfirm : Form
         Padding = new Padding(1);
         var heading = new Label { Text = title, Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
         var message = new Label { Text = text, Dock = DockStyle.Fill, Padding = new Padding(24, 10, 24, 8) };
-        countdown = new Label { Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(24, 0, 24, 0), ForeColor = KioskTheme.Muted };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Color.Transparent };
         var no = new Button { Text = "Nie", Width = 140, Height = 40, DialogResult = DialogResult.No };
         var yes = new Button { Text = warning ? "Tak, wykonaj" : "Tak", Width = 160, Height = 40, DialogResult = DialogResult.Yes };
@@ -235,47 +212,87 @@ internal sealed class HelpConfirm : Form
         KioskTheme.StyleButton(yes, primary: !warning);
         buttons.Controls.Add(no);
         buttons.Controls.Add(yes);
-        progress.BackColor = warning ? Color.FromArgb(198, 40, 40) : KioskTheme.AccentLine;
+        countdown.BackColor = KioskTheme.Surface;
+        countdown.Padding = new Padding(24, 0, 24, 10);
         Controls.Add(message);
         Controls.Add(heading);
-        Controls.Add(countdown);
         Controls.Add(buttons);
-        Controls.Add(progress);
+        Controls.Add(countdown);
         AcceptButton = warning ? no : yes; // A dangerous step is never the default.
         CancelButton = no;
         Paint += (_, e) => { using var border = new Pen(KioskTheme.Border); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); };
-        KeyDown += (_, _) => Touched();
-        Watch(this);
-        timer.Tick += (_, _) => ShowLeft();
-        Shown += (_, _) => { Touched(); ShowLeft(); timer.Start(); };
-    }
-
-    private Point lastCursor = Cursor.Position;
-
-    private void Watch(Control control)
-    {
-        // Windows repeats "mouse move" while the cursor rests (e.g. when the countdown text changes): only a real move counts.
-        control.MouseMove += (_, _) => { if (Cursor.Position != lastCursor) { lastCursor = Cursor.Position; Touched(); } };
-        control.MouseDown += (_, _) => Touched();
-        foreach (Control child in control.Controls) Watch(child);
-    }
-
-    private void Touched() => lastActivity = DateTime.UtcNow;
-
-    private void ShowLeft()
-    {
-        double left = seconds - (DateTime.UtcNow - lastActivity).TotalSeconds;
-        if (left <= 0) { timer.Stop(); DialogResult = DialogResult.No; return; }
-        countdown.Text = "Bez odpowiedzi okno zamknie się za " + (int)Math.Ceiling(left) + " s (ruch myszy wydłuża czas).";
-        progress.Width = (int)(ClientSize.Width * left / seconds);
-        progress.Dock = DockStyle.None;
-        progress.SetBounds(0, ClientSize.Height - progress.Height, progress.Width, progress.Height);
+        HelpCountdown.Watch(this, countdown.Restart);
+        countdown.Expired += () => DialogResult = DialogResult.No;
+        Shown += (_, _) => countdown.Start(idleSeconds);
     }
 
     internal static bool Ask(IWin32Window owner, string title, string text, int idleSeconds, bool warning = false)
     {
         using var dialog = new HelpConfirm(title, text, idleSeconds, warning);
         return dialog.ShowDialog(owner) == DialogResult.Yes;
+    }
+}
+
+/// <summary>
+/// The Szybka pomoc countdown, the same everywhere (help page, yes / no questions, PIN field): the seconds left
+/// and a bar in the accent colour that shrinks. Restart() on activity; Expired when the time is up.
+/// </summary>
+internal sealed class HelpCountdown : Control
+{
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 200 };
+    private DateTime last = DateTime.UtcNow;
+    private int seconds = 60;
+    internal event Action? Expired;
+
+    internal HelpCountdown()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        BackColor = KioskTheme.Surface;
+        timer.Tick += (_, _) =>
+        {
+            if (SecondsLeft > 0) { Invalidate(); return; }
+            timer.Stop();
+            Expired?.Invoke();
+        };
+    }
+
+    private double SecondsLeft => seconds - (DateTime.UtcNow - last).TotalSeconds;
+    private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Height = S(30) + Padding.Vertical; }
+
+    internal void Start(int idleSeconds) { seconds = Math.Max(1, idleSeconds); last = DateTime.UtcNow; timer.Start(); Invalidate(); }
+    internal void Stop() => timer.Stop();
+    internal void Restart() { last = DateTime.UtcNow; Invalidate(); }
+
+    /// <summary>Activity in a window: a real mouse move (Windows repeats "move" over a resting cursor), a click or a key.</summary>
+    internal static void Watch(Control root, Action touched)
+    {
+        var lastCursor = Cursor.Position;
+        void Hook(Control control)
+        {
+            control.MouseMove += (_, _) => { if (Cursor.Position != lastCursor) { lastCursor = Cursor.Position; touched(); } };
+            control.MouseDown += (_, _) => touched();
+            control.KeyDown += (_, _) => touched();
+            foreach (Control child in control.Controls) Hook(child);
+            control.ControlAdded += (_, e) => { if (e.Control != null) Hook(e.Control); };
+        }
+        Hook(root);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(BackColor);
+        var area = new Rectangle(Padding.Left, Padding.Top, Math.Max(0, Width - Padding.Horizontal), Math.Max(0, Height - Padding.Vertical));
+        double left = Math.Max(0, SecondsLeft);
+        using var font = new Font("Segoe UI", 9.5f);
+        TextRenderer.DrawText(g, "Bez aktywności zamknie się za " + (int)Math.Ceiling(left) + " s", font,
+            new Rectangle(area.Left, area.Top, area.Width, area.Height - S(8)), KioskTheme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        var track = new Rectangle(area.Left, area.Bottom - S(5), area.Width, S(5));
+        using (var back = new SolidBrush(KioskTheme.Border)) g.FillRectangle(back, track);
+        using var fill = new SolidBrush(KioskTheme.AccentLine);
+        g.FillRectangle(fill, new Rectangle(track.Left, track.Top, (int)(track.Width * left / seconds), track.Height));
     }
 
     protected override void Dispose(bool disposing)

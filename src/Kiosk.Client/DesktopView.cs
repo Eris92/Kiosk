@@ -109,9 +109,8 @@ internal sealed class DesktopView : UserControl
     private readonly System.Windows.Forms.Timer pinWatch = new() { Interval = 250 };
     private TaskCompletionSource<string?>? pinRequest;
     private Func<bool>? pinCardPresent;
-    // Szybka pomoc: the PIN field gives up when nobody types for this long (0 = waits).
-    private int pinIdleSeconds;
-    private DateTime pinActivity;
+    // Szybka pomoc: the PIN field gives up when nobody types for the help time, with the same countdown as everywhere.
+    private readonly HelpCountdown pinCountdown = new() { Visible = false };
     private bool locked;
     internal bool AskingPin => pinRequest != null;
 
@@ -159,12 +158,12 @@ internal sealed class DesktopView : UserControl
         pinWatch.Tick += (_, _) =>
         {
             if (pinCardPresent?.Invoke() == false) FinishPin(false); // Card taken away.
-            else if (pinIdleSeconds > 0 && DateTime.UtcNow - pinActivity > TimeSpan.FromSeconds(pinIdleSeconds)) FinishPin(false);
         };
-        pinBox.TextChanged += (_, _) => pinActivity = DateTime.UtcNow;
+        pinBox.TextChanged += (_, _) => pinCountdown.Restart();
+        pinCountdown.Expired += () => FinishPin(false);
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
+        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown });
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
@@ -362,6 +361,7 @@ internal sealed class DesktopView : UserControl
         int half = (pinWidth - Scale(12)) / 2;
         pinOk.SetBounds(pinLeft, Scale(385), half, Scale(46));
         pinCancel.SetBounds(pinLeft + half + Scale(12), Scale(385), half, Scale(46));
+        pinCountdown.SetBounds(pinLeft, Scale(436), pinWidth, Scale(30));
     }
 
     /// <summary>
@@ -370,8 +370,8 @@ internal sealed class DesktopView : UserControl
     /// </summary>
     internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent, int idleSeconds = 0)
     {
-        pinIdleSeconds = idleSeconds;
-        pinActivity = DateTime.UtcNow;
+        pinCountdown.Visible = idleSeconds > 0;
+        if (idleSeconds > 0) pinCountdown.Start(idleSeconds); else pinCountdown.Stop();
         pinRequest?.TrySetResult(null);
         pinRequest = new TaskCompletionSource<string?>();
         pinCardPresent = cardPresent;
@@ -394,7 +394,8 @@ internal sealed class DesktopView : UserControl
         pinBox.Clear();
         pinWatch.Stop();
         pinRequest = null;
-        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = false;
+        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel, pinCountdown }) c.Visible = false;
+        pinCountdown.Stop();
         resume.Visible = locked;
         hint.Visible = true;
         ArrangeControls();
