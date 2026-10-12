@@ -30,9 +30,9 @@ internal sealed class SettingsView : UserControl
     private static readonly Color Back = Color.FromArgb(32, 32, 32);
     private static readonly Color InputBack = Color.FromArgb(45, 45, 45);
     private static readonly Color ControlBorder = Color.FromArgb(68, 68, 68);
-    private static readonly Color HelpText = Color.FromArgb(80, 92, 110);
+    private static readonly Color HelpText = Color.FromArgb(80, 92, 110);   // marks help labels, which turn Muted in the dark theme
     private static readonly Color Card = Color.FromArgb(43, 43, 43);
-    private const int RowHeight = 54;   // marks help labels, which turn Muted in the dark theme
+    private const int RowHeight = 54;
     private const string CustomAccent = "Własny kolor…";
     private readonly CheckBox enableBrowser = new() { Text = "Przeglądarka włączona (widoczna w Menu)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 2), Font = new Font("Segoe UI", 10, FontStyle.Bold) };
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
@@ -119,6 +119,8 @@ internal sealed class SettingsView : UserControl
             "Karta i Windows Hello logują użytkownika przypisanego do karty.");
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        fields.Paint += (_, e) => PaintCards(fields, e.Graphics);
+        fields.Padding = new Padding(0, 0, 12, 0);
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(fields, "Czytnik karty", reader);
@@ -493,6 +495,7 @@ internal sealed class SettingsView : UserControl
         // A table cell shrinks a too-wide control to fit before the table has its real width (at 250 % it stayed 0 px wide):
         // the minimum width keeps number fields visible; drop-downs take the column's width, so long choices are not cut off.
         if (control is ComboBox) control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        else if (control is TextBox) { control.Dock = DockStyle.None; control.Anchor = AnchorStyles.Left | AnchorStyles.Right; }
         else if (control.Dock == DockStyle.None) { control.Anchor = AnchorStyles.Left; control.MinimumSize = new Size(control.Width, 0); }
         panel.Controls.Add(control, 1, row);
     }
