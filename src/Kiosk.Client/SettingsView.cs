@@ -621,7 +621,12 @@ internal sealed class SettingsView : UserControl
     /// <summary>"Włączony": unticked entries stay in the list (so they need not be typed again) but Kiosk does not use them.</summary>
     private static void AddEnabledColumn(DataGridView grid)
     {
-        var column = new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "Włączony", FillWeight = 28 };
+        var column = new DataGridViewCheckBoxColumn
+        {
+            Name = "Enabled", HeaderText = "Wł.", ToolTipText = "Włączony: odznaczony wpis zostaje na liście, ale Kiosk go nie używa",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 48, MinimumWidth = 40, Resizable = DataGridViewTriState.False,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        };
         grid.Columns.Add(column);
         column.DisplayIndex = 0;
         // New rows (typed or added with a button) start ticked.
