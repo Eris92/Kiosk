@@ -43,6 +43,11 @@ internal static class Configuration
             File.WriteAllText(temporary, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(temporary, path, true);
         }
+        catch (UnauthorizedAccessException)
+        {
+            throw new UnauthorizedAccessException("Brak prawa zapisu do " + path + ". Ten folder może zmieniać tylko administrator Windows " +
+                "(tak ustawia go scripts\\Install-KioskShell.ps1).");
+        }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 }

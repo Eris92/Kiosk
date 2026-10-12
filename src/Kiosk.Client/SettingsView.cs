@@ -105,7 +105,7 @@ internal sealed class SettingsView : UserControl
             "Każde połączenie pojawia się w Menu. Logowanie Entra ID wymaga pełnej nazwy DNS komputera. " +
             "Karta i Windows Hello logują użytkownika przypisanego do karty.");
 
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        var fields = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(fields, "Czytnik karty (pusty = dowolny)", reader);
@@ -126,15 +126,18 @@ internal sealed class SettingsView : UserControl
         var removalRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         fields.Controls.Add(disconnectOnRemoval, 1, removalRow);
-        session.Controls.Add(new Label
+        // Scrolls on small screens (1280×720, 125 % scale), so the last options stay reachable.
+        var sessionScroll = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        sessionScroll.Controls.Add(fields);
+        sessionScroll.Controls.Add(new Label
         {
-            Dock = DockStyle.Bottom, Height = 90, ForeColor = Color.FromArgb(80, 92, 110),
+            AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 12, 4, 4), ForeColor = Color.FromArgb(80, 92, 110),
             Text = "Każda karta ma własną sesję (to nie jest blokada Windows). Wyjęcie karty chowa sesję, inna karta od razu otwiera swoją, " +
                    "a powrót karty przywraca jej okna. Po czasie przechowywania nieużywana sesja jest zamykana. " +
                    "Na komputerze dla wielu osób wybierz „Karta + PIN karty”: Windows Hello potwierdza konto Windows, nie osobę z karty.\n" +
                    "Bez wymagania PIN-u Kiosk łączy od razu tożsamością z karty / Windows Hello / Entra, jeśli Windows ją udostępnia; w przeciwnym razie i tak zapyta."
         });
-        session.Controls.Add(fields);
+        session.Controls.Add(sessionScroll);
         reader.Text = config.ReaderName;
         home.Text = config.BrowserUrl;
         lockAfter.Value = config.LockAfterSeconds;
