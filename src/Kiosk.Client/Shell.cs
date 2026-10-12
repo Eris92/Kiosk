@@ -108,6 +108,13 @@ internal sealed class Taskbar : Panel
     /// <summary>Right-click on a window button: its key, the button and the click point (for a context menu).</summary>
     internal event Action<string, Control, Point>? TaskMenuRequested;
     internal int TaskCount => tasks.Count;
+    private bool centered = true;
+    /// <summary>Start and the window icons in the middle (Windows 11) or on the left.</summary>
+    internal bool Centered
+    {
+        get => centered;
+        set { if (centered == value) return; centered = value; ArrangeControls(); }
+    }
 
     internal Taskbar()
     {
@@ -211,7 +218,7 @@ internal sealed class Taskbar : Panel
 
         var here = tasks.Where(t => !t.OtherScreen).ToList();
         int groupWidth = each + here.Count * (each + gap);
-        int left = Math.Max(margin, Math.Min((Width - groupWidth) / 2, right - groupWidth));
+        int left = centered ? Math.Max(margin, Math.Min((Width - groupWidth) / 2, right - groupWidth)) : margin;
         MenuButton.SetBounds(left, top, each, height);
         left += each + gap;
         foreach (var task in here)
@@ -315,13 +322,13 @@ internal sealed class StartMenu : Form
         ClientSize = new Size(margin * 2 + width + 2, y + Scale(6) + footer.Height + 2);
     }
 
-    internal void ShowAt(Form owner, Rectangle anchor)
+    internal void ShowAt(Form owner, Rectangle anchor, bool centered = true)
     {
         var screen = Screen.FromRectangle(anchor).WorkingArea;
         var maxHeight = Math.Max(Scale(200), anchor.Top - screen.Top - Scale(24));
         if (Height > maxHeight) Height = maxHeight;
         // Centred above the taskbar, like the Windows 11 Start menu.
-        int left = screen.Left + (screen.Width - Width) / 2;
+        int left = centered ? screen.Left + (screen.Width - Width) / 2 : anchor.Left - Scale(4);
         Location = new Point(Math.Max(screen.Left + Scale(12), left), anchor.Top - Height - Scale(12));
         if (Owner != owner) Owner = owner;
         Show();

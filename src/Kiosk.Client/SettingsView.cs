@@ -24,7 +24,13 @@ internal sealed class SettingsView : UserControl
     {
         DropDownStyle = ComboBoxStyle.DropDownList, Width = 260, DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 26
     };
+    private readonly ComboBox taskbarAlign = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na środku (jak Windows 11)", "Po lewej" } };
     private string accentHex = KioskTheme.DefaultAccent;
+    // Windows 11 Settings, dark: neutral background, lighter controls, the accent only for the selection.
+    private static readonly Color Back = Color.FromArgb(32, 32, 32);
+    private static readonly Color InputBack = Color.FromArgb(45, 45, 45);
+    private static readonly Color ControlBorder = Color.FromArgb(68, 68, 68);
+    private static readonly Color HelpText = Color.FromArgb(80, 92, 110);   // marks help labels, which turn Muted in the dark theme
     private const string CustomAccent = "Własny kolor…";
     private readonly CheckBox enableBrowser = new() { Text = "Przeglądarka włączona (widoczna w Menu)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 2), Font = new Font("Segoe UI", 10, FontStyle.Bold) };
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
@@ -49,7 +55,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
-    private readonly Label error = new() { Dock = DockStyle.Bottom, Height = 40, ForeColor = Color.Firebrick, Padding = new Padding(16, 8, 16, 0) };
+    private readonly Label error = new() { Dock = DockStyle.Bottom, Height = 40, ForeColor = Color.FromArgb(255, 153, 164), Padding = new Padding(16, 8, 16, 0) };
     internal event Action<Config>? SaveRequested;
     internal event Action? CancelRequested;
 
@@ -58,15 +64,15 @@ internal sealed class SettingsView : UserControl
         original = config;
         this.keepsAccess = keepsAccess;
         Dock = DockStyle.Fill;
-        BackColor = Color.FromArgb(245, 247, 250);
-        ForeColor = Color.FromArgb(20, 28, 40);
+        BackColor = Back;
+        ForeColor = KioskTheme.Text;
         Font = new Font("Segoe UI", 10);
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = KioskTheme.Surface };
+        var header = new Panel { Dock = DockStyle.Top, Height = 72, BackColor = Back };
         header.Controls.Add(new Label
         {
-            Text = "Konfiguracja Kiosku", ForeColor = KioskTheme.Text, Font = new Font("Segoe UI", 16, FontStyle.Bold),
-            AutoSize = true, Location = new Point(20, 16), BackColor = Color.Transparent
+            Text = "Konfiguracja Kiosku", ForeColor = KioskTheme.Text, Font = new Font("Segoe UI Semibold", 20),
+            AutoSize = true, Location = new Point(24, 18), BackColor = Color.Transparent
         });
 
         var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(16, 6) };
@@ -120,6 +126,7 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Tryb sesji", sessionMode);
         AddField(fields, "Logowanie i odblokowanie", unlock);
         AddField(fields, "Kolor przewodni", accent);
+        AddField(fields, "Położenie Start i ikon na pasku", taskbarAlign);
         AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
         AddField(fields, "Limit czasu łączenia RDP (sekundy)", connectTimeout);
         var pinRow = fields.RowCount++;
@@ -135,7 +142,7 @@ internal sealed class SettingsView : UserControl
         var sessionScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         sessionScroll.Controls.Add(new Label
         {
-            Dock = DockStyle.Top, Height = 110, Padding = new Padding(4, 12, 4, 4), ForeColor = Color.FromArgb(80, 92, 110),
+            Dock = DockStyle.Top, Height = 110, Padding = new Padding(4, 12, 4, 4), ForeColor = HelpText,
             Text = "Każda karta ma własną sesję (to nie jest blokada Windows). Wyjęcie karty chowa sesję, inna karta od razu otwiera swoją, " +
                    "a powrót karty przywraca jej okna. Po czasie przechowywania nieużywana sesja jest zamykana. " +
                    "Na komputerze dla wielu osób wybierz „Karta + PIN karty”: Windows Hello potwierdza konto Windows, nie osobę z karty.\n" +
@@ -158,6 +165,7 @@ internal sealed class SettingsView : UserControl
         sessionMode.SelectedIndex = (int)config.SessionMode;
         disconnectOnRemoval.Checked = config.DisconnectOnCardRemoval;
         SetupAccent(config.AccentColor);
+        taskbarAlign.SelectedIndex = (int)config.TaskbarAlignment;
         RefreshAutoConnect(config.AutoConnectRdpName);
         tabs.Selected += (_, _) => RefreshAutoConnect(autoConnect.SelectedItem as string);
 
@@ -239,7 +247,7 @@ internal sealed class SettingsView : UserControl
         updatePanel.Controls.Add(new Label { Text = "Zainstalowana wersja: " + Updater.CurrentVersion, AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 4, 4, 8) });
         updatePanel.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Color.FromArgb(80, 92, 110), Margin = new Padding(4, 0, 4, 12),
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 12),
             Text = "Pobiera najnowsze wydanie z GitHub (github.com/Eris92/Kiosk, zakładka Releases), zamyka Kiosk, podmienia pliki programu " +
                    "i uruchamia nową wersję. Konfiguracja zostaje bez zmian. Gdy Kiosk jest zainstalowany w Program Files, Windows zapyta o administratora. " +
                    "Niezapisane zmiany w tej Konfiguracji przepadną."
@@ -279,7 +287,77 @@ internal sealed class SettingsView : UserControl
         actions.Controls.Add(save); actions.Controls.Add(cancel);
         save.Click += (_, _) => Save();
         cancel.Click += (_, _) => CancelRequested?.Invoke();
-        Controls.Add(tabs); Controls.Add(error); Controls.Add(actions); Controls.Add(header);
+        actions.Paint += (_, e) => { using var line = new Pen(ControlBorder); e.Graphics.DrawLine(line, 0, 0, actions.Width, 0); };
+
+        // Windows 11 Settings: the sections are a list on the left; the tab strip itself is hidden.
+        tabs.Appearance = TabAppearance.Buttons;
+        tabs.SizeMode = TabSizeMode.Fixed;
+        tabs.ItemSize = new Size(0, 1);
+        var pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Back, Padding = new Padding(0, 0, 16, 0) };
+        tabs.Dock = DockStyle.None;
+        pageHost.Controls.Add(tabs);
+        pageHost.Resize += (_, _) => tabs.Bounds = new Rectangle(-4, -6, Math.Max(0, pageHost.ClientSize.Width - pageHost.Padding.Right + 8), pageHost.ClientSize.Height + 10);
+        var nav = new FlowLayoutPanel { Dock = DockStyle.Left, Width = 260, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(12, 4, 8, 4), BackColor = Back };
+        foreach (TabPage page in tabs.TabPages)
+        {
+            var item = new NavItem(page.Text) { Width = 236, Height = 40, Margin = new Padding(0, 0, 0, 4) };
+            var target = page;
+            item.Click += (_, _) => tabs.SelectedTab = target;
+            nav.Controls.Add(item);
+        }
+        void MarkSelected() { foreach (NavItem item in nav.Controls) item.Selected = item.Text == tabs.SelectedTab?.Text; }
+        tabs.SelectedIndexChanged += (_, _) => MarkSelected();
+        MarkSelected();
+        ApplyDark(this);
+        Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(header);
+    }
+
+    /// <summary>Dark Windows 11 colours for everything inside (inputs, lists, buttons, help text).</summary>
+    private static void ApplyDark(Control root)
+    {
+        foreach (Control c in root.Controls)
+        {
+            switch (c)
+            {
+                case TabPage page: page.UseVisualStyleBackColor = false; page.BackColor = Back; page.ForeColor = KioskTheme.Text; break;
+                case TextBox box: box.BackColor = InputBack; box.ForeColor = KioskTheme.Text; box.BorderStyle = BorderStyle.FixedSingle; break;
+                case NumericUpDown number: number.BackColor = InputBack; number.ForeColor = KioskTheme.Text; number.BorderStyle = BorderStyle.FixedSingle; break;
+                case ComboBox combo: combo.FlatStyle = FlatStyle.Flat; combo.BackColor = InputBack; combo.ForeColor = KioskTheme.Text; break;
+                case CheckBox check: check.ForeColor = KioskTheme.Text; break;
+                case DataGridView grid: StyleGrid(grid); break;
+                case Button button when button.BackColor != KioskTheme.Accent:
+                    button.FlatStyle = FlatStyle.Flat;
+                    button.FlatAppearance.BorderColor = ControlBorder;
+                    button.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
+                    button.FlatAppearance.MouseDownBackColor = Color.FromArgb(52, 52, 52);
+                    button.BackColor = InputBack; button.ForeColor = KioskTheme.Text; button.UseVisualStyleBackColor = false;
+                    button.Cursor = Cursors.Hand;
+                    break;
+                case Label label when label.ForeColor == HelpText: label.ForeColor = KioskTheme.Muted; break;
+            }
+            ApplyDark(c);
+        }
+    }
+
+    private static void StyleGrid(DataGridView grid)
+    {
+        grid.BackgroundColor = Back;
+        grid.GridColor = ControlBorder;
+        grid.BorderStyle = BorderStyle.None;
+        grid.EnableHeadersVisualStyles = false;
+        grid.DefaultCellStyle.BackColor = Color.FromArgb(39, 39, 39);
+        grid.DefaultCellStyle.ForeColor = KioskTheme.Text;
+        grid.DefaultCellStyle.SelectionBackColor = KioskTheme.Blend(Color.FromArgb(39, 39, 39), KioskTheme.AccentLine, 0.35);
+        grid.DefaultCellStyle.SelectionForeColor = Color.White;
+        grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(28, 28, 28);
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = KioskTheme.Text;
+        grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(28, 28, 28);
+        grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+        grid.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(28, 28, 28);
+        grid.RowHeadersDefaultCellStyle.SelectionBackColor = KioskTheme.Blend(Color.FromArgb(28, 28, 28), KioskTheme.AccentLine, 0.35);
+        grid.RowHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+        foreach (DataGridViewColumn column in grid.Columns)
+            if (column is DataGridViewComboBoxColumn combo) { combo.FlatStyle = FlatStyle.Flat; combo.DefaultCellStyle.BackColor = Color.FromArgb(39, 39, 39); }
     }
 
 
@@ -369,7 +447,7 @@ internal sealed class SettingsView : UserControl
         var remove = new Button { Text = "Usuń wybrany wiersz", AutoSize = true, Dock = DockStyle.Bottom };
         remove.Click += (_, _) => { if (grid.CurrentRow is { IsNewRow: false } row) grid.Rows.Remove(row); };
         page.Controls.Add(grid);
-        page.Controls.Add(new Label { Text = help, Dock = DockStyle.Top, Height = 48, ForeColor = Color.FromArgb(80, 92, 110) });
+        page.Controls.Add(new Label { Text = help, Dock = DockStyle.Top, Height = 48, ForeColor = HelpText });
         page.Controls.Add(remove);
     }
 
@@ -430,6 +508,7 @@ internal sealed class SettingsView : UserControl
             SessionMode = (SessionMode)Math.Max(0, sessionMode.SelectedIndex),
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,
             AccentColor = accentHex,
+            TaskbarAlignment = (TaskbarAlignment)Math.Max(0, taskbarAlign.SelectedIndex),
             EnableBrowser = enableBrowser.Checked,
             BrowserOnlyBookmarks = onlyBookmarks.Checked,
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id") }).ToArray(),
@@ -498,15 +577,71 @@ internal sealed class ScreenMap : Control
         {
             var b = screens[i].Bounds;
             var r = new RectangleF(offsetX + (b.X - all.X) * scale, offsetY + (b.Y - all.Y) * scale, b.Width * scale - 4, b.Height * scale - 4);
-            using var fill = new SolidBrush(i == 0 ? Color.FromArgb(214, 236, 255) : Color.FromArgb(232, 237, 244));
+            using var fill = new SolidBrush(i == 0 ? KioskTheme.Blend(Color.FromArgb(45, 45, 45), KioskTheme.AccentLine, 0.3) : Color.FromArgb(45, 45, 45));
             g.FillRectangle(fill, r);
-            g.DrawRectangle(Pens.SteelBlue, r.X, r.Y, r.Width, r.Height);
+            using var frame = new Pen(i == 0 ? KioskTheme.AccentLine : Color.FromArgb(80, 80, 80));
+            g.DrawRectangle(frame, r.X, r.Y, r.Width, r.Height);
             var text = (i + 1).ToString();
             var size = g.MeasureString(text, font);
-            g.DrawString(text, font, Brushes.Black, r.X + (r.Width - size.Width) / 2, r.Y + (r.Height - size.Height) / 2 - 6);
+            g.DrawString(text, font, Brushes.White, r.X + (r.Width - size.Width) / 2, r.Y + (r.Height - size.Height) / 2 - 6);
             var label = b.Width + "×" + b.Height + (i == 0 ? " (główny)" : "");
             var labelSize = g.MeasureString(label, small);
-            g.DrawString(label, small, Brushes.DimGray, r.X + (r.Width - labelSize.Width) / 2, r.Bottom - labelSize.Height - 2);
+            g.DrawString(label, small, Brushes.Silver, r.X + (r.Width - labelSize.Width) / 2, r.Bottom - labelSize.Height - 2);
+        }
+    }
+}
+
+/// <summary>A section in the left list of Konfiguracja, like Windows 11 Settings: a soft square and an accent pill when selected.</summary>
+internal sealed class NavItem : Control
+{
+    private bool hovered, selected;
+
+    internal NavItem(string text)
+    {
+        Text = text;
+        Font = new Font("Segoe UI", 10);
+        ForeColor = KioskTheme.Text;
+        Cursor = Cursors.Hand;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+    }
+
+    internal bool Selected
+    {
+        get => selected;
+        set { if (selected == value) return; selected = value; Invalidate(); }
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hovered = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnKeyUp(KeyEventArgs e) { base.OnKeyUp(e); if (e.KeyCode is Keys.Enter or Keys.Space) OnClick(EventArgs.Empty); }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+        g.Clear(Parent?.BackColor ?? Color.FromArgb(32, 32, 32));
+        if (selected || hovered)
+        {
+            using var back = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(5));
+            using var fill = new SolidBrush(selected ? Color.FromArgb(45, 45, 45) : Color.FromArgb(40, 40, 40));
+            g.FillPath(fill, back);
+        }
+        if (selected)
+        {
+            using var pill = KioskTheme.RoundedRectangle(new Rectangle(0, (Height - S(16)) / 2, S(3), S(16)), S(1));
+            using var accent = new SolidBrush(KioskTheme.AccentLine);
+            g.FillPath(accent, pill);
+        }
+        TextRenderer.DrawText(g, Text, Font, new Rectangle(S(16), 0, Width - S(20), Height), KioskTheme.Text,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        if (Focused && ShowFocusCues)
+        {
+            using var focus = KioskTheme.RoundedRectangle(new Rectangle(S(1), S(1), Width - S(3), Height - S(3)), S(5));
+            using var pen = new Pen(KioskTheme.Text, S(2));
+            g.DrawPath(pen, focus);
         }
     }
 }

@@ -788,6 +788,7 @@ internal sealed class KioskForm : Form
 
     private void RefreshChrome()
     {
+        taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -826,7 +827,7 @@ internal sealed class KioskForm : Form
         if (!CanUseApps) return;
         if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
         menu.Populate(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.", BuildMenu());
-        menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+        menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle), taskbar.Centered);
     }
 
     private static string AuthenticationLabel(RdpAuthentication authentication) => authentication switch
@@ -1410,7 +1411,7 @@ internal sealed class KioskForm : Form
             var view = new SettingsView(settings);
             form.Controls.Add(view);
             form.Show();
-            var tabs = view.Controls.OfType<TabControl>().Single();
+            var tabs = view.Controls.Cast<Control>().SelectMany(c => c.Controls.OfType<TabControl>()).Single();
             for (var i = 0; i < tabs.TabCount; i++)
             {
                 tabs.SelectedIndex = i;

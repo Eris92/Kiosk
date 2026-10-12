@@ -12,6 +12,10 @@ internal enum UnlockMethod { Card, CardAndWindowsHello, CardAndPin }
 [JsonConverter(typeof(JsonStringEnumConverter<SessionMode>))]
 internal enum SessionMode { Kiosk, WindowsShell }
 
+/// <summary>Where Start and the window icons sit on the taskbar: in the middle (Windows 11) or on the left.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<TaskbarAlignment>))]
+internal enum TaskbarAlignment { Center, Left }
+
 internal sealed record RdpConnection
 {
     public string Name { get; init; } = "";
@@ -78,6 +82,7 @@ internal sealed record Config
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
     public bool DisconnectOnCardRemoval { get; init; } = true;
     public string AccentColor { get; init; } = KioskTheme.DefaultAccent;
+    public TaskbarAlignment TaskbarAlignment { get; init; } = TaskbarAlignment.Center;
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
