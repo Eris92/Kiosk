@@ -1308,6 +1308,30 @@ internal sealed class KioskForm : Form
 
     // ---------------------------------------------------------------- self-test
 
+    /// <summary>Pictures of every Konfiguracja tab at 1280×720 and 1024×576 (= 1280×720 at 125 %), for checking the layout from CI.</summary>
+    private static void SaveSettingsScreenshots(Config settings)
+    {
+        var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));   // out\screenshots, outside the package
+        Directory.CreateDirectory(folder);
+        foreach (var size in new[] { new Size(1280, 720), new Size(1024, 576) })
+        {
+            using var form = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, Location = new Point(0, 0), ClientSize = size, ShowInTaskbar = false };
+            var view = new SettingsView(settings);
+            form.Controls.Add(view);
+            form.Show();
+            var tabs = view.Controls.OfType<TabControl>().Single();
+            for (var i = 0; i < tabs.TabCount; i++)
+            {
+                tabs.SelectedIndex = i;
+                Application.DoEvents();
+                using var picture = new Bitmap(size.Width, size.Height);
+                form.DrawToBitmap(picture, new Rectangle(Point.Empty, size));
+                picture.Save(Path.Combine(folder, size.Width + "-" + i + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            form.Close();
+        }
+    }
+
     internal void SmokeTest()
     {
         timer.Stop();
@@ -1543,6 +1567,7 @@ internal sealed class KioskForm : Form
                 edited.ChangeUserAfterSeconds != 30 || edited.AccentColor != "#3DDC84" || edited.AdminCards.Single() != restored.AdminCards.Single() || edited.AllowWindowsAdministrators || !edited.BrowserOnlyBookmarks || edited.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || edited.EnableBrowser || edited.ReaderName != restored.ReaderName || !edited.Applications.SequenceEqual(restored.Applications))
                 throw new InvalidOperationException("Settings view does not round-trip the configuration.");
         }
+        SaveSettingsScreenshots(restored);
 
         // An existing same-executable window must never be adopted or terminated.
         using var unrelated = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(entry.Path, entry.Arguments)

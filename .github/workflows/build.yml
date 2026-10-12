@@ -38,6 +38,11 @@ jobs:
           if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Smoke test timed out.' }
           Get-Content ./out/client/self-test.txt
           if ($process.ExitCode -ne 0) { throw 'Windows embedded UI smoke test failed.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: settings-screenshots
+          path: out/screenshots/
+          retention-days: 7
       # Same layout as the repository, so scripts\Install-*.ps1 find out\client and config\ without parameters.
       - name: Package
         shell: pwsh
