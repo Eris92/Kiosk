@@ -62,6 +62,9 @@ internal sealed class KioskForm : Form
     private SettingsView? settingsView;
     private Control? visibleView;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
+    // The messages' folder is read again every minute, so a change on the share shows up without restarting.
+    private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
+    private bool loadingNews;
     private readonly CardReader reader = new();
     private Func<CardIdentity?> identifyCard;
     private Func<bool> cardPresent;
@@ -103,13 +106,15 @@ internal sealed class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); };
+        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
+        desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
+        FormClosed += (_, _) => { newsTimer.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -1027,6 +1032,52 @@ internal sealed class KioskForm : Form
         catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
     }
 
+    /// <summary>Company messages from Konfiguracja → Komunikaty (kiosk-news.json in a folder or on a share).</summary>
+    private async Task LoadNewsAsync()
+    {
+        if (loadingNews) return;
+        loadingNews = true;
+        var folder = config.NewsFolder;
+        try
+        {
+            var items = await Task.Run(() => News.Load(folder));
+            if (!IsDisposed) desktop.SetNews(items, config.NewsSeconds);
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("news_failed", ex.Message);
+            if (!IsDisposed) desktop.SetNews([], config.NewsSeconds);
+        }
+        finally { loadingNews = false; }
+    }
+
+    /// <summary>The button of a message: a page in the browser, or an application, remote desktop or command from the lists.</summary>
+    private async Task RunNewsActionAsync(NewsItem item)
+    {
+        Audit.Write("news_action", item.Title + " " + item.Action);
+        if (!CanUseApps) { notice = "Przyłóż kartę i zaloguj się, aby otworzyć „" + (item.Title.Length > 0 ? item.Title : item.Button) + "”."; return; }
+        var action = item.Action;
+        string Name(string prefix) => action[prefix.Length..].Trim();
+        if (action.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            var app = config.Applications.FirstOrDefault(a => string.Equals(a.Name, Name("app:"), StringComparison.OrdinalIgnoreCase));
+            if (app != null) await OpenApplicationAsync(app); else notice = "Nie ma aplikacji „" + Name("app:") + "” w Konfiguracji.";
+        }
+        else if (action.StartsWith("rdp:", StringComparison.OrdinalIgnoreCase))
+        {
+            var rdp = config.RdpConnections.FirstOrDefault(r => string.Equals(r.Name, Name("rdp:"), StringComparison.OrdinalIgnoreCase));
+            if (rdp != null) OpenRdp(rdp); else notice = "Nie ma pulpitu zdalnego „" + Name("rdp:") + "” w Konfiguracji.";
+        }
+        else if (action.StartsWith("cmd:", StringComparison.OrdinalIgnoreCase))
+        {
+            var command = config.Commands.FirstOrDefault(c => string.Equals(c.Name, Name("cmd:"), StringComparison.OrdinalIgnoreCase));
+            if (command != null) RunCommand(command); else notice = "Nie ma polecenia „" + Name("cmd:") + "” w Konfiguracji.";
+        }
+        else if (Uri.TryCreate(action, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" or "file")
+            await OpenBrowserAsync(uri.AbsoluteUri);
+        else notice = "Nieznana akcja komunikatu: " + action;
+    }
+
     /// <summary>Menu → Odśwież ekrany: the screens' content starts again (pages reload, programs restart).</summary>
     private void RefreshScreens()
     {
@@ -1286,10 +1337,17 @@ internal sealed class KioskForm : Form
         Arguments = "--new-window " + config.BrowserUrl
     };
 
-    private async Task OpenBrowserAsync()
+    /// <param name="url">A page to open (company message); null = the start page.</param>
+    private async Task OpenBrowserAsync(string? url = null)
     {
-        if (!config.Applications.Any(a => a.IsBuiltInBrowser)) return;
-        if (current?.Browser != null)
+        if (!config.Applications.Any(a => a.IsBuiltInBrowser)) { if (url != null) notice = "Przeglądarka jest wyłączona w Konfiguracji."; return; }
+        if (current?.Browser != null && url != null && current.Logon == null)
+        {
+            ActivateExisting(BrowserKey);
+            await current.Browser.OpenTabAsync(url);
+            return;
+        }
+        if (current?.Browser != null && url == null)
         {
             // Already on another screen: a new browser window for this one.
             if (HostOf(current.Browser) != null && current.Logon == null) await OpenAnotherAsync(BrowserKey); else ActivateExisting(BrowserKey);
@@ -1300,7 +1358,7 @@ internal sealed class KioskForm : Form
         if (session.Logon != null)
         {
             // Signed in as the person: their own Edge, with their profile, bookmarks and SSO (like runas).
-            await OpenApplicationAsync(EdgeAsUser);
+            await OpenApplicationAsync(url == null ? EdgeAsUser : EdgeAsUser with { Arguments = "--new-window " + url }, another: url != null);
             return;
         }
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
@@ -1310,7 +1368,7 @@ internal sealed class KioskForm : Form
         try
         {
             // With "only bookmarks" a start page outside the list opens the first bookmark instead.
-            await requested.InitializeAsync(policy.Allows(config.BrowserUrl) ? config.BrowserUrl : config.Bookmarks[0].Url);
+            await requested.InitializeAsync(url ?? (policy.Allows(config.BrowserUrl) ? config.BrowserUrl : config.Bookmarks[0].Url));
             if (session.Browser == requested && !requested.IsDisposed) Audit.Write("browser_opened");
         }
         catch (Exception ex)
@@ -1457,6 +1515,7 @@ internal sealed class KioskForm : Form
             Invalidate(true);
             Audit.Write("settings_saved");
             StartIdleScreens();
+            _ = LoadNewsAsync();
             CloseWindow(SettingsKey, "settings_closed", session);
         };
         AddWindow(session, SettingsKey, "Konfiguracja", view);
@@ -1491,6 +1550,47 @@ internal sealed class KioskForm : Form
     }
 
     /// <summary>Self-test: a picture of the taskbar with the Start menu open (out\screenshots\shell.png), to check the look in CI.</summary>
+    /// <summary>kiosk-news.json is read with its pictures, dates and actions; a picture of the desktop with the messages.</summary>
+    private void NewsSmokeTest()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "kiosk-news-test-" + Environment.ProcessId);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            using (var picture = new Bitmap(320, 180))
+            {
+                using (var g = Graphics.FromImage(picture))
+                using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Rectangle(0, 0, 320, 180), Color.FromArgb(0, 120, 212), Color.FromArgb(61, 220, 132), 30f))
+                    g.FillRectangle(brush, 0, 0, 320, 180);
+                picture.Save(Path.Combine(folder, "a.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            File.WriteAllText(Path.Combine(folder, "pomoc.html"), "<h1>Zgłoś problem</h1>");
+            File.WriteAllText(Path.Combine(folder, News.FileName), """
+                [
+                  // comments and trailing commas are allowed
+                  { "Title": "Aktualizacja A", "Text": "W piątek po 18:00 aktualizujemy system kadrowy.", "Image": "a.png", "Button": "Szczegóły", "Action": "https://example.com/aktualizacja" },
+                  { "Title": "Zgłoś problem", "Text": "Coś nie działa? Wyślij zgłoszenie do IT.", "Button": "Zgłoś", "Action": "pomoc.html" },
+                  { "Title": "Stary", "Until": "2020-01-01" },
+                ]
+                """);
+            var items = News.Load(folder);
+            if (items.Count != 2 || items[0].Picture == null || !items[1].Action.StartsWith("file:///", StringComparison.Ordinal) || News.Load("").Count != 0)
+                throw new InvalidOperationException("Company messages were not read correctly.");
+            desktop.SetNews(items, 8);
+            if (desktop.News.Count != 2) throw new InvalidOperationException("Company messages are not on the desktop.");
+            var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
+            Directory.CreateDirectory(screenshots);
+            if (desktop.Width > 0 && desktop.Height > 0)
+            {
+                using var shot = new Bitmap(desktop.Width, desktop.Height);
+                desktop.DrawToBitmap(shot, new Rectangle(Point.Empty, desktop.Size));
+                shot.Save(Path.Combine(screenshots, "desktop.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            desktop.SetNews([], 8);
+        }
+        finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
+    }
+
     private void SaveShellScreenshot()
     {
         try
@@ -1678,6 +1778,7 @@ internal sealed class KioskForm : Form
             throw new InvalidOperationException("Lock did not hide the session.");
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
+        NewsSmokeTest();
         SaveShellScreenshot();
 
         // Shared PC: removing the card keeps the session; another card gets its own empty session.

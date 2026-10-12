@@ -92,6 +92,8 @@ internal sealed class DesktopView : UserControl
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly StatusCard card = new();
+    /// <summary>Company messages at the bottom (Konfiguracja → Komunikaty).</summary>
+    internal NewsCarousel News { get; } = new();
     private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
     private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
@@ -153,7 +155,7 @@ internal sealed class DesktopView : UserControl
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
-        Controls.AddRange(new Control[] { card, logo, brand, subtitle, clock, date });
+        Controls.AddRange(new Control[] { card, News, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -205,6 +207,13 @@ internal sealed class DesktopView : UserControl
         ArrangeControls();
     }
 
+    internal void SetNews(List<NewsItem> items, int seconds)
+    {
+        News.Seconds = seconds;
+        News.SetItems(items);
+        ArrangeControls();
+    }
+
     private void UpdateClock()
     {
         var now = DateTime.Now;
@@ -243,7 +252,18 @@ internal sealed class DesktopView : UserControl
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : 324);
-        int top = Math.Max(Scale(125), (Height - cardHeight) / 2 + Scale(12));
+        // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
+        int newsHeight = Scale(132), newsGap = Scale(20), bottom = Height;
+        bool news = News.Count > 0 && !AskingPin && Height - Scale(125) - cardHeight - newsHeight - newsGap * 2 >= 0;
+        News.Visible = news;
+        if (news)
+        {
+            int newsWidth = Math.Min(Scale(980), Math.Max(Scale(240), Width - margin * 2));
+            News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
+            bottom = News.Top - newsGap;
+        }
+        int top = Math.Max(Scale(125), (bottom - cardHeight) / 2 + Scale(12));
+        if (news) top = Math.Min(top, bottom - cardHeight);
         card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
         int innerMargin = Scale(30);
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);

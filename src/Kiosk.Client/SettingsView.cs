@@ -17,6 +17,8 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox brandTitle = new() { Dock = DockStyle.Fill, MaxLength = 60 };
     private readonly TextBox brandSubtitle = new() { Dock = DockStyle.Fill, MaxLength = 120 };
     private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
+    private readonly TextBox newsFolder = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
@@ -277,6 +279,47 @@ internal sealed class SettingsView : UserControl
         commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
             "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
+
+        var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
+        tabs.TabPages.Add(newsTab);
+        var newsFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(0, 0, 12, 0) };
+        newsFields.Paint += (_, e) => PaintCards(newsFields, e.Graphics);
+        newsFields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
+        newsFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var folderPicker = new TableLayoutPanel { ColumnCount = 3, RowCount = 1, Height = 34, Margin = new Padding(0), BackColor = Color.Transparent };
+        folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        // The example installed with the program (Aktualizacja A, Zgłoś problem…), for a quick test without a share.
+        var useExample = new Button { Text = "Użyj przykładu", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
+        useExample.Click += (_, _) => newsFolder.Text = Path.Combine(AppContext.BaseDirectory, "news-example");
+        var chooseFolder = new Button { Text = "Wybierz folder…", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
+        chooseFolder.Click += (_, _) =>
+        {
+            using var dialog = new FolderBrowserDialog { Description = "Folder z plikiem " + News.FileName, UseDescriptionForTitle = true };
+            if (newsFolder.Text.Length > 0 && Directory.Exists(newsFolder.Text)) dialog.InitialDirectory = newsFolder.Text;
+            if (dialog.ShowDialog(this) == DialogResult.OK) newsFolder.Text = dialog.SelectedPath;
+        };
+        newsFolder.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        folderPicker.Controls.Add(newsFolder, 0, 0);
+        folderPicker.Controls.Add(chooseFolder, 1, 0);
+        folderPicker.Controls.Add(useExample, 2, 0);
+        AddField(newsFields, "Folder lub udział z komunikatami (puste = brak)", folderPicker);
+        folderPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        folderPicker.MinimumSize = Size.Empty;
+        AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
+        newsFolder.Text = config.NewsFolder;
+        newsSeconds.Value = Math.Clamp(config.NewsSeconds, 3, 300);
+        newsTab.Controls.Add(new Label
+        {
+            Dock = DockStyle.Fill, ForeColor = HelpText, Padding = new Padding(4, 12, 4, 4),
+            Text = "Komunikaty przewijają się na dole pulpitu (np. „Aktualizacja”, „Zgłoś problem”). W folderze (np. \\\\serwer\\kiosk\\komunikaty, " +
+                   "testowo C:\\ProgramData\\Kiosk\\news) leży plik " + News.FileName + " z listą: Title (tytuł), Text (opis), Image (obraz w tym folderze), " +
+                   "Button (napis przycisku), Action (co robi przycisk: adres https://…, plik z folderu np. zglos-problem.html, app:Nazwa, rdp:Nazwa, cmd:Nazwa), " +
+                   "opcjonalnie From / Until (yyyy-MM-dd). Kiosk czyta folder co minutę. Folder musi być do odczytu dla wszystkich kont. " +
+                   "„Użyj przykładu” wskazuje przykład zainstalowany z Kioskiem (do testu); własny folder zacznij od jego kopii (config\\news w paczce)."
+        });
+        newsTab.Controls.Add(newsFields);
 
         var updateTab = new TabPage("Aktualizacja") { Padding = new Padding(16) };
         tabs.TabPages.Add(updateTab);
@@ -596,6 +639,8 @@ internal sealed class SettingsView : UserControl
             BrandTitle = brandTitle.Text.Trim(),
             BrandSubtitle = brandSubtitle.Text.Trim(),
             BrandLogo = brandLogo.Text.Trim().Trim('"'),
+            NewsFolder = newsFolder.Text.Trim().Trim('"'),
+            NewsSeconds = (int)newsSeconds.Value,
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,

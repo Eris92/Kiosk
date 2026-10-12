@@ -301,6 +301,7 @@ internal sealed class BrowserView : UserControl
 
     /// <summary>Opens a new tab with the start page (also used by the self-test).</summary>
     internal Task OpenTabAsync() => AddTabAsync(homeUrl);
+    internal Task OpenTabAsync(string url) => AddTabAsync(url);
     internal void CloseActiveTab() { if (active != null) CloseTab(active); }
 
     private static bool IsWebAddress(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&

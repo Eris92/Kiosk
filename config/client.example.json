@@ -25,6 +25,8 @@
   "BrandTitle": "Kiosk",
   "BrandSubtitle": "Twój pulpit pracy",
   "BrandLogo": "",
+  "NewsFolder": "",
+  "NewsSeconds": 8,
   "BrowserOnlyBookmarks": false,
   "BrowserAllowedDomains": [],
   "Applications": [
