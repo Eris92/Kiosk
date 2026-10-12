@@ -23,6 +23,8 @@ internal sealed record RdpConnection
     public int Port { get; init; } = 3389;
     public string UserName { get; init; } = "";
     public RdpAuthentication Authentication { get; init; } = RdpAuthentication.SmartCard;
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 /// <summary>What a screen shows while nobody works at the Kiosk: a web page or an application, view only.</summary>
@@ -33,6 +35,8 @@ internal sealed record ScreenContent
     public string Url { get; init; } = "";
     public string Path { get; init; } = "";
     public string Arguments { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 /// <summary>A command in Menu → Polecenia: a program or script run in the background (copy files, sync, restart…).</summary>
@@ -45,12 +49,16 @@ internal sealed record CommandEntry
     /// <summary>Run as the signed-in person (after "Zaloguj"); otherwise as the Kiosk account.</summary>
     public bool AsUser { get; init; } = true;
     public bool Confirm { get; init; }
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 internal sealed record AdminCard
 {
     public string Name { get; init; } = "";
     public string Id { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 internal sealed record Config
@@ -109,6 +117,23 @@ internal sealed record Config
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Server { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? Port { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? IdleSeconds { get; init; }
+
+    /// <summary>What Kiosk works with: the lists without the entries unticked in Konfiguracja.</summary>
+    internal Config Active()
+    {
+        var applications = Applications.Where(a => a.Enabled).ToArray();
+        return this with
+        {
+            RdpConnections = RdpConnections.Where(c => c.Enabled).ToArray(),
+            Bookmarks = Bookmarks.Where(b => b.Enabled).ToArray(),
+            Applications = applications,
+            EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
+            IdleScreens = IdleScreens.Where(s => s.Enabled).ToArray(),
+            Commands = Commands.Where(c => c.Enabled).ToArray(),
+            AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
+            HelpActions = HelpActions.Where(h => h.Enabled).ToArray(),
+        };
+    }
 
     internal Config Migrate()
     {
@@ -187,7 +212,7 @@ internal sealed record Config
         if (BrowserAllowedDomains == null || BrowserAllowedDomains.Any(d => string.IsNullOrWhiteSpace(d) ||
             d.Any(char.IsWhiteSpace) || d.Contains('/') || d.Contains(':')))
             throw new InvalidDataException("Dodatkowe domeny podaj jako same nazwy, np. login.microsoftonline.com.");
-        if (BrowserOnlyBookmarks && Bookmarks.Length == 0)
+        if (BrowserOnlyBookmarks && !Bookmarks.Any(b => b.Enabled))
             throw new InvalidDataException("Tryb „tylko strony z zakładek” wymaga co najmniej jednej zakładki.");
         foreach (var app in Applications)
             if (app == null || string.IsNullOrWhiteSpace(app.Name) || app.Arguments == null || app.WorkingDirectory == null)

@@ -51,7 +51,9 @@ internal sealed class KioskForm : Form
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
-    private Config config;
+    // As saved in Konfiguracja (unticked entries included) and what Kiosk works with (only the ticked ones).
+    private Config fullConfig = null!, activeConfig = null!;
+    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); } }
     private readonly string? configPath;
     private readonly Panel surface = new() { Dock = DockStyle.Fill };
     private readonly DesktopView desktop = new();
@@ -1633,7 +1635,7 @@ internal sealed class KioskForm : Form
         // Open windows stay as they are; saved settings apply to what is opened next.
         if (configPath == null || !CanUseApps || !IsAdmin(current!)) return;
         var session = current!;
-        var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
+        var view = new SettingsView(fullConfig, session.Identity, updated => IsAdmin(session, updated.Active()));
         view.IdentifyScreensRequested += ShowScreenNumbers;
         view.UpdateRequested += folder =>
         {
@@ -1928,6 +1930,15 @@ internal sealed class KioskForm : Form
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
         NewsSmokeTest();
+        // "Włączony": unticked entries stay in the configuration but are not used.
+        var switched = config with
+        {
+            HelpActions = [.. HelpAction.Defaults.Select((h, i) => h with { Enabled = i != 0 })],
+            Commands = [new CommandEntry { Name = "Off", Path = @"C:\Windows\System32\cmd.exe", Enabled = false }]
+        };
+        var active = switched.Active();
+        if (active.HelpActions.Length != HelpAction.Defaults.Length - 1 || active.Commands.Length != 0 || switched.HelpActions.Length != HelpAction.Defaults.Length)
+            throw new InvalidOperationException("Disabled entries were not filtered.");
         SaveShellScreenshot();
 
         // Shared PC: removing the card keeps the session; another card gets its own empty session.

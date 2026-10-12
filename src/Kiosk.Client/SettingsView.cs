@@ -93,7 +93,8 @@ internal sealed class SettingsView : UserControl
         tabs.TabPages.Add(admins);
         adminCards.Columns.Add("Name", "Nazwa (dla Ciebie)");
         adminCards.Columns.Add("Id", "Identyfikator karty");
-        foreach (var card in config.AdminCards) adminCards.Rows.Add(card.Name, card.Id);
+        AddEnabledColumn(adminCards);
+        foreach (var card in config.AdminCards) SetEnabled(adminCards, adminCards.Rows.Add(card.Name, card.Id), card.Enabled);
         SetupGridTab(admins, adminCards, "Tylko te karty (oraz, jeśli zaznaczone, administratorzy Windows tego komputera) widzą Konfigurację w Menu. " +
             "Gdy lista jest pusta, w trybie testowym Konfigurację widzi każdy.");
         allowWindowsAdmins.Checked = config.AllowWindowsAdministrators;
@@ -116,8 +117,9 @@ internal sealed class SettingsView : UserControl
         authentication.Items.AddRange(AuthenticationOptions.Select(o => (object)o.Label).ToArray());
         connections.Columns.Add(authentication);
         connections.Columns["Port"]!.FillWeight = 40;
+        AddEnabledColumn(connections);
         foreach (var c in config.RdpConnections)
-            connections.Rows.Add(c.Name, c.Server, c.Port.ToString(), c.UserName, AuthLabel(c.Authentication));
+            SetEnabled(connections, connections.Rows.Add(c.Name, c.Server, c.Port.ToString(), c.UserName, AuthLabel(c.Authentication)), c.Enabled);
         connections.DefaultValuesNeeded += (_, e) => { e.Row.Cells["Port"].Value = "3389"; e.Row.Cells["Authentication"].Value = AuthLabel(RdpAuthentication.SmartCard); };
         connections.DataError += (_, e) => e.ThrowException = false;
         SetupGridTab(remote, connections,
@@ -208,10 +210,12 @@ internal sealed class SettingsView : UserControl
         apps.Columns.Add("Path", "Pełna ścieżka do EXE");
         apps.Columns.Add("Arguments", "Argumenty");
         apps.Columns.Add("WorkingDirectory", "Katalog roboczy (opcjonalny)");
-        foreach (var app in config.Applications) apps.Rows.Add(app.Name, app.Path, app.Arguments, app.WorkingDirectory);
+        AddEnabledColumn(apps);
+        foreach (var app in config.Applications) SetEnabled(apps, apps.Rows.Add(app.Name, app.Path, app.Arguments, app.WorkingDirectory), app.Enabled);
         bookmarks.Columns.Add("Name", "Nazwa zakładki");
         bookmarks.Columns.Add("Url", "Adres HTTP/HTTPS");
-        foreach (var bookmark in config.Bookmarks) bookmarks.Rows.Add(bookmark.Name, bookmark.Url);
+        AddEnabledColumn(bookmarks);
+        foreach (var bookmark in config.Bookmarks) SetEnabled(bookmarks, bookmarks.Rows.Add(bookmark.Name, bookmark.Url), bookmark.Enabled);
         SetupGridTab(web, bookmarks, "Dodaj zakładkę w pustym wierszu. Zaznacz wiersz, aby go usunąć.");
         var webOptions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(0, 4, 0, 8) };
         webOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
@@ -251,7 +255,8 @@ internal sealed class SettingsView : UserControl
         idleScreens.Columns.Add("Path", "albo aplikacja (pełna ścieżka do EXE)");
         idleScreens.Columns.Add("Arguments", "Argumenty");
         idleScreens.Columns["Screen"]!.FillWeight = 45;
-        foreach (var s in config.IdleScreens) idleScreens.Rows.Add(s.Screen.ToString(), s.Url, s.Path, s.Arguments);
+        AddEnabledColumn(idleScreens);
+        foreach (var s in config.IdleScreens) SetEnabled(idleScreens, idleScreens.Rows.Add(s.Screen.ToString(), s.Url, s.Path, s.Arguments), s.Enabled);
         idleScreens.DefaultValuesNeeded += (_, e) => e.Row.Cells["Screen"].Value = "0";
         SetupGridTab(screens, idleScreens,
             "Gdy nikt nie pracuje, ekrany pokazują tę treść tylko do oglądania (bez klawiatury i myszy). Na głównym ekranie ruch myszy, " +
@@ -276,7 +281,8 @@ internal sealed class SettingsView : UserControl
         commands.Columns.Add("Arguments", "Argumenty");
         commands.Columns.Add(new DataGridViewCheckBoxColumn { Name = "AsUser", HeaderText = "Jako zalogowana osoba", FillWeight = 45 });
         commands.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Confirm", HeaderText = "Pytaj przed", FillWeight = 35 });
-        foreach (var c in config.Commands) commands.Rows.Add(c.Name, c.Path, c.Arguments, c.AsUser, c.Confirm);
+        AddEnabledColumn(commands);
+        foreach (var c in config.Commands) SetEnabled(commands, commands.Rows.Add(c.Name, c.Path, c.Arguments, c.AsUser, c.Confirm), c.Enabled);
         commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
             "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
@@ -285,7 +291,8 @@ internal sealed class SettingsView : UserControl
         tabs.TabPages.Add(helpTab);
         helpActions.Columns.Add("Name", "Napis na przycisku");
         helpActions.Columns.Add("Action", "Akcja");
-        foreach (var h in config.HelpActions) helpActions.Rows.Add(h.Name, h.Action);
+        AddEnabledColumn(helpActions);
+        foreach (var h in config.HelpActions) SetEnabled(helpActions, helpActions.Rows.Add(h.Name, h.Action), h.Enabled);
         SetupGridTab(helpTab, helpActions, "Przyciski „Szybka pomoc” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
@@ -606,6 +613,24 @@ internal sealed class SettingsView : UserControl
         page.Controls.Add(remove);
     }
 
+    /// <summary>"Włączony": unticked entries stay in the list (so they need not be typed again) but Kiosk does not use them.</summary>
+    private static void AddEnabledColumn(DataGridView grid)
+    {
+        var column = new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "Włączony", FillWeight = 28 };
+        grid.Columns.Add(column);
+        column.DisplayIndex = 0;
+        // New rows (typed or added with a button) start ticked.
+        grid.RowsAdded += (_, e) =>
+        {
+            for (int i = e.RowIndex; i < e.RowIndex + e.RowCount && i < grid.Rows.Count; i++)
+                if (!grid.Rows[i].IsNewRow && grid.Rows[i].Cells["Enabled"].Value == null) grid.Rows[i].Cells["Enabled"].Value = true;
+        };
+        grid.DefaultValuesNeeded += (_, e) => e.Row.Cells["Enabled"].Value = true;
+    }
+
+    private static void SetEnabled(DataGridView grid, int row, bool enabled) => grid.Rows[row].Cells["Enabled"].Value = enabled;
+    private static bool IsEnabled(DataGridViewRow row) => row.Cells["Enabled"].Value is not false;
+
     private static string Cell(DataGridViewRow row, string name) => Convert.ToString(row.Cells[name].Value)?.Trim() ?? "";
     // "Copy as path" in Explorer wraps paths in quotes.
     private static string PathCell(DataGridViewRow row, string name) => Cell(row, name).Trim('"').Trim();
@@ -618,7 +643,7 @@ internal sealed class SettingsView : UserControl
         return new RdpConnection
         {
             Name = name, Server = Cell(r, "Server"), Port = port, UserName = Cell(r, "UserName"),
-            Authentication = auth.Label == null ? RdpAuthentication.SmartCard : auth.Value
+            Authentication = auth.Label == null ? RdpAuthentication.SmartCard : auth.Value, Enabled = IsEnabled(r)
         };
     }).ToArray();
 
@@ -659,7 +684,7 @@ internal sealed class SettingsView : UserControl
             BrandLogo = brandLogo.Text.Trim().Trim('"'),
             NewsFolder = newsFolder.Text.Trim().Trim('"'),
             HelpActions = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Name").Length > 0 || Cell(r, "Action").Length > 0))
-                .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim() }).ToArray(),
+                .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r) }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
@@ -672,27 +697,27 @@ internal sealed class SettingsView : UserControl
             AccentColor = accentHex,
             TaskbarAlignment = (TaskbarAlignment)Math.Max(0, taskbarAlign.SelectedIndex),
             BrowserOnlyBookmarks = onlyBookmarks.Checked,
-            AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id") }).ToArray(),
+            AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry
             {
-                Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), WorkingDirectory = PathCell(r, "WorkingDirectory")
+                Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), WorkingDirectory = PathCell(r, "WorkingDirectory"), Enabled = IsEnabled(r)
             }).ToArray(),
-            Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url") }).ToArray(),
+            Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url"), Enabled = IsEnabled(r) }).ToArray(),
             IdleAfterSeconds = (int)idleAfter.Value,
             ScreenRefreshSeconds = (int)screenRefresh.Value,
             Commands = commands.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Cell(r, "Name").Length > 0).Select(r => new CommandEntry
             {
                 Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"),
-                AsUser = r.Cells["AsUser"].Value is true, Confirm = r.Cells["Confirm"].Value is true
+                AsUser = r.Cells["AsUser"].Value is true, Confirm = r.Cells["Confirm"].Value is true, Enabled = IsEnabled(r)
             }).ToArray(),
             IdleScreens = idleScreens.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Url").Length > 0 || Cell(r, "Path").Length > 0)).Select(r => new ScreenContent
             {
                 Screen = int.TryParse(Cell(r, "Screen"), out var screen) ? screen : throw new InvalidDataException("Numer ekranu musi być liczbą (0 = wszystkie)."),
-                Url = Cell(r, "Url"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments")
+                Url = Cell(r, "Url"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), Enabled = IsEnabled(r)
             }).ToArray()
         };
         result = result with { EnableBrowser = result.Applications.Any(a => a.IsBuiltInBrowser) };

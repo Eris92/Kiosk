@@ -6,6 +6,8 @@ internal sealed record Bookmark
 {
     public string Name { get; init; } = "";
     public string Url { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 }
 
 internal sealed record ApplicationEntry
@@ -14,6 +16,8 @@ internal sealed record ApplicationEntry
     public string Path { get; init; } = "";
     public string Arguments { get; init; } = "";
     public string WorkingDirectory { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 
     /// <summary>Path of the built-in Kiosk notepad; listed like any other application so it can be removed.</summary>
     internal const string BuiltInNotes = "kiosk:notatnik";
@@ -35,6 +39,8 @@ internal sealed record HelpAction
 {
     public string Name { get; init; } = "";
     public string Action { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
 
     internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty";
     internal static readonly string[] BuiltIn = [ChangePin, Reenroll, ResetCard];
