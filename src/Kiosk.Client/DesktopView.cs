@@ -87,6 +87,8 @@ internal sealed class DesktopView : UserControl
 {
     private readonly Label brand = new() { Text = "Kiosk", AutoSize = false };
     private readonly Label subtitle = new() { Text = "Twój pulpit pracy", AutoSize = false };
+    private readonly PictureBox logo = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent, Visible = false };
+    private string logoPath = "";
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly StatusCard card = new();
@@ -151,7 +153,7 @@ internal sealed class DesktopView : UserControl
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
-        Controls.AddRange(new Control[] { card, brand, subtitle, clock, date });
+        Controls.AddRange(new Control[] { card, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -182,6 +184,27 @@ internal sealed class DesktopView : UserControl
         card.Invalidate();
     }
 
+    /// <summary>The desktop corner from Konfiguracja: name, line under it and logo; empty ones are hidden.</summary>
+    internal void SetBranding(string title, string line, string logoFile)
+    {
+        brand.Text = title;
+        subtitle.Text = line;
+        if (logoFile != logoPath)
+        {
+            logoPath = logoFile;
+            var old = logo.Image;
+            logo.Image = null;
+            old?.Dispose();
+            // Read into memory, so the file is not kept locked; a missing or broken file simply shows no logo.
+            try { if (logoFile.Length > 0 && File.Exists(logoFile)) logo.Image = Image.FromStream(new MemoryStream(File.ReadAllBytes(logoFile))); }
+            catch (Exception) { logo.Image = null; }
+        }
+        logo.Visible = logo.Image != null;
+        brand.Visible = title.Length > 0;
+        subtitle.Visible = line.Length > 0;
+        ArrangeControls();
+    }
+
     private void UpdateClock()
     {
         var now = DateTime.Now;
@@ -202,8 +225,19 @@ internal sealed class DesktopView : UserControl
         if (card == null) return;
         int margin = Scale(36);
         int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
-        brand.SetBounds(margin, Scale(24), Math.Max(0, Width - clockWidth - margin * 2), Scale(47));
-        subtitle.SetBounds(margin + Scale(2), Scale(75), Math.Max(0, Width - clockWidth - margin * 2), Scale(25));
+        int logoSize = Scale(76), textLeft = margin;
+        if (logo.Visible)
+        {
+            // Wide logos keep their proportions up to three times their height.
+            var image = logo.Image!;
+            int logoWidth = Math.Min(logoSize * 3, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
+            logo.SetBounds(margin, Scale(24), logoWidth, logoSize);
+            textLeft = margin + logoWidth + Scale(16);
+        }
+        int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
+        // Only a line under it: the line moves up to where the name would be.
+        brand.SetBounds(textLeft, Scale(24), textWidth0, Scale(47));
+        subtitle.SetBounds(textLeft + Scale(2), brand.Visible ? Scale(75) : Scale(30), textWidth0, Scale(25));
         clock.SetBounds(Width - clockWidth - margin, Scale(25), clockWidth, Scale(47));
         date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
 

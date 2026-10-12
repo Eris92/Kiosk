@@ -789,6 +789,7 @@ internal sealed class KioskForm : Form
     private void RefreshChrome()
     {
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
+        desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -1010,7 +1011,7 @@ internal sealed class KioskForm : Form
     /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
     private async Task AutoUpdateAsync()
     {
-        if (!config.AutoUpdate) return;
+        if (!config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
         try
         {
             var release = await Updater.LatestAsync();

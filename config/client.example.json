@@ -21,6 +21,10 @@
     }
   ],
   "EnableBrowser": true,
+  "AutoUpdate": true,
+  "BrandTitle": "Kiosk",
+  "BrandSubtitle": "Twój pulpit pracy",
+  "BrandLogo": "",
   "BrowserOnlyBookmarks": false,
   "BrowserAllowedDomains": [],
   "Applications": [
@@ -67,5 +71,5 @@
   "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
   "TestMode": true,
-  "ConfigVersion": 3
+  "ConfigVersion": 4
 }

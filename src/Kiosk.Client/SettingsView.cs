@@ -14,6 +14,9 @@ internal sealed class SettingsView : UserControl
     private const string AnyReader = "(wszystkie czytniki, bez czytnika SIM)";
     private readonly ComboBox reader = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520 };
     private readonly TextBox home = new() { Dock = DockStyle.Fill };
+    private readonly TextBox brandTitle = new() { Dock = DockStyle.Fill, MaxLength = 60 };
+    private readonly TextBox brandSubtitle = new() { Dock = DockStyle.Fill, MaxLength = 120 };
+    private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
@@ -131,6 +134,28 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Logowanie i odblokowanie", unlock);
         AddField(fields, "Kolor przewodni", accent);
         AddField(fields, "Położenie Start i ikon na pasku", taskbarAlign);
+        AddField(fields, "Napis na pulpicie (puste = brak)", brandTitle);
+        AddField(fields, "Tekst pod napisem (puste = brak)", brandSubtitle);
+        // Logo: a path field with a picker; the file must be readable for everybody (e.g. C:\ProgramData\Kiosk\logo.png).
+        var logoPicker = new TableLayoutPanel { ColumnCount = 3, RowCount = 1, Height = 34, Margin = new Padding(0), BackColor = Color.Transparent };
+        logoPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        logoPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        logoPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var chooseLogo = new Button { Text = "Wybierz…", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
+        var clearLogo = new Button { Text = "Usuń", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
+        chooseLogo.Click += (_, _) =>
+        {
+            using var dialog = new OpenFileDialog { Filter = "Obrazy (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif" };
+            if (dialog.ShowDialog(this) == DialogResult.OK) brandLogo.Text = dialog.FileName;
+        };
+        clearLogo.Click += (_, _) => brandLogo.Text = "";
+        brandLogo.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        logoPicker.Controls.Add(brandLogo, 0, 0);
+        logoPicker.Controls.Add(chooseLogo, 1, 0);
+        logoPicker.Controls.Add(clearLogo, 2, 0);
+        AddField(fields, "Logo na pulpicie (PNG/JPG, dostępne dla wszystkich)", logoPicker);
+        logoPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        logoPicker.MinimumSize = Size.Empty;
         AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
         AddField(fields, "Limit czasu łączenia RDP (sekundy)", connectTimeout);
         var pinRow = fields.RowCount++;
@@ -160,6 +185,9 @@ internal sealed class SettingsView : UserControl
         if (config.ReaderName.Length > 0 && !reader.Items.Contains(config.ReaderName)) reader.Items.Add(config.ReaderName);
         reader.SelectedItem = config.ReaderName.Length > 0 ? config.ReaderName : AnyReader;
         home.Text = config.BrowserUrl;
+        brandTitle.Text = config.BrandTitle;
+        brandSubtitle.Text = config.BrandSubtitle;
+        brandLogo.Text = config.BrandLogo;
         lockAfter.Value = config.LockAfterSeconds;
         changeUserAfter.Value = config.ChangeUserAfterSeconds;
         connectTimeout.Value = config.ConnectTimeoutSeconds;
@@ -565,6 +593,9 @@ internal sealed class SettingsView : UserControl
             RdpConnections = ReadConnections(),
             ReaderName = reader.SelectedItem is string name && name != AnyReader ? name : "",
             BrowserUrl = home.Text.Trim(),
+            BrandTitle = brandTitle.Text.Trim(),
+            BrandSubtitle = brandSubtitle.Text.Trim(),
+            BrandLogo = brandLogo.Text.Trim().Trim('"'),
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,

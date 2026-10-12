@@ -62,7 +62,7 @@ internal sealed record Config
     /// <summary>When true the browser opens only bookmarked sites (and their subdomains) plus BrowserAllowedDomains.</summary>
     public bool EnableBrowser { get; init; } = true;
     /// <summary>When Kiosk starts it installs a newer GitHub release by itself (Konfiguracja → Aktualizacja).</summary>
-    public bool AutoUpdate { get; init; }
+    public bool AutoUpdate { get; init; } = true;
     public bool BrowserOnlyBookmarks { get; init; }
     public string[] BrowserAllowedDomains { get; init; } = [];
     public ApplicationEntry[] Applications { get; init; } = [];
@@ -85,6 +85,10 @@ internal sealed record Config
     public bool DisconnectOnCardRemoval { get; init; } = true;
     public string AccentColor { get; init; } = KioskTheme.DefaultAccent;
     public TaskbarAlignment TaskbarAlignment { get; init; } = TaskbarAlignment.Center;
+    /// <summary>Desktop corner: the big name, the line under it and an optional logo (PNG/JPG). Empty texts and logo show nothing.</summary>
+    public string BrandTitle { get; init; } = "Kiosk";
+    public string BrandSubtitle { get; init; } = "Twój pulpit pracy";
+    public string BrandLogo { get; init; } = "";
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
@@ -94,7 +98,7 @@ internal sealed record Config
     public bool TestMode { get; init; } = true;
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
-    internal const int CurrentVersion = 3;
+    internal const int CurrentVersion = 4;
 
     // Read older installations without losing their target or settings.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Server { get; init; }
@@ -116,6 +120,8 @@ internal sealed record Config
             ChangeUserAfterSeconds = IdleSeconds.HasValue ? Math.Max(ChangeUserAfterSeconds, IdleSeconds.Value * 2) : ChangeUserAfterSeconds,
             Applications = applications,
             EnableBrowser = applications?.Any(a => a.IsBuiltInBrowser) == true,
+            // Version 4: automatic update is on by default (build-66 saved it switched off without asking).
+            AutoUpdate = ConfigVersion < 4 || AutoUpdate,
             ConfigVersion = CurrentVersion,
             Server = null, Port = null, IdleSeconds = null
         };
@@ -153,6 +159,10 @@ internal sealed record Config
                 throw new InvalidDataException("Strona dla ekranu " + s.Screen + " musi być adresem HTTP/HTTPS.");
             if (s.Url.Length == 0 && s.Path.Length == 0) throw new InvalidDataException("Ekran " + s.Screen + " potrzebuje strony albo aplikacji.");
         }
+        if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
+        if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||
+            !new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" }.Contains(Path.GetExtension(BrandLogo).ToLowerInvariant())))
+            throw new InvalidDataException("Logo podaj jako pełną ścieżkę do pliku PNG, JPG, BMP lub GIF.");
         if (!KioskTheme.IsColor(AccentColor)) throw new InvalidDataException("Kolor przewodni musi mieć postać #RRGGBB.");
         if (AdminCards == null || AdminCards.Any(a => a == null || string.IsNullOrWhiteSpace(a.Id) || a.Name == null))
             throw new InvalidDataException("Każda karta administratora wymaga identyfikatora.");
