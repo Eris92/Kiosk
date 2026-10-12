@@ -365,15 +365,10 @@ internal sealed class SettingsView : UserControl
         newsTab.Controls.Add(new Label
         {
             Dock = DockStyle.Fill, ForeColor = HelpText, Padding = new Padding(4, 12, 4, 4),
-            Text = "Komunikaty przewijają się na dole pulpitu (np. „Aktualizacja”, „Zgłoś problem”). W folderze (np. \\\\serwer\\kiosk\\komunikaty, " +
-                   "testowo C:\\ProgramData\\Kiosk\\news) leży plik " + News.FileName + " z listą: Title (tytuł), Text (opis), Image (obraz w tym folderze), " +
-                   "Button (napis przycisku), Action (co robi przycisk: adres https://…, plik z folderu np. zglos-problem.html, app:Nazwa, rdp:Nazwa, cmd:Nazwa), " +
-                   "opcjonalnie From / Until (yyyy-MM-dd). \"Kind\": \"Pasek\" robi z wpisu pasek na górze pulpitu (np. „Nie działa system XXX, trwa naprawa”), " +
-                   "Color i TextColor to kolor tła i tekstu (red, white, #RRGGBB), \"Enabled\": false wyłącza wpis bez usuwania. Kiosk czyta folder co minutę. Folder musi być do odczytu dla wszystkich kont. " +
-                   "„Użyj przykładu” wskazuje przykład zainstalowany z Kioskiem (do testu); własny folder zacznij od jego kopii (config\\news w paczce). " +
-                   "SharePoint: adres witryny, z której Kiosk co 10 minut bierze najnowsze strony opublikowane jako aktualności (tytuł, opis, baner, przycisk „Czytaj”). " +
-                   "Czyta je konto Windows, na którym działa Kiosk (logowanie jednokrotne Entra ID), więc to konto musi mieć dostęp do witryny. " +
-                   "Folder i SharePoint działają razem, np. aktualności firmy na przemian z Twoim „Zgłoś problem”. Większy baner pokazuje się, gdy mieści się na ekranie."
+            Text = "Komunikaty przewijają się na dole pulpitu (np. „Zgłoś problem”), a paski („Kind”: „Pasek”) świecą u góry (np. „Nie działa system XXX”). " +
+                   "Folder (np. \\\\serwer\\kiosk\\komunikaty) zawiera plik " + News.FileName + ", Kiosk czyta go co minutę; musi być do odczytu dla wszystkich kont. " +
+                   "Opis wszystkich pól (Title, Text, Image, Button, Action, Color, TextColor, Enabled, From / Until) jest na początku przykładowego pliku: " +
+                   "„Użyj przykładu” albo config\\news w paczce. SharePoint: najnowsze aktualności witryny co 10 minut, czytane kontem Windows Kiosku."
         });
         newsTab.Controls.Add(newsFields);
 
