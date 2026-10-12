@@ -34,19 +34,56 @@ internal static class Configuration
     internal static bool IsWebUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
+    internal const string SaveArgument = "--save-config";
+
+    /// <summary>
+    /// Saves the configuration. The shared configuration folder is read-only for users (Install-KioskShell.ps1), so in
+    /// a person's own Windows session Windows asks for an administrator, and only that one copy step runs elevated.
+    /// </summary>
     internal static void Save(string path, Config config)
     {
         config.Validate();
+        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        try { Replace(path, json); return; }
+        catch (UnauthorizedAccessException) { }
+        var staged = Path.Combine(Path.GetTempPath(), "Kiosk-config-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(staged, json);
+        try
+        {
+            using var copy = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+            {
+                UseShellExecute = true, Verb = "runas", WorkingDirectory = AppContext.BaseDirectory,
+                Arguments = "\"" + SaveArgument + "\" \"" + staged + "\" \"" + path + "\""
+            })!;
+            copy.WaitForExit();
+            if (copy.ExitCode != 0) throw new UnauthorizedAccessException("Administrator nie zapisał konfiguracji (kod " + copy.ExitCode + ").");
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            throw new UnauthorizedAccessException("Konfigurację zapisuje administrator Windows tego komputera. Zapis anulowany.");
+        }
+        finally { File.Delete(staged); }
+    }
+
+    /// <summary>Kiosk.Client.exe --save-config &lt;staged file&gt; &lt;configuration&gt; (elevated): validates and copies.</summary>
+    internal static int SaveElevated(string staged, string path)
+    {
+        try
+        {
+            Load(staged);   // validates
+            Replace(path, File.ReadAllText(staged));
+            return 0;
+        }
+        catch (Exception ex) { Audit.Write("settings_save_failed", ex.Message); return 2; }
+    }
+
+    private static void Replace(string path, string json)
+    {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(temporary, json);
             File.Move(temporary, path, true);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            throw new UnauthorizedAccessException("Brak prawa zapisu do " + path + ". Ten folder może zmieniać tylko administrator Windows " +
-                "(Install-KioskShell.ps1 z -ReadOnlyConfig). Uruchom ponownie scripts\\Install-KioskShell.ps1 bez tej opcji.");
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
