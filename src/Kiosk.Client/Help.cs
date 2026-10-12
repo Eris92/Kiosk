@@ -197,11 +197,10 @@ internal sealed class HelpBrowserForm : Form
 
 /// <summary>
 /// A yes / no question for Szybka pomoc, drawn like the rest of the Kiosk (no title bar). Nobody answers, moves the mouse
-/// or presses a key for the help time (at least 15 s, the text needs reading): it answers "no" by itself. The bar shows the time left.
+/// or presses a key for the help time set in Konfiguracja: it answers "no" by itself. The bar shows the time left.
 /// </summary>
 internal sealed class HelpConfirm : Form
 {
-    internal const int MinimumSeconds = 15;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 200 };
     private readonly int seconds;
     private DateTime lastActivity = DateTime.UtcNow;
@@ -210,7 +209,7 @@ internal sealed class HelpConfirm : Form
 
     private HelpConfirm(string title, string text, int idleSeconds, bool warning)
     {
-        seconds = Math.Max(MinimumSeconds, idleSeconds);
+        seconds = Math.Max(1, idleSeconds);
         Text = title;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
