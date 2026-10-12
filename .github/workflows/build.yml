@@ -39,7 +39,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Remove-Item out/client/self-test.txt -ErrorAction SilentlyContinue
+          Remove-Item out/client/self-test* -ErrorAction SilentlyContinue
           $package = 'package/Kiosk'
           New-Item -ItemType Directory -Path "$package/out" -Force | Out-Null
           Copy-Item out/client "$package/out/client" -Recurse
