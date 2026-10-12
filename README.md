@@ -23,6 +23,12 @@ Unzip it to e.g. `C:\Kiosk` (it keeps the repository layout: `out\client`,
 below as administrator. No .NET installation is needed. `client.local.json`
 is never part of the package.
 
+## Konfiguracja for administrators
+
+Only admin cards and Windows administrators see Konfiguracja in the Menu. In anyone's session an
+administrator presses **Ctrl+Alt+K**: Windows asks for an administrator account, the settings open
+elevated, and after saving the running Kiosk reloads them.
+
 ## Prerequisites
 
 - Windows 11 x64 client with a PC/SC reader and certificate smart card, such as

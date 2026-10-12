@@ -22,6 +22,7 @@ internal static class Program
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         if (args.Length >= 3 && args[0] == Updater.Argument) return Updater.Apply(args);
         if (Updater.IsCopy(args)) return Updater.CopyElevated(args[1]);
+        if (args.Length == 2 && args[0] == AdminSettings.Argument) return AdminSettings.Run(args[1]);
         if (args.Length == 3 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2]);
         if (args.Length == 3 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort)) return RdpUserHost.Run(args[1], rdpPort);
         if (args.Length == 2 && args[0] == "--card-info")

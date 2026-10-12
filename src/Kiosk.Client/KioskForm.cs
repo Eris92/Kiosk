@@ -1282,6 +1282,40 @@ internal sealed class KioskForm : Form
         RefreshChrome();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        AdminSettings.RegisterHotkey(Handle);
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        AdminSettings.UnregisterHotkey(Handle);
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (AdminSettings.IsHotkey(m)) { OpenSettingsAsAdministrator(); return; }
+        base.WndProc(ref m);
+    }
+
+    /// <summary>Ctrl+Alt+K: an admin card opens Konfiguracja as usual; anyone else is asked for a Windows administrator.</summary>
+    private void OpenSettingsAsAdministrator()
+    {
+        if (configPath == null) return;
+        if (current != null && CanUseApps && IsAdmin(current)) { OpenSettings(); return; }
+        AdminSettings.Open(this, configPath, () =>
+        {
+            try { config = Configuration.Load(configPath); }
+            catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return; }
+            KioskTheme.SetAccent(config.AccentColor);
+            Invalidate(true);
+            StartIdleScreens();
+            RefreshChrome();
+        });
+    }
+
     private void OpenSettings()
     {
         if (settingsView != null) { ActivateExisting(SettingsKey); return; }
