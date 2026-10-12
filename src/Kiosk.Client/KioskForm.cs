@@ -43,7 +43,7 @@ internal sealed class KioskForm : Form
         internal bool IsWindowsAdmin { get; set; }
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
         internal UserLogon? Logon { get; set; }
-        internal string Name => Logon?.DisplayName ?? Identity.Name;
+        internal string Name => Logon is { FriendlyName.Length: > 0 } logon ? logon.FriendlyName : People.FriendlyName("", Identity.Name, Identity.Upn);
         /// <summary>Which screen each window goes on (window key → 1 = main, 2… = others); remembered per card.</summary>
         internal Dictionary<string, int>? Layout { get; set; }
         /// <summary>The screens' content was opened as this person (editable) after their first unlock.</summary>
@@ -820,7 +820,7 @@ internal sealed class KioskForm : Form
             desktop.UpdateStatus(title, detail, locked: true, locked.Verified ? "Wznów sesję" : "Zaloguj");
         }
         else if (current != null)
-            desktop.UpdateStatus("Witaj, " + current.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.");
+            desktop.UpdateStatus(current.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.", person: current.Name);
         else if (requireRemoval)
             desktop.UpdateStatus("Wyjmij kartę", "Sesja została zamknięta. Wyjmij kartę i włóż ją ponownie, aby zacząć od nowa.");
         else
@@ -1947,6 +1947,9 @@ internal sealed class KioskForm : Form
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
         NewsSmokeTest();
+        if (People.FriendlyName("", @"INVESTA\KrzysztofLechmyc") != "Krzysztof Lechmyc" || People.FriendlyName("", "jan.kowalski@firma.pl") != "Jan Kowalski" ||
+            People.FriendlyName("Anna Nowak", @"AzureAD\x") != "Anna Nowak" || People.FriendlyName("", "Alicja Test") != "Alicja Test" || People.Initials("Krzysztof Lechmyc") != "KL")
+            throw new InvalidOperationException("People's names are not shown nicely.");
         // "Włączony": unticked entries stay in the configuration but are not used.
         var switched = config with
         {

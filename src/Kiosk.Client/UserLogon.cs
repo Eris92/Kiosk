@@ -35,6 +35,8 @@ internal sealed class UserLogon : IDisposable
 
     internal string User => user;
     internal string Sid { get; private set; } = "";
+    /// <summary>The person's name for the desktop, e.g. "Krzysztof Lechmyc" (not INVESTA\klechmyc).</summary>
+    internal string FriendlyName { get; private set; } = "";
     /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
     internal string? ProfileDirectory =>
         Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
@@ -66,7 +68,10 @@ internal sealed class UserLogon : IDisposable
         {
             if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
             using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
-            return new UserLogon(login, domain, password, length, identity.Name) { Sid = identity.User?.Value ?? "" };
+            return new UserLogon(login, domain, password, length, identity.Name)
+            {
+                Sid = identity.User?.Value ?? "", FriendlyName = People.FriendlyName(DirectoryName(identity), login, identity.Name)
+            };
         }
     }
 
@@ -179,6 +184,23 @@ internal sealed class UserLogon : IDisposable
     [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    /// <summary>The name in Active Directory / Entra ID ("Krzysztof Lechmyc"), asked as that person; empty when unknown.</summary>
+    private static string DirectoryName(System.Security.Principal.WindowsIdentity identity)
+    {
+        try
+        {
+            return System.Security.Principal.WindowsIdentity.RunImpersonated(identity.AccessToken, () =>
+            {
+                var buffer = new StringBuilder(256);
+                uint size = (uint)buffer.Capacity;
+                return GetUserNameEx(3, buffer, ref size) ? buffer.ToString() : ""; // NameDisplay
+            });
+        }
+        catch (Exception) { return ""; }
+    }
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
     [DllImport("credui.dll", CharSet = CharSet.Unicode)]
     private static extern int CredUIPromptForWindowsCredentials(ref CredUiInfo info, int error, ref uint package, IntPtr inBuffer, uint inSize,
         out IntPtr outBuffer, out uint outSize, ref bool save, int flags);

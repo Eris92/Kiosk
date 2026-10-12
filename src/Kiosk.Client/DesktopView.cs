@@ -96,7 +96,7 @@ internal sealed class DesktopView : UserControl
     internal NewsCarousel News { get; } = new();
     /// <summary>Szybka pomoc (Konfiguracja → Szybka pomoc), shown locked and unlocked.</summary>
     internal HelpBar Help { get; } = new();
-    private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
+    private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, AutoEllipsis = true };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
     private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Button resume = new() { Text = "Wznów sesję", Visible = false };
@@ -172,10 +172,15 @@ internal sealed class DesktopView : UserControl
         Invalidate(true);
     }
 
-    internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję")
+    private string? person;
+
+    /// <summary><paramref name="person"/>: a signed-in person's name, shown with their initials in a circle instead of a greeting.</summary>
+    internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję", string? person = null)
     {
         // Called on every shell tick; repaint only when something changed.
-        if (heading.Text == title && detail.Text == description && this.locked == locked && resume.Text == buttonText) return;
+        if (heading.Text == title && detail.Text == description && this.locked == locked && resume.Text == buttonText && this.person == person) return;
+        this.person = person;
+        card.Initials = person == null ? "" : People.Initials(person);
         resume.Text = buttonText;
         this.locked = locked;
         heading.Text = title;
@@ -264,7 +269,8 @@ internal sealed class DesktopView : UserControl
         date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
-        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : 324);
+        bool personRow = person != null && !locked && !AskingPin;
+        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
         bool help = Help.Count > 0 && !AskingPin;
         var column = Help.Needed(true);
@@ -298,9 +304,26 @@ internal sealed class DesktopView : UserControl
         }
         int innerMargin = Scale(30);
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
-        heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
-        detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
-        hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
+        if (personRow)
+        {
+            // The person: initials in a circle and the name beside it, the rest under them.
+            int diameter = Scale(62), gap = Scale(18);
+            int nameWidth = Math.Max(0, Math.Min(textWidth - diameter - gap, TextRenderer.MeasureText(heading.Text, heading.Font).Width + Scale(8)));
+            int left = (cardWidth - diameter - gap - nameWidth) / 2;
+            card.Avatar = new Rectangle(left, Scale(36), diameter, diameter);
+            heading.TextAlign = ContentAlignment.MiddleLeft;
+            heading.SetBounds(left + diameter + gap, Scale(32), nameWidth, diameter + Scale(8));
+            detail.SetBounds(innerMargin, Scale(124), textWidth, Scale(64));
+            hint.SetBounds(innerMargin, Scale(214), textWidth, Scale(35));
+        }
+        else
+        {
+            card.Avatar = Rectangle.Empty;
+            heading.TextAlign = ContentAlignment.MiddleCenter;
+            heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
+            detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
+            hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
+        }
         int buttonWidth = Math.Min(Scale(220), textWidth);
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
         int pinWidth = Math.Min(Scale(360), textWidth);
@@ -369,6 +392,8 @@ internal sealed class DesktopView : UserControl
     private sealed class StatusCard : Panel
     {
         internal bool Locked { get; set; }
+        internal string Initials { get; set; } = "";
+        internal Rectangle Avatar { get; set; }
 
         internal StatusCard()
         {
@@ -388,6 +413,17 @@ internal sealed class DesktopView : UserControl
             using var border = new Pen(KioskTheme.Border);
             g.DrawPath(border, cardPath);
 
+            if (Initials.Length > 0 && !Avatar.IsEmpty)
+            {
+                using var fill = new SolidBrush(KioskTheme.AccentSoft);
+                g.FillEllipse(fill, Avatar);
+                using var ring = new Pen(KioskTheme.AccentLine, S(2));
+                g.DrawEllipse(ring, Avatar);
+                using var letters = new Font("Segoe UI", 18, FontStyle.Bold);
+                TextRenderer.DrawText(g, Initials, letters, Avatar, KioskTheme.AccentLine,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+                return;
+            }
             int diameter = S(62);
             var iconBounds = new Rectangle((Width - diameter) / 2, S(32), diameter, diameter);
             using var circle = new SolidBrush(KioskTheme.AccentSoft);
