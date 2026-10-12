@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+env:
+  # Release tag; the client shows it in Konfiguracja → Aktualizacja and compares it with the latest release.
+  KIOSK_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
 jobs:
   build:
     runs-on: windows-latest
@@ -27,7 +30,7 @@ jobs:
           Get-ChildItem config/*.json | ForEach-Object { Get-Content $_ -Raw | ConvertFrom-Json | Out-Null }
       - name: Publish client
         shell: pwsh
-        run: ./scripts/Build.ps1
+        run: ./scripts/Build.ps1 -Version $env:KIOSK_VERSION
       - name: Windows embedded UI smoke test
         shell: pwsh
         run: |
@@ -59,8 +62,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ('${{ github.ref_type }}' -eq 'tag') { $tag = '${{ github.ref_name }}' }
-          else { $tag = 'build-${{ github.run_number }}' }
+          $tag = $env:KIOSK_VERSION
           $sha = '${{ github.sha }}'.Substring(0, 7)
           $notes = "Branch/tag: ${{ github.ref_name }}, commit $sha.`n`nInstall: unzip to e.g. C:\Kiosk, then run as administrator scripts\Install-KioskShell.ps1 (see README)."
           gh release create $tag package/Kiosk-win-x64.zip --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes

@@ -41,6 +41,8 @@ internal sealed class SettingsView : UserControl
     private bool scaled;
     /// <summary>Shows each screen's number on the screen itself.</summary>
     internal event Action? IdentifyScreensRequested;
+    /// <summary>A new version is downloaded (folder with its Kiosk.Client.exe); Kiosk closes and the new copy installs itself.</summary>
+    internal event Action<string>? UpdateRequested;
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
@@ -223,6 +225,44 @@ internal sealed class SettingsView : UserControl
         commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
             "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
+
+        var updateTab = new TabPage("Aktualizacja") { Padding = new Padding(16) };
+        tabs.TabPages.Add(updateTab);
+        var updatePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        updatePanel.Controls.Add(new Label { Text = "Zainstalowana wersja: " + Updater.CurrentVersion, AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 4, 4, 8) });
+        updatePanel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Color.FromArgb(80, 92, 110), Margin = new Padding(4, 0, 4, 12),
+            Text = "Pobiera najnowsze wydanie z GitHub (github.com/Eris92/Kiosk, zakładka Releases), zamyka Kiosk, podmienia pliki programu " +
+                   "i uruchamia nową wersję. Konfiguracja zostaje bez zmian. Gdy Kiosk jest zainstalowany w Program Files, Windows zapyta o administratora. " +
+                   "Niezapisane zmiany w tej Konfiguracji przepadną."
+        });
+        var updateButton = new Button { Text = "Sprawdź i zaktualizuj", Size = new Size(240, 38), Margin = new Padding(4) };
+        KioskTheme.StyleButton(updateButton, primary: true);
+        var updateStatus = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 12, 4, 4) };
+        updateButton.Click += async (_, _) =>
+        {
+            updateButton.Enabled = false;
+            try
+            {
+                updateStatus.Text = "Sprawdzam najnowsze wydanie…";
+                var release = await Updater.LatestAsync();
+                if (release.Tag == Updater.CurrentVersion)
+                {
+                    updateStatus.Text = "Masz najnowszą wersję (" + release.Tag + ").";
+                    return;
+                }
+                updateStatus.Text = "Pobieram " + release.Tag + "…";
+                var folder = await Updater.DownloadAsync(release);
+                updateStatus.Text = "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
+                UpdateRequested?.Invoke(folder);
+            }
+            catch (Exception ex) { updateStatus.Text = "Aktualizacja nie powiodła się: " + ex.Message; }
+            finally { if (!IsDisposed) updateButton.Enabled = true; }
+        };
+        updatePanel.Controls.Add(updateButton);
+        updatePanel.Controls.Add(updateStatus);
+        updateTab.Controls.Add(updatePanel);
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
         var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };

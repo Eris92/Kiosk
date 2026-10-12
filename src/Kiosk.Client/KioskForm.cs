@@ -1282,6 +1282,15 @@ internal sealed class KioskForm : Form
         var session = current!;
         var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
         view.IdentifyScreensRequested += ShowScreenNumbers;
+        view.UpdateRequested += folder =>
+        {
+            Audit.Write("update_requested", folder);
+            closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
+            if (!closeConfirmed) return;
+            // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
+            Updater.Launch(folder);
+            Close();
+        };
         settingsView = view;
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
