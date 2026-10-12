@@ -143,8 +143,10 @@ internal sealed class CardReader : IDisposable
     internal static bool IsUsableCard(uint state) =>
         (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
 
+    // "Any reader" skips the laptop's SIM slot (LTE modem: "Microsoft UICC ISO Reader …"): it always holds a card,
+    // which would sign someone in with no card on the reader.
     internal static Native.ReaderState[] MonitoredReaders(Native.ReaderState[] states, string selected) =>
-        selected.Length == 0 ? states :
+        selected.Length == 0 ? states.Where(s => s.Reader?.Contains("UICC", StringComparison.OrdinalIgnoreCase) != true).ToArray() :
         states.Where(s => string.Equals(s.Reader, selected, StringComparison.Ordinal)).ToArray();
 
     private static string Describe(Native.ReaderState state)

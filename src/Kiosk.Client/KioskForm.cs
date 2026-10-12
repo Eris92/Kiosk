@@ -1349,7 +1349,7 @@ internal sealed class KioskForm : Form
             new Native.ReaderState { Reader = "Windows Hello", EventState = 0x422, Atr = new byte[36] }
         };
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Count(s => CardReader.IsUsableCard(s.EventState)) != 1 ||
-            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 3 ||
+            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 2 ||
             CardReader.MonitoredReaders(physicalAndVirtual, "Missing").Length != 0)
             throw new InvalidOperationException("PCSC reader-selection regression test failed.");
         physicalAndVirtual[0].EventState = 0x12;
