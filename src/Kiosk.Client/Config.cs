@@ -12,6 +12,9 @@ internal enum UnlockMethod { Card, CardAndWindowsHello, CardAndPin }
 [JsonConverter(typeof(JsonStringEnumConverter<NewsOrdering>))]
 internal enum NewsOrdering { Alternate, MineFirst, SharePointFirst }
 
+[JsonConverter(typeof(JsonStringEnumConverter<NewsDisplay>))]
+internal enum NewsDisplay { All, BarsOnly, Off }
+
 [JsonConverter(typeof(JsonStringEnumConverter<NewsBanner>))]
 internal enum NewsBanner { Standard, Large, ExtraLarge }
 
@@ -105,6 +108,8 @@ internal sealed record Config
     public string BrandLogo { get; init; } = "";
     /// <summary>Folder or share with kiosk-news.json: company messages scrolling on the desktop. Empty = none.</summary>
     public string NewsFolder { get; init; } = "";
+    /// <summary>Komunikaty on/off: all, only the bars at the top, or none.</summary>
+    public NewsDisplay NewsShow { get; init; }
     public int NewsSeconds { get; init; } = 8;
     /// <summary>A SharePoint site whose news (pages published as news) scroll with the folder's messages. Empty = none.</summary>
     public string NewsSharePoint { get; init; } = "";

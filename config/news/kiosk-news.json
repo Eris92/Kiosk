@@ -19,7 +19,9 @@
     "Enabled": false,
     "Kind": "Pasek",
     "Title": "Prace serwisowe",
-    "Text": "Dziś 16:00–17:00 system XXX może działać wolniej.",
+    "Text": "20 października 16:00–17:00 system XXX może działać wolniej.",
+    "From": "2026-10-19",
+    "Until": "2026-10-20",
     "Color": "#E67E22",
     "TextColor": "black"
   },
@@ -54,6 +56,16 @@
     "Image": "zglos-problem.png",
     "Button": "Zgłoś problem",
     "Action": "zglos-problem.html"
+  },
+  {
+    // Z datami: pokazuje się tylko od From do Until (włącznie), potem znika sam.
+    "Enabled": true,
+    "Title": "Szkolenie z bezpieczeństwa",
+    "Text": "Do końca roku każdy przechodzi krótkie szkolenie online. Zajmie 15 minut.",
+    "Button": "Szczegóły",
+    "Action": "aktualizacja.html",
+    "From": "2026-10-01",
+    "Until": "2026-12-31"
   },
   {
     "Enabled": true,

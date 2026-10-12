@@ -19,6 +19,7 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
     private readonly TextBox newsFolder = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
+    private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
     private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
     private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
@@ -345,6 +346,8 @@ internal sealed class SettingsView : UserControl
         folderPicker.Controls.Add(newsFolder, 0, 0);
         folderPicker.Controls.Add(chooseFolder, 1, 0);
         folderPicker.Controls.Add(useExample, 2, 0);
+        AddField(newsFields, "Pokazuj komunikaty", newsShow);
+        newsShow.SelectedIndex = (int)config.NewsShow;
         AddField(newsFields, "Folder lub udział z komunikatami (puste = brak)", folderPicker);
         folderPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         folderPicker.MinimumSize = Size.Empty;
@@ -716,6 +719,7 @@ internal sealed class SettingsView : UserControl
             BrandSubtitle = brandSubtitle.Text.Trim(),
             BrandLogo = brandLogo.Text.Trim().Trim('"'),
             NewsFolder = newsFolder.Text.Trim().Trim('"'),
+            NewsShow = (NewsDisplay)Math.Max(0, newsShow.SelectedIndex),
             HelpActions = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Name").Length > 0 || Cell(r, "Action").Length > 0))
                 .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r) }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,

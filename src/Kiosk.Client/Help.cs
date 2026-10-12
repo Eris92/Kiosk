@@ -194,3 +194,60 @@ internal sealed class HelpBrowserForm : Form
         base.Dispose(disposing);
     }
 }
+
+/// <summary>A yes / no question for Szybka pomoc that answers "no" by itself after the help time without activity.</summary>
+internal sealed class HelpConfirm : Form
+{
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
+    private DateTime lastActivity = DateTime.UtcNow;
+
+    private HelpConfirm(string title, string text, int idleSeconds, bool warning)
+    {
+        Text = title;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = MaximizeBox = false;
+        ShowInTaskbar = false;
+        TopMost = true;
+        BackColor = KioskTheme.Surface;
+        ForeColor = KioskTheme.Text;
+        Font = new Font("Segoe UI", 10.5f);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(560, 250);
+        var message = new Label { Text = text, Dock = DockStyle.Fill, Padding = new Padding(24, 20, 24, 8) };
+        var countdown = new Label { Dock = DockStyle.Bottom, Height = 26, Padding = new Padding(24, 0, 24, 0), ForeColor = KioskTheme.Muted };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10) };
+        var no = new Button { Text = "Nie", Width = 140, Height = 40, DialogResult = DialogResult.No };
+        var yes = new Button { Text = warning ? "Tak, wykonaj" : "Tak", Width = 160, Height = 40, DialogResult = DialogResult.Yes };
+        KioskTheme.StyleButton(no, primary: warning);
+        KioskTheme.StyleButton(yes, primary: !warning);
+        buttons.Controls.Add(no);
+        buttons.Controls.Add(yes);
+        Controls.Add(message);
+        Controls.Add(countdown);
+        Controls.Add(buttons);
+        AcceptButton = warning ? no : yes; // A dangerous step is never the default.
+        CancelButton = no;
+        void Touched() => lastActivity = DateTime.UtcNow;
+        foreach (Control c in new Control[] { this, message, countdown, buttons, no, yes }) { c.MouseMove += (_, _) => Touched(); c.KeyDown += (_, _) => Touched(); }
+        timer.Tick += (_, _) =>
+        {
+            int left = idleSeconds - (int)(DateTime.UtcNow - lastActivity).TotalSeconds;
+            if (left <= 0) { DialogResult = DialogResult.No; Close(); return; }
+            countdown.Text = "Bez odpowiedzi okno zamknie się za " + left + " s.";
+        };
+        Shown += (_, _) => { Touched(); timer.Start(); };
+    }
+
+    internal static bool Ask(IWin32Window owner, string title, string text, int idleSeconds, bool warning = false)
+    {
+        using var dialog = new HelpConfirm(title, text, idleSeconds, warning);
+        return dialog.ShowDialog(owner) == DialogResult.Yes;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) timer.Dispose();
+        base.Dispose(disposing);
+    }
+}

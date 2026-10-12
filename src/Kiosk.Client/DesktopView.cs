@@ -109,6 +109,9 @@ internal sealed class DesktopView : UserControl
     private readonly System.Windows.Forms.Timer pinWatch = new() { Interval = 250 };
     private TaskCompletionSource<string?>? pinRequest;
     private Func<bool>? pinCardPresent;
+    // Szybka pomoc: the PIN field gives up when nobody types for this long (0 = waits).
+    private int pinIdleSeconds;
+    private DateTime pinActivity;
     private bool locked;
     internal bool AskingPin => pinRequest != null;
 
@@ -153,7 +156,12 @@ internal sealed class DesktopView : UserControl
             if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; FinishPin(true); }
             if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; FinishPin(false); }
         };
-        pinWatch.Tick += (_, _) => { if (pinCardPresent?.Invoke() == false) FinishPin(false); }; // Card taken away.
+        pinWatch.Tick += (_, _) =>
+        {
+            if (pinCardPresent?.Invoke() == false) FinishPin(false); // Card taken away.
+            else if (pinIdleSeconds > 0 && DateTime.UtcNow - pinActivity > TimeSpan.FromSeconds(pinIdleSeconds)) FinishPin(false);
+        };
+        pinBox.TextChanged += (_, _) => pinActivity = DateTime.UtcNow;
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
@@ -360,8 +368,10 @@ internal sealed class DesktopView : UserControl
     /// Shows the PIN field on the lock card and waits for it; null when cancelled or the card is taken away.
     /// The typed text is handed over once and the field is cleared.
     /// </summary>
-    internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent)
+    internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent, int idleSeconds = 0)
     {
+        pinIdleSeconds = idleSeconds;
+        pinActivity = DateTime.UtcNow;
         pinRequest?.TrySetResult(null);
         pinRequest = new TaskCompletionSource<string?>();
         pinCardPresent = cardPresent;
