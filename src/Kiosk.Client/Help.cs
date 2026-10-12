@@ -160,8 +160,11 @@ internal sealed class HelpBrowserForm : Form
         // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
         // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
         browser.Activity += Touched;
-        header.MouseMove += (_, _) => Touched();
-        heading.MouseMove += (_, _) => Touched();
+        // Only a real move counts: Windows repeats "mouse move" over a resting cursor when the heading text changes.
+        var lastCursor = Cursor.Position;
+        void Moved(object? s, MouseEventArgs e) { if (Cursor.Position != lastCursor) { lastCursor = Cursor.Position; Touched(); } }
+        header.MouseMove += Moved;
+        heading.MouseMove += Moved;
         limit.Tick += (_, _) =>
         {
             var left = idleSeconds - (int)(DateTime.UtcNow - lastActivity).TotalSeconds;
@@ -247,9 +250,12 @@ internal sealed class HelpConfirm : Form
         Shown += (_, _) => { Touched(); ShowLeft(); timer.Start(); };
     }
 
+    private Point lastCursor = Cursor.Position;
+
     private void Watch(Control control)
     {
-        control.MouseMove += (_, _) => Touched();
+        // Windows repeats "mouse move" while the cursor rests (e.g. when the countdown text changes): only a real move counts.
+        control.MouseMove += (_, _) => { if (Cursor.Position != lastCursor) { lastCursor = Cursor.Position; Touched(); } };
         control.MouseDown += (_, _) => Touched();
         foreach (Control child in control.Controls) Watch(child);
     }
