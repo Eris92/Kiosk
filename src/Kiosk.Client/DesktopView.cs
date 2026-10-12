@@ -235,7 +235,8 @@ internal sealed class DesktopView : UserControl
         int margin = Scale(36);
         int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
         int logoSize = Scale(76), textLeft = margin;
-        if (logo.Visible)
+        // Visible reads false while the desktop itself is hidden, so the layout looks at the content.
+        if (logo.Image != null)
         {
             // Wide logos keep their proportions up to three times their height.
             var image = logo.Image!;
@@ -246,7 +247,7 @@ internal sealed class DesktopView : UserControl
         int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
         // Only a line under it: the line moves up to where the name would be.
         brand.SetBounds(textLeft, Scale(24), textWidth0, Scale(47));
-        subtitle.SetBounds(textLeft + Scale(2), brand.Visible ? Scale(75) : Scale(30), textWidth0, Scale(25));
+        subtitle.SetBounds(textLeft + Scale(2), brand.Text.Length > 0 ? Scale(75) : Scale(30), textWidth0, Scale(25));
         clock.SetBounds(Width - clockWidth - margin, Scale(25), clockWidth, Scale(47));
         date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
 
