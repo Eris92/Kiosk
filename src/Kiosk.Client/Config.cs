@@ -9,6 +9,12 @@ internal enum RdpAuthentication { SmartCard, WindowsCurrentUser, EntraId }
 [JsonConverter(typeof(JsonStringEnumConverter<UnlockMethod>))]
 internal enum UnlockMethod { Card, CardAndWindowsHello, CardAndPin }
 
+[JsonConverter(typeof(JsonStringEnumConverter<NewsOrdering>))]
+internal enum NewsOrdering { Alternate, MineFirst, SharePointFirst }
+
+[JsonConverter(typeof(JsonStringEnumConverter<NewsBanner>))]
+internal enum NewsBanner { Standard, Large, ExtraLarge }
+
 [JsonConverter(typeof(JsonStringEnumConverter<SessionMode>))]
 internal enum SessionMode { Kiosk, WindowsShell }
 
@@ -100,6 +106,11 @@ internal sealed record Config
     /// <summary>Folder or share with kiosk-news.json: company messages scrolling on the desktop. Empty = none.</summary>
     public string NewsFolder { get; init; } = "";
     public int NewsSeconds { get; init; } = 8;
+    /// <summary>A SharePoint site whose news (pages published as news) scroll with the folder's messages. Empty = none.</summary>
+    public string NewsSharePoint { get; init; } = "";
+    public int NewsSharePointCount { get; init; } = 6;
+    public NewsOrdering NewsOrder { get; init; }
+    public NewsBanner NewsSize { get; init; }
     /// <summary>Szybka pomoc on the desktop, also on the lock screen (MFA, password reset, card PIN). Empty = none.</summary>
     public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
     /// <summary>Off: no Szybka pomoc on the desktop at all; the buttons stay in the list for later.</summary>
@@ -198,6 +209,9 @@ internal sealed record Config
                 !(HelpAction.BuiltIn.Contains(help.Action, StringComparer.OrdinalIgnoreCase) ||
                   Uri.TryCreate(help.Action, UriKind.Absolute, out var helpUri) && helpUri.Scheme == Uri.UriSchemeHttps))
                 throw new InvalidDataException("Szybka pomoc: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
+        if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
+            throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
+        if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||

@@ -67,6 +67,7 @@ internal sealed class KioskForm : Form
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
     private bool loadingNews;
+    private SharePointNews? sharePointNews;
     private readonly CardReader reader = new();
     private Func<CardIdentity?> identifyCard;
     private Func<bool> cardPresent;
@@ -117,7 +118,7 @@ internal sealed class KioskForm : Form
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { newsTimer.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
+        FormClosed += (_, _) => { newsTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -1165,8 +1166,13 @@ internal sealed class KioskForm : Form
         var folder = config.NewsFolder;
         try
         {
-            var items = await Task.Run(() => News.Load(folder));
-            if (!IsDisposed) desktop.SetNews(items, config.NewsSeconds);
+            List<NewsItem> mine;
+            try { mine = await Task.Run(() => News.Load(folder)); }
+            catch (Exception ex) { Audit.Write("news_failed", ex.Message); mine = []; }
+            List<NewsItem> other = [];
+            if (config.NewsSharePoint.Length > 0 && IsHandleCreated)
+                other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount);
+            if (!IsDisposed) desktop.SetNews(News.Merge(mine, other, config.NewsOrder), config.NewsSeconds, config.NewsSize);
         }
         catch (Exception ex)
         {
@@ -1726,6 +1732,11 @@ internal sealed class KioskForm : Form
             if (!trusted.Allows(items[1].Action) || !trusted.Allows("https://wp.pl/news") || trusted.Allows("https://example.org") ||
                 trusted.Allows(new Uri(Path.Combine(Path.GetTempPath(), "other.html")).AbsoluteUri))
                 throw new InvalidOperationException("Company message pages are not allowed in the browser.");
+            var spItems = SharePointNews.Parse("""{"ok":true,"items":[{"title":"Nowa strona","text":"Opis","url":"https://firma.sharepoint.com/sites/i/SitePages/a.aspx","image":""}]}""");
+            var merged = News.Merge(items, spItems, NewsOrdering.Alternate);
+            if (spItems.Count != 1 || spItems[0].Action != "https://firma.sharepoint.com/sites/i/SitePages/a.aspx" || merged.Count != 3 ||
+                merged[0] != spItems[0] || merged[1] != items[0] || News.Merge(items, spItems, NewsOrdering.MineFirst)[0] != items[0])
+                throw new InvalidOperationException("SharePoint news were not merged with the folder's messages.");
             if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Szybka pomoc is not on the desktop.");
             desktop.SetNews(items, 8);
             if (desktop.News.Count != 2) throw new InvalidOperationException("Company messages are not on the desktop.");
@@ -1736,6 +1747,12 @@ internal sealed class KioskForm : Form
                 using var shot = new Bitmap(desktop.Width, desktop.Height);
                 desktop.DrawToBitmap(shot, new Rectangle(Point.Empty, desktop.Size));
                 shot.Save(Path.Combine(screenshots, "desktop.png"), System.Drawing.Imaging.ImageFormat.Png);
+                int standard = desktop.News.Height;
+                desktop.SetNews(merged, 8, NewsBanner.Large);
+                using var large = new Bitmap(desktop.Width, desktop.Height);
+                desktop.DrawToBitmap(large, new Rectangle(Point.Empty, desktop.Size));
+                large.Save(Path.Combine(screenshots, "desktop-large.png"), System.Drawing.Imaging.ImageFormat.Png);
+                if (desktop.News.Visible && desktop.News.Height < standard) throw new InvalidOperationException("The large banner is smaller.");
             }
             desktop.SetNews([], 8);
         }

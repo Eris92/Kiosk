@@ -28,6 +28,10 @@
   "BrandLogo": "",
   "NewsFolder": "",
   "NewsSeconds": 8,
+  "NewsSharePoint": "",
+  "NewsSharePointCount": 6,
+  "NewsOrder": "Alternate",
+  "NewsSize": "Standard",
   "BrowserOnlyBookmarks": false,
   "BrowserAllowedDomains": [],
   "Applications": [

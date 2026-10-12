@@ -19,6 +19,10 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
     private readonly TextBox newsFolder = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
+    private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
+    private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
+    private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
+    private readonly ComboBox newsSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Standardowy", "Duży", "Bardzo duży" } };
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
@@ -337,7 +341,15 @@ internal sealed class SettingsView : UserControl
         AddField(newsFields, "Folder lub udział z komunikatami (puste = brak)", folderPicker);
         folderPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         folderPicker.MinimumSize = Size.Empty;
+        AddField(newsFields, "Aktualności ze strony SharePoint (puste = brak)", newsSharePoint);
+        AddField(newsFields, "Ile aktualności z SharePointa", newsSharePointCount);
+        AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
+        AddField(newsFields, "Rozmiar banera", newsSize);
+        newsSharePoint.Text = config.NewsSharePoint;
+        newsSharePointCount.Value = Math.Clamp(config.NewsSharePointCount, 1, 20);
+        newsOrder.SelectedIndex = (int)config.NewsOrder;
+        newsSize.SelectedIndex = (int)config.NewsSize;
         newsFolder.Text = config.NewsFolder;
         newsSeconds.Value = Math.Clamp(config.NewsSeconds, 3, 300);
         newsTab.Controls.Add(new Label
@@ -347,7 +359,10 @@ internal sealed class SettingsView : UserControl
                    "testowo C:\\ProgramData\\Kiosk\\news) leży plik " + News.FileName + " z listą: Title (tytuł), Text (opis), Image (obraz w tym folderze), " +
                    "Button (napis przycisku), Action (co robi przycisk: adres https://…, plik z folderu np. zglos-problem.html, app:Nazwa, rdp:Nazwa, cmd:Nazwa), " +
                    "opcjonalnie From / Until (yyyy-MM-dd). Kiosk czyta folder co minutę. Folder musi być do odczytu dla wszystkich kont. " +
-                   "„Użyj przykładu” wskazuje przykład zainstalowany z Kioskiem (do testu); własny folder zacznij od jego kopii (config\\news w paczce)."
+                   "„Użyj przykładu” wskazuje przykład zainstalowany z Kioskiem (do testu); własny folder zacznij od jego kopii (config\\news w paczce). " +
+                   "SharePoint: adres witryny, z której Kiosk co 10 minut bierze najnowsze strony opublikowane jako aktualności (tytuł, opis, baner, przycisk „Czytaj”). " +
+                   "Czyta je konto Windows, na którym działa Kiosk (logowanie jednokrotne Entra ID), więc to konto musi mieć dostęp do witryny. " +
+                   "Folder i SharePoint działają razem, np. aktualności firmy na przemian z Twoim „Zgłoś problem”. Większy baner pokazuje się, gdy mieści się na ekranie."
         });
         newsTab.Controls.Add(newsFields);
 
@@ -696,6 +711,10 @@ internal sealed class SettingsView : UserControl
             HelpActions = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Name").Length > 0 || Cell(r, "Action").Length > 0))
                 .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r) }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
+            NewsSharePoint = newsSharePoint.Text.Trim(),
+            NewsSharePointCount = (int)newsSharePointCount.Value,
+            NewsOrder = (NewsOrdering)Math.Max(0, newsOrder.SelectedIndex),
+            NewsSize = (NewsBanner)Math.Max(0, newsSize.SelectedIndex),
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,

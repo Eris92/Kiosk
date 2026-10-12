@@ -53,6 +53,20 @@ internal static class News
         return items;
     }
 
+    /// <summary>The folder's messages together with the SharePoint news, in the order set in Konfiguracja.</summary>
+    internal static List<NewsItem> Merge(List<NewsItem> mine, List<NewsItem> sharePoint, NewsOrdering order)
+    {
+        if (order == NewsOrdering.MineFirst) return [.. mine, .. sharePoint];
+        if (order == NewsOrdering.SharePointFirst) return [.. sharePoint, .. mine];
+        var merged = new List<NewsItem>();
+        for (int i = 0; i < Math.Max(mine.Count, sharePoint.Count); i++)
+        {
+            if (i < sharePoint.Count) merged.Add(sharePoint[i]);
+            if (i < mine.Count) merged.Add(mine[i]);
+        }
+        return merged;
+    }
+
     /// <summary>A relative file (e.g. zglos-problem.html next to the json) becomes a file:// address for the browser.</summary>
     /// <remarks>"https:// wp.pl" and "wp.pl" both become https://wp.pl.</remarks>
     internal static string ResolveAction(string action, string folder)
@@ -229,8 +243,10 @@ internal sealed class NewsCarousel : Control
         }
         else if (current) buttonBounds = Rectangle.Empty;
         var textArea = new Rectangle(textLeft, area.Top, Math.Max(0, area.Right - buttonWidth - textLeft), area.Height);
-        using var titleFont = new Font("Segoe UI", 15, FontStyle.Bold);
-        using var bodyFont = new Font("Segoe UI", 10.5f);
+        // A larger banner (Konfiguracja → Komunikaty → Rozmiar) gets larger letters.
+        bool large = Height >= S(200), extra = Height >= S(300);
+        using var titleFont = new Font("Segoe UI", extra ? 26 : large ? 20 : 15, FontStyle.Bold);
+        using var bodyFont = new Font("Segoe UI", extra ? 14 : large ? 12.5f : 10.5f);
         int titleHeight = item.Title.Length > 0 ? TextRenderer.MeasureText(g, item.Title, titleFont, new Size(textArea.Width, int.MaxValue), TextFormatFlags.WordBreak).Height : 0;
         titleHeight = Math.Min(titleHeight, textArea.Height / 2);
         var bodySize = TextRenderer.MeasureText(g, item.Text, bodyFont, new Size(textArea.Width, int.MaxValue), TextFormatFlags.WordBreak);

@@ -216,9 +216,12 @@ internal sealed class DesktopView : UserControl
         ArrangeControls();
     }
 
-    internal void SetNews(List<NewsItem> items, int seconds)
+    private NewsBanner banner;
+
+    internal void SetNews(List<NewsItem> items, int seconds, NewsBanner size = NewsBanner.Standard)
     {
         News.Seconds = seconds;
+        banner = size;
         News.SetItems(items);
         ArrangeControls();
     }
@@ -269,12 +272,16 @@ internal sealed class DesktopView : UserControl
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
         Help.Vertical = helpColumn;
         // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
-        int newsHeight = Scale(132), newsGap = Scale(20), bottom = Height;
+        // The size set in Konfiguracja, or the largest smaller one that fits.
+        int[] heights = [132, 220, 320], widths = [980, 1200, 1400];
+        int size = (int)banner, newsGap = Scale(20), bottom = Height;
+        while (size > 0 && Height - Scale(125) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
+        int newsHeight = Scale(heights[size]);
         bool news = News.Count > 0 && !AskingPin && Height - Scale(125) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
         News.Visible = news;
         if (news)
         {
-            int newsWidth = Math.Min(Scale(980), Math.Max(Scale(240), Width - margin * 2));
+            int newsWidth = Math.Min(Scale(widths[size]), Math.Max(Scale(240), Width - margin * 2));
             News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
             bottom = News.Top - newsGap;
         }
