@@ -826,7 +826,7 @@ internal sealed class KioskForm : Form
         if (menu.Visible) { menu.HideMenu(); return; }
         if (!CanUseApps) return;
         if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
-        menu.Populate(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.", BuildMenu());
+        PopulateMenu(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.");
         menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle), taskbar.Centered);
     }
 
@@ -854,22 +854,37 @@ internal sealed class KioskForm : Form
             : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can,
                 KioskIcons.App, KioskIcons.ForProgram(a.Path))));
         if (apps.Count == 0) apps.Add(new MenuItemSpec("Brak aplikacji", "Dodaj je w Konfiguracji", () => { }, false));
-        var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
-        if (config.IdleScreens.Length > 0)
-            system.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
+        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
+            KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
+        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems)];
+    }
+
+    /// <summary>The menu's footer, as in Windows 11: Pulpit and Konfiguracja on the left; the power button (Zablokuj, Wyloguj, Zamknij) on the right.</summary>
+    private (List<MenuItemSpec> Left, List<MenuItemSpec> Power) BuildMenuFooter()
+    {
+        bool can = CanUseApps;
+        var s = current;
+        var left = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
         if (configPath != null && s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
+            left.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
+        if (config.IdleScreens.Length > 0)
+            left.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
+        var power = new List<MenuItemSpec>();
         if (can)
         {
-            system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
-            system.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
+            power.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
+            power.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
         }
         // Closing the shell itself: in test mode, or for a Kiosk administrator.
         if (config.TestMode || s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
-        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
-            KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
-        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems), new("System", system)];
+            power.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
+        return (left, power);
+    }
+
+    private void PopulateMenu(string subtitle)
+    {
+        var (left, power) = BuildMenuFooter();
+        menu.Populate(subtitle, BuildMenu(), left, power);
     }
 
     /// <summary>Taskbar icon of a window: the program's own icon, or the icon of the Kiosk function.</summary>
@@ -1432,8 +1447,9 @@ internal sealed class KioskForm : Form
         {
             var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
             Directory.CreateDirectory(folder);
-            menu.Populate("Wybierz, co chcesz uruchomić.", BuildMenu());
+            PopulateMenu("Wybierz, co chcesz uruchomić.");
             menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+            menu.OpenPowerList();
             for (int i = 0; i < 10; i++) { Application.DoEvents(); Thread.Sleep(30); }
             var bounds = Screen.FromControl(this).Bounds;
             using var picture = new Bitmap(bounds.Width, bounds.Height);
@@ -1602,7 +1618,7 @@ internal sealed class KioskForm : Form
             throw new InvalidOperationException("Administrators group matching failed.");
         _ = LocalAdministrators.Contains("nobody@example.invalid"); // Reads the real group without failing.
 
-        menu.Populate("test", BuildMenu());
+        PopulateMenu("test");
         if (menu.ItemCount < config.RdpConnections.Length + 3) throw new InvalidOperationException("Menu is incomplete.");
 
         // In-app lock hides every window; resume with the same card restores the last one.

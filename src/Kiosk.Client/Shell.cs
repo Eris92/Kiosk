@@ -242,11 +242,15 @@ internal sealed class Taskbar : Panel
 internal sealed record MenuItemSpec(string Title, string Category, Action Run, bool Enabled = true, string? Glyph = null, Image? Icon = null);
 internal sealed record MenuSection(string Title, IReadOnlyList<MenuItemSpec> Items);
 
-/// <summary>The Start menu (Windows 11 26H2 look): rounded panel above the taskbar, sections of pinned icons, a footer.</summary>
+/// <summary>The Start menu (Windows 11 26H2 look): rounded panel above the taskbar, sections of pinned icons, and a
+/// darker footer with Pulpit / Konfiguracja on the left and the power button (Zablokuj, Wyloguj, Zamknij) on the right.</summary>
 internal sealed class StartMenu : Form
 {
     private readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = KioskTheme.MenuBack };
-    private readonly Label footer = new() { Dock = DockStyle.Bottom, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, BackColor = KioskTheme.MenuFooter, ForeColor = KioskTheme.Muted };
+    private readonly Panel footer = new() { Dock = DockStyle.Bottom, BackColor = KioskTheme.MenuFooter };
+    private readonly Panel power = new() { Visible = false, BackColor = KioskTheme.ShellBorder, Padding = new Padding(1) };
+    private readonly ToolTip tips = new() { InitialDelay = 400 };
+    private FooterButton? powerButton;
     internal DateTime HiddenAt { get; private set; }
     internal int ItemCount { get; private set; }
 
@@ -260,12 +264,18 @@ internal sealed class StartMenu : Form
         KeyPreview = true;
         // Above everything, including programs shown as their own windows over the Kiosk (Edge).
         TopMost = true;
-        footer.Font = new Font("Segoe UI", 9.5f);
         footer.Paint += (_, e) => { using var line = new Pen(KioskTheme.ShellBorder); e.Graphics.DrawLine(line, 0, 0, footer.Width, 0); };
+        Controls.Add(power);
         Controls.Add(content);
         Controls.Add(footer);
+        content.MouseDown += (_, _) => power.Visible = false;
+        footer.MouseDown += (_, _) => power.Visible = false;
         Deactivate += (_, _) => HideMenu();
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) HideMenu(); };
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            if (power.Visible) power.Visible = false; else HideMenu();
+        };
     }
 
     protected override CreateParams CreateParams
@@ -286,11 +296,12 @@ internal sealed class StartMenu : Form
     internal void HideMenu()
     {
         if (!Visible) return;
+        power.Visible = false;
         Hide();
         HiddenAt = DateTime.UtcNow;
     }
 
-    internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections)
+    internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections, IReadOnlyList<MenuItemSpec> footerItems, IReadOnlyList<MenuItemSpec> powerItems)
     {
         content.SuspendLayout();
         foreach (Control control in content.Controls.Cast<Control>().ToArray()) { content.Controls.Remove(control); control.Dispose(); }
@@ -316,10 +327,69 @@ internal sealed class StartMenu : Form
             y += ((section.Items.Count + columns - 1) / columns) * (tileHeight + gap) + Scale(14);
         }
         content.ResumeLayout();
-        footer.Text = subtitle;
-        footer.Padding = new Padding(margin + Scale(6), 0, margin, 0);
-        footer.Height = Scale(60);
-        ClientSize = new Size(margin * 2 + width + 2, y + Scale(6) + footer.Height + 2);
+
+        // Footer: Pulpit, Konfiguracja… on the left, a hint in the middle, the power button on the right.
+        foreach (Control control in footer.Controls.Cast<Control>().ToArray()) { footer.Controls.Remove(control); control.Dispose(); }
+        footer.Height = Scale(64);
+        int buttonHeight = Scale(40), top = (footer.Height - buttonHeight) / 2 + Scale(1), x = margin - Scale(4);
+        int footerWidth = margin * 2 + width;
+        foreach (var item in footerItems)
+        {
+            var button = new FooterButton(item.Title, item.Glyph) { Enabled = item.Enabled };
+            int w = button.PreferredWidth;
+            button.SetBounds(x, top, w, buttonHeight);
+            button.Click += (_, _) => { HideMenu(); item.Run(); };
+            tips.SetToolTip(button, item.Category);
+            footer.Controls.Add(button);
+            x += w + Scale(4);
+            ItemCount++;
+        }
+        int right = footerWidth - margin + Scale(4);
+        powerButton = null;
+        if (powerItems.Count > 0)
+        {
+            powerButton = new FooterButton("", "\uE7E8");
+            powerButton.SetBounds(right - buttonHeight, top, buttonHeight, buttonHeight);
+            tips.SetToolTip(powerButton, string.Join(", ", powerItems.Select(p => p.Title)));
+            var button = powerButton;
+            powerButton.Click += (_, _) => TogglePower(button);
+            footer.Controls.Add(powerButton);
+            right -= buttonHeight + Scale(8);
+        }
+        var hint = new Label { Text = subtitle, AutoSize = false, TextAlign = ContentAlignment.MiddleRight, Font = new Font("Segoe UI", 9f), ForeColor = KioskTheme.Muted, BackColor = Color.Transparent, AutoEllipsis = true };
+        hint.SetBounds(x + Scale(8), top, Math.Max(0, right - x - Scale(8)), buttonHeight);
+        footer.Controls.Add(hint);
+
+        // The power list, opened above the power button like in Windows.
+        foreach (Control control in power.Controls.Cast<Control>().ToArray()) { power.Controls.Remove(control); control.Dispose(); }
+        int rowHeight = Scale(40), listWidth = Scale(220), rowY = Scale(4);
+        var list = new Panel { Dock = DockStyle.Fill, BackColor = KioskTheme.ShellActive };
+        foreach (var item in powerItems)
+        {
+            var row = new FooterButton(item.Title, item.Glyph) { Enabled = item.Enabled, BackColor = KioskTheme.ShellActive, Hover = KioskTheme.ShellHover };
+            row.SetBounds(Scale(4), rowY, listWidth - Scale(10), rowHeight);
+            row.Click += (_, _) => { HideMenu(); item.Run(); };
+            list.Controls.Add(row);
+            rowY += rowHeight;
+            ItemCount++;
+        }
+        power.Controls.Add(list);
+        power.Size = new Size(listWidth, rowY + Scale(4) + 2);
+        power.Visible = false;
+
+        ClientSize = new Size(footerWidth + 2, y + Scale(6) + footer.Height + 2);
+    }
+
+    /// <summary>Self-test picture: the power list open.</summary>
+    internal void OpenPowerList() { if (powerButton != null && !power.Visible) TogglePower(powerButton); }
+
+    private void TogglePower(Control button)
+    {
+        if (power.Visible) { power.Visible = false; return; }
+        var at = PointToClient(button.Parent!.PointToScreen(new Point(button.Right, button.Top)));
+        power.Location = new Point(Math.Max(Scale(8), at.X - power.Width), at.Y - power.Height - Scale(6));
+        power.Visible = true;
+        power.BringToFront();
     }
 
     internal void ShowAt(Form owner, Rectangle anchor, bool centered = true)
@@ -338,6 +408,62 @@ internal sealed class StartMenu : Form
 
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+}
+
+/// <summary>A footer button of the Start menu (Pulpit, Konfiguracja, power) and a row of the power list: icon and text, soft hover.</summary>
+internal sealed class FooterButton : Button
+{
+    private bool hovered;
+    private readonly string? glyph;
+
+    internal FooterButton(string text, string? glyph)
+    {
+        Text = text;
+        this.glyph = glyph;
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.BorderSize = 0;
+        BackColor = KioskTheme.MenuFooter;
+        ForeColor = KioskTheme.Text;
+        Font = new Font("Segoe UI", 9.5f);
+        Cursor = Cursors.Hand;
+        UseVisualStyleBackColor = false;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    internal Color Hover { get; init; } = KioskTheme.ShellHover;
+    private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    internal int PreferredWidth => S(46) + TextRenderer.MeasureText(Text, Font).Width;
+
+    protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hovered = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (Width <= 1 || Height <= 1) return;
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(BackColor);
+        if (hovered && Enabled)
+        {
+            using var back = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(5));
+            using var fill = new SolidBrush(Hover);
+            g.FillPath(fill, back);
+        }
+        var color = Enabled ? KioskTheme.Text : KioskTheme.Muted;
+        int icon = S(18);
+        bool iconOnly = Text.Length == 0;
+        int iconLeft = iconOnly ? (Width - icon) / 2 : S(12);
+        KioskIcons.Draw(g, new Rectangle(iconLeft, (Height - icon) / 2, icon, icon), glyph, null, color);
+        if (!iconOnly)
+            TextRenderer.DrawText(g, Text, Font, new Rectangle(iconLeft + icon + S(12), 0, Math.Max(0, Width - iconLeft - icon - S(16)), Height), color,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        if (Focused && ShowFocusCues)
+        {
+            using var focus = KioskTheme.RoundedRectangle(new Rectangle(S(1), S(1), Width - S(3), Height - S(3)), S(5));
+            using var pen = new Pen(KioskTheme.Text, S(2));
+            g.DrawPath(pen, focus);
+        }
+    }
 }
 
 /// <summary>A pinned item in the Start menu: icon on top, name underneath, a soft square on hover.</summary>
