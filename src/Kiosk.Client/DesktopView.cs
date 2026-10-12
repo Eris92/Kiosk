@@ -11,6 +11,14 @@ internal static class KioskTheme
     internal static readonly Color Muted = Color.FromArgb(157, 174, 195);
     internal static readonly Color Taskbar = Color.FromArgb(17, 26, 42);
     internal const string DefaultAccent = "#5AB5FF";
+    // Windows 11 (26H2) dark shell: neutral taskbar and Start menu, light hover, accent only for the indicators.
+    internal static readonly Color ShellBar = Color.FromArgb(32, 32, 32);
+    internal static readonly Color ShellHover = Color.FromArgb(52, 52, 52);
+    internal static readonly Color ShellActive = Color.FromArgb(44, 44, 44);
+    internal static readonly Color ShellBorder = Color.FromArgb(56, 56, 56);
+    internal static readonly Color MenuBack = Color.FromArgb(38, 38, 38);
+    internal static readonly Color MenuFooter = Color.FromArgb(30, 30, 30);
+    internal static readonly Color MenuHover = Color.FromArgb(54, 54, 54);
 
     /// <summary>Accent presets offered in Konfiguracja (any #RRGGBB also works).</summary>
     internal static readonly (string Name, string Hex)[] Presets =

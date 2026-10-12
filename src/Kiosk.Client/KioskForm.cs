@@ -1329,11 +1329,16 @@ internal sealed class KioskForm : Form
     {
         base.OnHandleCreated(e);
         AdminSettings.RegisterHotkey(Handle);
+        windowsKey ??= new WindowsKey(() => { if (IsHandleCreated) BeginInvoke(new Action(ToggleMenu)); });
     }
+
+    private WindowsKey? windowsKey;
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
         AdminSettings.UnregisterHotkey(Handle);
+        windowsKey?.Dispose();
+        windowsKey = null;
         base.OnHandleDestroyed(e);
     }
 
@@ -1417,6 +1422,25 @@ internal sealed class KioskForm : Form
             form.Close();
         }
         SettingsView.ScaleOverride = null;
+    }
+
+    /// <summary>Self-test: a picture of the taskbar with the Start menu open (out\screenshots\shell.png), to check the look in CI.</summary>
+    private void SaveShellScreenshot()
+    {
+        try
+        {
+            var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
+            Directory.CreateDirectory(folder);
+            menu.Populate("Wybierz, co chcesz uruchomić.", BuildMenu());
+            menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+            for (int i = 0; i < 10; i++) { Application.DoEvents(); Thread.Sleep(30); }
+            var bounds = Screen.FromControl(this).Bounds;
+            using var picture = new Bitmap(bounds.Width, bounds.Height);
+            using (var g = Graphics.FromImage(picture)) g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+            picture.Save(Path.Combine(folder, "shell.png"), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        catch (Exception ex) { Audit.Write("self_test_screenshot_failed", ex.Message); }
+        finally { menu.HideMenu(); }
     }
 
     internal void SmokeTest()
@@ -1586,6 +1610,7 @@ internal sealed class KioskForm : Form
             throw new InvalidOperationException("Lock did not hide the session.");
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
+        SaveShellScreenshot();
 
         // Shared PC: removing the card keeps the session; another card gets its own empty session.
         CardRemoved();
