@@ -161,6 +161,8 @@ internal sealed class DesktopView : UserControl
         };
         pinBox.TextChanged += (_, _) => pinCountdown.Restart();
         pinCountdown.Expired += () => FinishPin(false);
+        // Like the other help windows: a real mouse move, click or key anywhere on the desktop gives more time.
+        HelpCountdown.Watch(this, () => { if (pinCountdown.Visible) pinCountdown.Restart(); });
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown });
