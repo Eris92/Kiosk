@@ -115,6 +115,8 @@ internal sealed record Config
     public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
     /// <summary>Off: no Szybka pomoc on the desktop at all; the buttons stay in the list for later.</summary>
     public bool ShowHelp { get; init; } = true;
+    /// <summary>The Szybka pomoc page (opened without signing in) closes after this many seconds without activity.</summary>
+    public int HelpCloseSeconds { get; init; } = 60;
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
@@ -212,6 +214,7 @@ internal sealed record Config
         if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
             throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
         if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");
+        if (HelpCloseSeconds is < 5 or > 3600) throw new InvalidDataException("Zamykanie okna Szybkiej pomocy: od 5 do 3600 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||

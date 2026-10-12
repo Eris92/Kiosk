@@ -1055,7 +1055,7 @@ internal sealed class KioskForm : Form
             default:
                 if (CanUseApps && config.Applications.Any(a => a.IsBuiltInBrowser)) { await OpenBrowserAsync(item.Action); break; }
                 helpBrowser?.Close();
-                helpBrowser = new HelpBrowserForm(item.Name, item.Action, config.BrowserAllowedDomains) { Bounds = Screen.FromControl(this).Bounds };
+                helpBrowser = new HelpBrowserForm(item.Name, item.Action, config.BrowserAllowedDomains, config.HelpCloseSeconds) { Bounds = Screen.FromControl(this).Bounds };
                 helpBrowser.FormClosed += (_, _) => helpBrowser = null;
                 helpBrowser.Show(this);
                 break;

@@ -30,6 +30,8 @@ internal sealed class BrowserView : UserControl
     /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
     /// account for SSO and keeps a normal profile in their own AppData instead of a throw-away InPrivate one.</summary>
     private readonly bool windowsAccount;
+    /// <summary>One page, no tabs (Szybka pomoc): links for a new window open in the same page.</summary>
+    private readonly bool singlePage;
 
     private readonly TextBox address = new()
     {
@@ -54,8 +56,9 @@ internal sealed class BrowserView : UserControl
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false)
     {
+        this.singlePage = singlePage;
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
         userDataFolder = windowsAccount
@@ -109,7 +112,8 @@ internal sealed class BrowserView : UserControl
         if (!this.policy.Restricted) favorites.Padding = new Padding(6, 0, 6, 6);
         Controls.Add(pages); Controls.Add(message);
         if (!this.policy.Restricted) Controls.Add(favorites);
-        Controls.Add(toolbar); Controls.Add(tabStrip);
+        Controls.Add(toolbar);
+        if (!singlePage) Controls.Add(tabStrip);
     }
 
     private new int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
@@ -215,6 +219,7 @@ internal sealed class BrowserView : UserControl
         {
             // Links "in a new window" become a tab; window.opener keeps working (sign-in pop-ups).
             if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
+            if (singlePage) { e.Handled = true; if (IsWebAddress(e.Uri)) core.Navigate(e.Uri); return; }
             var deferral = e.GetDeferral();
             try
             {

@@ -28,6 +28,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
     private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
+    private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
@@ -312,6 +313,12 @@ internal sealed class SettingsView : UserControl
         showHelp.Checked = config.ShowHelp;
         showHelp.CheckedChanged += (_, _) => helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
         helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
+        // The help page (opened without signing in) closes on its own when nobody uses it.
+        var helpClose = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(0, 0, 0, 8), BackColor = Color.Transparent };
+        helpClose.Controls.Add(new Label { Text = "Zamknij okno pomocy po (sekundy bez aktywności)", AutoSize = true, Margin = new Padding(0, 6, 0, 0) });
+        helpClose.Controls.Add(helpCloseSeconds);
+        helpCloseSeconds.Value = Math.Clamp(config.HelpCloseSeconds, 5, 3600);
+        helpTab.Controls.Add(helpClose);
         helpTab.Controls.Add(showHelp);
 
         var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
@@ -730,6 +737,7 @@ internal sealed class SettingsView : UserControl
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
             ShowHelp = showHelp.Checked,
+            HelpCloseSeconds = (int)helpCloseSeconds.Value,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry

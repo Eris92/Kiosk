@@ -109,7 +109,8 @@ internal sealed class HelpBar : Control
 
 /// <summary>
 /// A guest browser over the Kiosk for Szybka pomoc while nobody is signed in (or the session is locked):
-/// InPrivate, only Microsoft sign-in sites and the help page's own site, closed with its button or after 10 minutes.
+/// InPrivate, one page without tabs, only Microsoft sign-in sites and the help page's own site,
+/// closed with its button or after the set time without activity.
 /// </summary>
 internal sealed class HelpBrowserForm : Form
 {
@@ -121,10 +122,12 @@ internal sealed class HelpBrowserForm : Form
 
     private readonly BrowserView browser;
     private readonly string url;
-    private readonly System.Windows.Forms.Timer limit = new() { Interval = 10 * 60 * 1000 };
+    private readonly System.Windows.Forms.Timer limit = new() { Interval = 1000 };
+    private readonly int idleSeconds;
 
-    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains)
+    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60)
     {
+        this.idleSeconds = idleSeconds;
         this.url = url;
         Text = title;
         FormBorderStyle = FormBorderStyle.None;
@@ -136,11 +139,11 @@ internal sealed class HelpBrowserForm : Form
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         var policy = new SitePolicy(true, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
-        browser = new BrowserView([], policy, null, windowsAccount: false) { Dock = DockStyle.Fill };
+        browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true) { Dock = DockStyle.Fill };
         var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
         var heading = new Label
         {
-            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane", AutoSize = false, Dock = DockStyle.Fill,
+            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane  ·  zamknie się po " + idleSeconds + " s bez aktywności", AutoSize = false, Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
         };
         var close = new Button { Text = "Zamknij", Dock = DockStyle.Right, Width = 140 };
@@ -150,7 +153,8 @@ internal sealed class HelpBrowserForm : Form
         header.Controls.Add(close);
         Controls.Add(browser);
         Controls.Add(header);
-        limit.Tick += (_, _) => Close();
+        // Nobody touches the mouse, keyboard or screen for the time set in Konfiguracja → Szybka pomoc: the window closes.
+        limit.Tick += (_, _) => { try { if (Native.IdleMilliseconds() >= idleSeconds * 1000L) Close(); } catch (Exception) { } };
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
