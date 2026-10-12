@@ -30,7 +30,9 @@ internal sealed class SettingsView : UserControl
     private static readonly Color Back = Color.FromArgb(32, 32, 32);
     private static readonly Color InputBack = Color.FromArgb(45, 45, 45);
     private static readonly Color ControlBorder = Color.FromArgb(68, 68, 68);
-    private static readonly Color HelpText = Color.FromArgb(80, 92, 110);   // marks help labels, which turn Muted in the dark theme
+    private static readonly Color HelpText = Color.FromArgb(80, 92, 110);
+    private static readonly Color Card = Color.FromArgb(43, 43, 43);
+    private const int RowHeight = 54;   // marks help labels, which turn Muted in the dark theme
     private const string CustomAccent = "Własny kolor…";
     private readonly CheckBox enableBrowser = new() { Text = "Przeglądarka włączona (widoczna w Menu)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 2), Font = new Font("Segoe UI", 10, FontStyle.Bold) };
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
@@ -130,13 +132,13 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
         AddField(fields, "Limit czasu łączenia RDP (sekundy)", connectTimeout);
         var pinRow = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         fields.Controls.Add(requirePin, 1, pinRow);
         var signInRow = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         fields.Controls.Add(signInAsUser, 1, signInRow);
         var removalRow = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         fields.Controls.Add(disconnectOnRemoval, 1, removalRow);
         // Scrolls on small screens (1280×720, 125 % scale), so the last options stay reachable.
         var sessionScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
@@ -320,23 +322,76 @@ internal sealed class SettingsView : UserControl
             switch (c)
             {
                 case TabPage page: page.UseVisualStyleBackColor = false; page.BackColor = Back; page.ForeColor = KioskTheme.Text; break;
-                case TextBox box: box.BackColor = InputBack; box.ForeColor = KioskTheme.Text; box.BorderStyle = BorderStyle.FixedSingle; break;
-                case NumericUpDown number: number.BackColor = InputBack; number.ForeColor = KioskTheme.Text; number.BorderStyle = BorderStyle.FixedSingle; break;
-                case ComboBox combo: combo.FlatStyle = FlatStyle.Flat; combo.BackColor = InputBack; combo.ForeColor = KioskTheme.Text; break;
-                case CheckBox check: check.ForeColor = KioskTheme.Text; break;
-                case DataGridView grid: StyleGrid(grid); break;
-                case Button button when button.BackColor != KioskTheme.Accent:
-                    button.FlatStyle = FlatStyle.Flat;
-                    button.FlatAppearance.BorderColor = ControlBorder;
-                    button.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 60, 60);
-                    button.FlatAppearance.MouseDownBackColor = Color.FromArgb(52, 52, 52);
-                    button.BackColor = InputBack; button.ForeColor = KioskTheme.Text; button.UseVisualStyleBackColor = false;
-                    button.Cursor = Cursors.Hand;
+                // Windows' own dark control styles (as in Windows 11 Settings): rounded fields, drop-downs and scroll bars.
+                case TextBox box: box.BackColor = InputBack; box.ForeColor = KioskTheme.Text; box.BorderStyle = BorderStyle.FixedSingle; DarkTheme(box, "DarkMode_CFD"); break;
+                case NumericUpDown number:
+                    number.BackColor = InputBack; number.ForeColor = KioskTheme.Text; number.BorderStyle = BorderStyle.FixedSingle;
+                    DarkTheme(number, "DarkMode_CFD");
+                    foreach (Control part in number.Controls) DarkTheme(part, "DarkMode_CFD");
                     break;
+                case ComboBox combo: combo.FlatStyle = FlatStyle.Standard; combo.BackColor = InputBack; combo.ForeColor = KioskTheme.Text; DarkTheme(combo, "DarkMode_CFD"); break;
+                case CheckBox check: check.ForeColor = KioskTheme.Text; check.BackColor = Color.Transparent; break;
+                case DataGridView grid: StyleGrid(grid); foreach (Control bar in grid.Controls) DarkTheme(bar, "DarkMode_Explorer"); break;
+                case Button button: RoundButton(button, button.BackColor == KioskTheme.Accent); break;
+                case ScrollableControl scroll when scroll is not TabPage: DarkTheme(scroll, "DarkMode_Explorer"); break;
                 case Label label when label.ForeColor == HelpText: label.ForeColor = KioskTheme.Muted; break;
             }
             ApplyDark(c);
         }
+    }
+
+    [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr window, string? subApp, string? idList);
+
+    private static void DarkTheme(Control control, string theme)
+    {
+        if (control.IsHandleCreated) _ = SetWindowTheme(control.Handle, theme, null);
+        control.HandleCreated += (_, _) => SetWindowTheme(control.Handle, theme, null);
+    }
+
+    /// <summary>Each setting sits on its own rounded card, like a row in Windows 11 Settings.</summary>
+    private static void PaintCards(TableLayoutPanel table, Graphics g)
+    {
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        int gap = Math.Max(2, table.DeviceDpi / 48), radius = Math.Max(4, table.DeviceDpi / 16), y = 0;
+        using var fill = new SolidBrush(Card);
+        foreach (var height in table.GetRowHeights())
+        {
+            using var path = KioskTheme.RoundedRectangle(new Rectangle(0, y + gap, table.ClientSize.Width - 1, height - gap * 2), radius);
+            g.FillPath(fill, path);
+            y += height;
+        }
+    }
+
+    /// <summary>Rounded buttons: the accent for the main action, a soft grey for the others.</summary>
+    private static void RoundButton(Button button, bool primary)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.UseVisualStyleBackColor = false;
+        button.Cursor = Cursors.Hand;
+        bool hovered = false, pressed = false;
+        button.MouseEnter += (_, _) => { hovered = true; button.Invalidate(); };
+        button.MouseLeave += (_, _) => { hovered = pressed = false; button.Invalidate(); };
+        button.MouseDown += (_, _) => { pressed = true; button.Invalidate(); };
+        button.MouseUp += (_, _) => { pressed = false; button.Invalidate(); };
+        button.Paint += (_, e) =>
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.Clear(button.Parent?.BackColor ?? Back);
+            var color = primary
+                ? (pressed ? KioskTheme.AccentPressed : hovered ? KioskTheme.AccentHover : KioskTheme.Accent)
+                : (pressed ? Color.FromArgb(50, 50, 50) : hovered ? Color.FromArgb(62, 62, 62) : Color.FromArgb(55, 55, 55));
+            if (!button.Enabled) color = KioskTheme.Blend(color, Back, 0.5);
+            int radius = Math.Max(4, button.DeviceDpi / 16);
+            using var path = KioskTheme.RoundedRectangle(new Rectangle(0, 0, button.Width - 1, button.Height - 1), radius);
+            using var fill = new SolidBrush(color);
+            g.FillPath(fill, path);
+            if (!primary) { using var line = new Pen(Color.FromArgb(70, 70, 70)); g.DrawPath(line, path); }
+            TextRenderer.DrawText(g, button.Text, button.Font, button.ClientRectangle, primary ? KioskTheme.OnAccent : button.Enabled ? KioskTheme.Text : KioskTheme.Muted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+        };
     }
 
     private static void StyleGrid(DataGridView grid)
@@ -432,9 +487,9 @@ internal sealed class SettingsView : UserControl
     private static void AddField(TableLayoutPanel panel, string text, Control control)
     {
         var row = panel.RowCount++;
-        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         // The label wraps inside its column; fixed-width controls keep their width (Dock = Left in a cell collapsed them).
-        panel.Controls.Add(new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 4, 0) }, 0, row);
+        panel.Controls.Add(new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 4, 0), BackColor = Color.Transparent }, 0, row);
         // A table cell shrinks a too-wide control to fit before the table has its real width (at 250 % it stayed 0 px wide):
         // the minimum width keeps number fields visible; drop-downs take the column's width, so long choices are not cut off.
         if (control is ComboBox) control.Anchor = AnchorStyles.Left | AnchorStyles.Right;

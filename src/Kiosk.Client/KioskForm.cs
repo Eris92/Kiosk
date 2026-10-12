@@ -826,7 +826,7 @@ internal sealed class KioskForm : Form
         if (menu.Visible) { menu.HideMenu(); return; }
         if (!CanUseApps) return;
         if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
-        PopulateMenu(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.");
+        PopulateMenu(CanUseApps ? "" : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.");
         menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle), taskbar.Centered);
     }
 
@@ -1447,7 +1447,7 @@ internal sealed class KioskForm : Form
         {
             var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
             Directory.CreateDirectory(folder);
-            PopulateMenu("Wybierz, co chcesz uruchomić.");
+            PopulateMenu("");
             menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
             menu.OpenPowerList();
             for (int i = 0; i < 10; i++) { Application.DoEvents(); Thread.Sleep(30); }
