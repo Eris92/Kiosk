@@ -22,6 +22,7 @@
   ],
   "EnableBrowser": true,
   "AutoUpdate": true,
+  "ShowHelp": true,
   "BrandTitle": "Kiosk",
   "BrandSubtitle": "Twój pulpit pracy",
   "BrandLogo": "",

@@ -1937,7 +1937,8 @@ internal sealed class KioskForm : Form
             Commands = [new CommandEntry { Name = "Off", Path = @"C:\Windows\System32\cmd.exe", Enabled = false }]
         };
         var active = switched.Active();
-        if (active.HelpActions.Length != HelpAction.Defaults.Length - 1 || active.Commands.Length != 0 || switched.HelpActions.Length != HelpAction.Defaults.Length)
+        if (active.HelpActions.Length != HelpAction.Defaults.Length - 1 || active.Commands.Length != 0 || switched.HelpActions.Length != HelpAction.Defaults.Length
+            || (switched with { ShowHelp = false }).Active().HelpActions.Length != 0)
             throw new InvalidOperationException("Disabled entries were not filtered.");
         SaveShellScreenshot();
 

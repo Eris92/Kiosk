@@ -23,6 +23,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
     private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
+    private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
@@ -296,7 +297,7 @@ internal sealed class SettingsView : UserControl
         SetupGridTab(helpTab, helpActions, "Przyciski „Szybka pomoc” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
-            " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN). Usuń wiersz, aby ukryć przycisk.", helpHeight: 80);
+            " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN). Odznacz „Włączony”, aby ukryć jeden przycisk.", helpHeight: 80);
         var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
         helpDefaults.Click += (_, _) =>
         {
@@ -304,6 +305,10 @@ internal sealed class SettingsView : UserControl
             foreach (var h in HelpAction.Defaults) helpActions.Rows.Add(h.Name, h.Action);
         };
         helpTab.Controls.Add(helpDefaults);
+        showHelp.Checked = config.ShowHelp;
+        showHelp.CheckedChanged += (_, _) => helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
+        helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
+        helpTab.Controls.Add(showHelp);
 
         var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
         tabs.TabPages.Add(newsTab);
@@ -700,6 +705,7 @@ internal sealed class SettingsView : UserControl
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
+            ShowHelp = showHelp.Checked,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry

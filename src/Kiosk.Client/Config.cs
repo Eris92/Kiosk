@@ -102,6 +102,8 @@ internal sealed record Config
     public int NewsSeconds { get; init; } = 8;
     /// <summary>Szybka pomoc on the desktop, also on the lock screen (MFA, password reset, card PIN). Empty = none.</summary>
     public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
+    /// <summary>Off: no Szybka pomoc on the desktop at all; the buttons stay in the list for later.</summary>
+    public bool ShowHelp { get; init; } = true;
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
@@ -131,7 +133,7 @@ internal sealed record Config
             IdleScreens = IdleScreens.Where(s => s.Enabled).ToArray(),
             Commands = Commands.Where(c => c.Enabled).ToArray(),
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
-            HelpActions = HelpActions.Where(h => h.Enabled).ToArray(),
+            HelpActions = ShowHelp ? HelpActions.Where(h => h.Enabled).ToArray() : [],
         };
     }
 
