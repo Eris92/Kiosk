@@ -13,15 +13,15 @@ internal sealed class SettingsView : UserControl
     private readonly Config original;
     private readonly TextBox reader = new() { Dock = DockStyle.Fill };
     private readonly TextBox home = new() { Dock = DockStyle.Fill };
-    private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Dock = DockStyle.Left, Width = 140 };
-    private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Dock = DockStyle.Left, Width = 140 };
-    private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Dock = DockStyle.Left, Width = 140 };
-    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
+    private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
+    private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
+    private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
+    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
-    private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
+    private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
     {
-        DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 260, DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 26
+        DropDownStyle = ComboBoxStyle.DropDownList, Width = 260, DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 26
     };
     private string accentHex = KioskTheme.DefaultAccent;
     private const string CustomAccent = "Własny kolor…";
@@ -30,7 +30,7 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
     private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” pyta o login i hasło konta (jak runas): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
     private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };
-    private readonly ComboBox autoConnect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 320 };
+    private readonly ComboBox autoConnect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320 };
     private readonly DataGridView connections = Grid();
     private readonly DataGridView apps = Grid();
     private readonly DataGridView bookmarks = Grid();
@@ -108,7 +108,7 @@ internal sealed class SettingsView : UserControl
             "Karta i Windows Hello logują użytkownika przypisanego do karty.");
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(fields, "Czytnik karty (pusty = dowolny)", reader);
         AddField(fields, "Strona startowa przeglądarki", home);
@@ -347,7 +347,9 @@ internal sealed class SettingsView : UserControl
     {
         var row = panel.RowCount++;
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-        panel.Controls.Add(new Label { Text = text, AutoSize = true, Padding = new Padding(4, 8, 4, 4) }, 0, row);
+        // The label wraps inside its column; fixed-width controls keep their width (Dock = Left in a cell collapsed them).
+        panel.Controls.Add(new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(4, 0, 4, 0) }, 0, row);
+        if (control.Dock == DockStyle.None) control.Anchor = AnchorStyles.Left;
         panel.Controls.Add(control, 1, row);
     }
 
