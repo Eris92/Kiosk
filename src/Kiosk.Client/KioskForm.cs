@@ -1123,9 +1123,7 @@ internal sealed class KioskForm : Form
     {
         if (!CardForHelp(out var readerName)) return;
         if (MessageBox.Show(this, "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
-                "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).
-
-Zresetować kartę?",
+                "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).\n\nZresetować kartę?",
                 "Resetuj kartę", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         if (MessageBox.Show(this, "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", "Resetuj kartę",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;

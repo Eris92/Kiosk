@@ -125,7 +125,7 @@ internal sealed class CtapCard : IDisposable
         var pinHashEnc = Encrypt(SHA256.HashData(Encoding.UTF8.GetBytes(currentPin)).AsSpan(0, 16).ToArray());
         Array.Clear(padded);
         Array.Clear(bytes);
-        var pinAuth = HMACSHA256.HashData(shared, [.. newPinEnc, .. pinHashEnc]).AsSpan(0, 16).ToArray();
+        var pinAuth = HMACSHA256.HashData(shared, newPinEnc.Concat(pinHashEnc).ToArray()).AsSpan(0, 16).ToArray();
         Command(0x06, Cbor.Map((1L, 1L), (2L, 4L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc), (6L, pinHashEnc)));
     }
 
