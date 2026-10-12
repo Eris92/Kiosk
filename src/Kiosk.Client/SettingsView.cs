@@ -11,7 +11,8 @@ internal sealed class SettingsView : UserControl
     private const string NoAutoConnect = "(nie łącz automatycznie)";
 
     private readonly Config original;
-    private readonly TextBox reader = new() { Dock = DockStyle.Fill };
+    private const string AnyReader = "(wszystkie czytniki, bez czytnika SIM)";
+    private readonly ComboBox reader = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520 };
     private readonly TextBox home = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
@@ -112,7 +113,7 @@ internal sealed class SettingsView : UserControl
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        AddField(fields, "Czytnik karty (pusty = dowolny)", reader);
+        AddField(fields, "Czytnik karty", reader);
         AddField(fields, "Strona startowa przeglądarki", home);
         AddField(fields, "Blokada po bezczynności (s, karta w czytniku)", lockAfter);
         AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
@@ -142,7 +143,11 @@ internal sealed class SettingsView : UserControl
         });
         sessionScroll.Controls.Add(fields);   // added last = docked first: the fields on top, the note under them
         session.Controls.Add(sessionScroll);
-        reader.Text = config.ReaderName;
+        reader.Items.Add(AnyReader);
+        foreach (var name in CardReader.ListReaders()) reader.Items.Add(name);
+        // A configured reader that is not connected right now stays selectable.
+        if (config.ReaderName.Length > 0 && !reader.Items.Contains(config.ReaderName)) reader.Items.Add(config.ReaderName);
+        reader.SelectedItem = config.ReaderName.Length > 0 ? config.ReaderName : AnyReader;
         home.Text = config.BrowserUrl;
         lockAfter.Value = config.LockAfterSeconds;
         changeUserAfter.Value = config.ChangeUserAfterSeconds;
@@ -325,6 +330,7 @@ internal sealed class SettingsView : UserControl
         float factor = ScaleOverride ?? DeviceDpi / 96f;
         if (Math.Abs(factor - 1) < 0.01) return;
         Scale(new SizeF(factor, factor));
+        accent.ItemHeight = (int)(26 * factor);   // owner-drawn: Scale leaves the item height (the colour bar was cut off)
         foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands })
         {
             grid.ColumnHeadersHeight = (int)(34 * factor);
@@ -413,7 +419,7 @@ internal sealed class SettingsView : UserControl
         var result = original with
         {
             RdpConnections = ReadConnections(),
-            ReaderName = reader.Text.Trim(),
+            ReaderName = reader.SelectedItem is string name && name != AnyReader ? name : "",
             BrowserUrl = home.Text.Trim(),
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,

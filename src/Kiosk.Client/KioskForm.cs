@@ -1255,14 +1255,22 @@ internal sealed class KioskForm : Form
 
     /// <summary>
     /// Who may open Konfiguracja: a card on the AdminCards list, or (when allowed) a member of this PC's local
-    /// Administrators group. While the list is empty in test mode everyone may, so the first admin can add a card.
+    /// Administrators group: the card's account, or the Windows account running Kiosk (an administrator starting it
+    /// to set it up). Test mode no longer opens it for everyone: configuration is decided by administrators.
     /// </summary>
     private bool IsAdmin(UserSession session, Config? settings = null)
     {
         settings ??= config;
         if (settings.AdminCards.Any(a => a.Id == session.Identity.Id)) return true;
-        if (settings.AllowWindowsAdministrators && session.IsWindowsAdmin) return true;
-        return settings.TestMode && settings.AdminCards.Length == 0;
+        return settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || RunningAsWindowsAdmin);
+    }
+
+    // Includes the deny-only Administrators SID of a UAC-filtered admin token.
+    private static readonly bool RunningAsWindowsAdmin = IsWindowsAdminToken();
+    private static bool IsWindowsAdminToken()
+    {
+        using var token = System.Security.Principal.WindowsIdentity.GetCurrent();
+        return token.Groups?.Any(g => g.Value == "S-1-5-32-544") == true;
     }
 
     private async Task CheckWindowsAdministratorAsync(UserSession session)
@@ -1471,11 +1479,11 @@ internal sealed class KioskForm : Form
         if (await bookmarkNavigation.Task.WaitAsync(TimeSpan.FromSeconds(5)) != "https://bookmark.invalid/")
             throw new InvalidOperationException("Bookmark navigation failed.");
 
-        // Konfiguracja is for admins: a listed card, a Windows administrator, or anyone while the list is empty in test mode.
+        // Konfiguracja is for admins: a listed card or a Windows administrator; test mode alone does not open it.
         var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
         var bobSession = new UserSession { Identity = bob };
         if (!IsAdmin(aliceSession, adminTest) || IsAdmin(bobSession, adminTest) ||
-            !IsAdmin(bobSession, config with { TestMode = true, AdminCards = [] }) || IsAdmin(bobSession, config with { TestMode = false, AdminCards = [] }))
+            IsAdmin(bobSession, config with { TestMode = true, AdminCards = [], AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Admin card check failed.");
         bobSession.IsWindowsAdmin = true;
         if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))

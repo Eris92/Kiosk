@@ -42,6 +42,14 @@ internal sealed class UserLogon : IDisposable
 
     /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
     /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
+    private const int SmartCardLogonRequired = unchecked((int)0x8009033E);   // SEC_E_SMARTCARD_LOGON_REQUIRED
+
+    /// <summary>Why a saved or typed password did not sign in, in words the person can act on.</summary>
+    internal static string Explain(int code) => code == SmartCardLogonRequired
+        ? "Windows na tym komputerze nie przyjmuje logowania hasłem (zasada „Wymagaj Windows Hello dla firm lub karty inteligentnej”, scforceoption). " +
+          "„Zaloguj” loginem i hasłem nie zadziała, dopóki administrator jej nie wyłączy; zaloguj się do Windows kartą (tryb Powłoka Windows)."
+        : "Hasło konta zmieniło się (kod " + code + "). Podaj nowe.";
+
     internal static UserLogon? TryLogon(string login, string? domain, char[] password, int length, out int code)
     {
         bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
@@ -96,7 +104,8 @@ internal sealed class UserLogon : IDisposable
                 {
                     var logon = TryLogon(login, domainPart, typed, typedLength, out int code);
                     if (logon != null) return logon;
-                    error = "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
+                    error = code == SmartCardLogonRequired ? Explain(code)
+                        : "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
                     continue;
                 }
                 finally { Array.Clear(typed); }

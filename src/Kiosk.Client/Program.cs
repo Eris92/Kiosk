@@ -140,6 +140,20 @@ internal sealed class CardReader : IDisposable
     /// <summary>Reader holding the last detected card; used to check that card's PIN.</summary>
     internal string ActiveReader { get; private set; } = "";
     internal string ActiveAtr { get; private set; } = "";
+    /// <summary>Names of the readers connected now (Konfiguracja offers them in a list); empty when none or no service.</summary>
+    internal static string[] ListReaders()
+    {
+        if (Native.SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out var context) != 0) return [];
+        try
+        {
+            uint size = 0;
+            if (Native.SCardListReaders(context, null, null, ref size) != 0) return [];
+            var names = new char[size];
+            if (Native.SCardListReaders(context, null, names, ref size) != 0) return [];
+            return new string(names).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        }
+        finally { Native.SCardReleaseContext(context); }
+    }
     internal static bool IsUsableCard(uint state) =>
         (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
 
