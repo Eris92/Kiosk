@@ -6,6 +6,8 @@ Installs the "Kiosk Card" service: lets Kiosk check a FIDO2 card PIN and remembe
 Windows allows only administrators and services to send FIDO2 commands to a card, so Kiosk (a normal user)
 asks this service through a local pipe. The service runs as LocalSystem from Program Files (users cannot change
 it) and only checks the PIN and returns the card's hmac-secret for "kiosk.local" — no sign-ins for other sites.
+It also installs the latest release from github.com/Eris92/Kiosk when Kiosk asks (Konfiguracja → Aktualizacja),
+so updates need no administrator after this script has run once.
 Run as administrator after scripts\Build.ps1. Supports -WhatIf; -Uninstall removes the service.
 #>
 [CmdletBinding(SupportsShouldProcess)]

@@ -16,7 +16,12 @@ internal static class AdminSettings
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
 
     /// <summary>Works whatever has the keyboard (browser, hosted program), as long as it is this Windows session.</summary>
-    internal static void RegisterHotkey(IntPtr window) => RegisterHotKey(window, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.K);
+    internal static void RegisterHotkey(IntPtr window)
+    {
+        // Fails when another program in this session already owns Ctrl+Alt+K (graphics or keyboard utilities).
+        if (!RegisterHotKey(window, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.K))
+            Audit.Write("admin_hotkey_unavailable", "Win32 " + Marshal.GetLastWin32Error());
+    }
     internal static void UnregisterHotkey(IntPtr window) => UnregisterHotKey(window, HotkeyId);
     internal static bool IsHotkey(Message m) => m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HotkeyId;
 
@@ -32,7 +37,17 @@ internal static class AdminSettings
                 Arguments = "\"" + Argument + "\" \"" + configPath + "\""
             })!;
         }
-        catch (System.ComponentModel.Win32Exception) { Audit.Write("admin_settings_cancelled"); return; }   // UAC cancelled
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            Audit.Write("admin_settings_cancelled", "Win32 " + ex.NativeErrorCode);
+            // 1223: someone pressed No / closed the prompt. Anything else: Windows refused to ask (e.g. Intune
+            // "Automatically deny elevation requests" for standard users) – say so instead of doing nothing.
+            if (ex.NativeErrorCode != 1223 && !owner.IsDisposed)
+                MessageBox.Show(owner, "Windows nie pozwolił poprosić o administratora (" + ex.Message + ").\n" +
+                    "Na tym komputerze zwykły użytkownik nie dostaje okna zgody (UAC). Przyłóż kartę administratora " +
+                    "albo zmień konfigurację z konta administratora.", "Konfiguracja Kiosku", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         Audit.Write("admin_settings_opened");
         process.EnableRaisingEvents = true;
         process.Exited += (_, _) =>

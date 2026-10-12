@@ -12,6 +12,7 @@ namespace Kiosk.Client;
 /// administrators and services send FIDO2 commands to a card, so the Kiosk (a normal user) asks the service over
 /// a local pipe. The service does only this: check the card PIN, create the Kiosk credential and return its
 /// hmac-secret, always for the relying party "kiosk.local" — never signatures or sign-ins for other sites.
+/// It also installs the latest official Kiosk release on request ("update"), so updating needs no administrator.
 /// </summary>
 internal static class CardService
 {
@@ -22,7 +23,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open
+        public string Op { get; set; } = "";          // verify | enroll | open | info | update
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
         public string? CredentialId { get; set; }
@@ -68,6 +69,7 @@ internal static class CardService
         string step = "połączenie";
         try
         {
+            if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
             using var card = new CtapCard(request.Reader);
             if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
             step = "PIN";

@@ -18,6 +18,7 @@ internal static class Updater
 {
     internal const string Argument = "--apply-update";
     private const string CopyArgument = "--apply-update-copy";
+    internal const string ServiceRefreshArgument = "--apply-update-service";
     private const string Repository = "Eris92/Kiosk";
     private const string Asset = "Kiosk-win-x64.zip";
     private const string CardServiceName = "KioskCard";
@@ -93,6 +94,11 @@ internal static class Updater
             try { using var old = Process.GetProcessById(int.Parse(args[1])); old.WaitForExit(60000); }
             catch (ArgumentException) { }
             if (IsElevated() || CanWrite(target) && (ServiceFolder() is not { } service || CanWrite(service))) Copy(target);
+            else if (SameFolder(target, InstalledFolder) && CardService.Call(new CardService.Request { Op = "update" }) is { Code: 0 } installed)
+            {
+                // The Kiosk Card service (LocalSystem) installed the latest release itself: no administrator needed.
+                Audit.Write("update_by_service", installed.Message);
+            }
             else
             {
                 // Program Files: only this step runs as administrator; Kiosk itself starts again as the signed-in user.
@@ -119,6 +125,43 @@ internal static class Updater
         try { Copy(target); return 0; }
         catch (Exception ex) { Audit.Write("update_failed", ex.Message); return 2; }
     }
+
+    private static string InstalledFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Kiosk");
+
+    /// <summary>
+    /// Kiosk Card service, "update": downloads the latest release of <see cref="Repository"/> itself (HTTPS, fixed
+    /// address, into the service's own temp folder, which users cannot write) and copies it over Program Files\Kiosk.
+    /// The caller passes nothing but the request, so a user can only ask for the official latest release, never an
+    /// older one. The service's own folder is refreshed afterwards by a separate copy, because the service stops.
+    /// </summary>
+    internal static CardService.Response InstallLatest()
+    {
+        var release = LatestAsync().GetAwaiter().GetResult();
+        if (Number(release.Tag) is { } latest && Number(CurrentVersion) is { } running && latest < running)
+            return new CardService.Response { Code = -2, Message = "Najnowsze wydanie " + release.Tag + " jest starsze niż " + CurrentVersion + "." };
+        var folder = DownloadAsync(release).GetAwaiter().GetResult();
+        CopyFolder(folder, InstalledFolder);
+        if (ServiceFolder() is { } service && !SameFolder(service, InstalledFolder))
+            Process.Start(new ProcessStartInfo(Path.Combine(folder, "Kiosk.Client.exe"))
+            {
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = folder, Arguments = Join([ServiceRefreshArgument])
+            });
+        Audit.Write("update_installed_by_service", release.Tag);
+        return new CardService.Response { Message = release.Tag };
+    }
+
+    /// <summary>Kiosk.Client.exe --apply-update-service (started by the service): stop it, refresh its folder, start it.</summary>
+    internal static int RefreshService()
+    {
+        if (!IsElevated() || ServiceFolder() is not { } service) return 2;
+        try { RunSc("stop"); CopyFolder(AppContext.BaseDirectory, service); }
+        catch (Exception ex) { Audit.Write("update_failed", ex.Message); }
+        RunSc("start");
+        return 0;
+    }
+
+    private static int? Number(string tag) =>
+        tag.StartsWith("build-", StringComparison.Ordinal) && int.TryParse(tag[6..], out var n) ? n : null;
 
     private static void Copy(string target)
     {
