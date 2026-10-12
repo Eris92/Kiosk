@@ -46,7 +46,7 @@ internal static class Configuration
         catch (UnauthorizedAccessException)
         {
             throw new UnauthorizedAccessException("Brak prawa zapisu do " + path + ". Ten folder może zmieniać tylko administrator Windows " +
-                "(tak ustawia go scripts\\Install-KioskShell.ps1).");
+                "(Install-KioskShell.ps1 z -ReadOnlyConfig). Uruchom ponownie scripts\\Install-KioskShell.ps1 bez tej opcji.");
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }

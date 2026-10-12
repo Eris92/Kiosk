@@ -8,7 +8,8 @@ Run as administrator on a domain-joined or Intune (Entra ID) PC. For Intune-mana
 Shell Launcher profile in config/intune (this script does the same locally, e.g. for testing).
 
   * Copies the Kiosk build to -InstallPath and the configuration to -ConfigPath
-    (administrators: full control, users: read only). SessionMode is set to WindowsShell.
+    (administrators: full control; users: may change it, so a Kiosk admin card can save Konfiguracja from
+    their own Windows session; -ReadOnlyConfig = users read only). SessionMode is set to WindowsShell.
   * Shell:
       ShellLauncher (Windows Enterprise / Education / IoT Enterprise): Kiosk is the shell for everyone
         except local Administrators, who keep Explorer.
@@ -29,6 +30,7 @@ param(
     [string]$SourceConfig = (Join-Path $PSScriptRoot '..\config\client.json'),
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
+    [switch]$ReadOnlyConfig,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -92,8 +94,10 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode = Win
     $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
     $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
-    # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
-    & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+    # SYSTEM and Administrators: full control. Users: modify, because each person runs the Kiosk in their own Windows
+    # session and Konfiguracja (shown only to admin cards) saves there. -ReadOnlyConfig: users read only.
+    $users = if ($ReadOnlyConfig) { '*S-1-5-32-545:(OI)(CI)RX' } else { '*S-1-5-32-545:(OI)(CI)M' }
+    & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' $users | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed for $directory" }
 }
 
