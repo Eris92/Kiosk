@@ -61,6 +61,8 @@ internal sealed record Config
     public Bookmark[] Bookmarks { get; init; } = [];
     /// <summary>When true the browser opens only bookmarked sites (and their subdomains) plus BrowserAllowedDomains.</summary>
     public bool EnableBrowser { get; init; } = true;
+    /// <summary>When Kiosk starts it installs a newer GitHub release by itself (Konfiguracja → Aktualizacja).</summary>
+    public bool AutoUpdate { get; init; }
     public bool BrowserOnlyBookmarks { get; init; }
     public string[] BrowserAllowedDomains { get; init; } = [];
     public ApplicationEntry[] Applications { get; init; } = [];

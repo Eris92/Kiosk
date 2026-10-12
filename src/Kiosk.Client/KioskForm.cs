@@ -103,7 +103,7 @@ internal sealed class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); };
+        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); };
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
@@ -1005,6 +1005,25 @@ internal sealed class KioskForm : Form
             });
             Close();
         }
+    }
+
+    /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
+    private async Task AutoUpdateAsync()
+    {
+        if (!config.AutoUpdate) return;
+        try
+        {
+            var release = await Updater.LatestAsync();
+            if (!Updater.IsNewer(release.Tag)) return;
+            var folder = await Updater.DownloadAsync(release);
+            // Only while nobody has work open; otherwise the update waits for the next start.
+            if (IsDisposed || sessions.Values.Any(x => x.HasWork) || !Updater.FirstAttempt(release.Tag)) return;
+            Audit.Write("auto_update", release.Tag);
+            closeConfirmed = true;
+            Updater.Launch(folder);
+            Close();
+        }
+        catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
     }
 
     /// <summary>Menu → Odśwież ekrany: the screens' content starts again (pages reload, programs restart).</summary>

@@ -18,6 +18,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
     private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
+    private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
@@ -258,7 +259,8 @@ internal sealed class SettingsView : UserControl
             AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 12),
             Text = "Pobiera najnowsze wydanie z GitHub (github.com/Eris92/Kiosk, zakładka Releases), zamyka Kiosk, podmienia pliki programu " +
                    "i uruchamia nową wersję. Konfiguracja zostaje bez zmian. Gdy Kiosk jest zainstalowany w Program Files, Windows zapyta o administratora. " +
-                   "Niezapisane zmiany w tej Konfiguracji przepadną."
+                   "Niezapisane zmiany w tej Konfiguracji przepadną. Automatyczna aktualizacja działa po zapisaniu konfiguracji: przy starcie Kiosku, " +
+                   "gdy nikt nie ma otwartej pracy, instaluje nowszą wersję i uruchamia Kiosk ponownie."
         });
         var updateButton = new Button { Text = "Sprawdź i zaktualizuj", Size = new Size(240, 38), Margin = new Padding(4) };
         KioskTheme.StyleButton(updateButton, primary: true);
@@ -283,6 +285,8 @@ internal sealed class SettingsView : UserControl
             catch (Exception ex) { updateStatus.Text = "Aktualizacja nie powiodła się: " + ex.Message; }
             finally { if (!IsDisposed) updateButton.Enabled = true; }
         };
+        autoUpdate.Checked = config.AutoUpdate;
+        updatePanel.Controls.Add(autoUpdate);
         updatePanel.Controls.Add(updateButton);
         updatePanel.Controls.Add(updateStatus);
         updateTab.Controls.Add(updatePanel);
@@ -574,6 +578,7 @@ internal sealed class SettingsView : UserControl
             BrowserOnlyBookmarks = onlyBookmarks.Checked,
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id") }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
+            AutoUpdate = autoUpdate.Checked,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry

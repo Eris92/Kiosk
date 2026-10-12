@@ -160,6 +160,19 @@ internal static class Updater
         return 0;
     }
 
+    /// <summary>True when <paramref name="tag"/> is a later build than the running one (local "dev" builds never update themselves).</summary>
+    internal static bool IsNewer(string tag) => Number(tag) is { } latest && Number(CurrentVersion) is { } installed && latest > installed;
+
+    /// <summary>Remembers that this release was already tried, so a failing install does not restart Kiosk at every start.</summary>
+    internal static bool FirstAttempt(string tag)
+    {
+        var marker = Path.Combine(Path.GetTempPath(), "Kiosk-update", "attempted-" + tag);
+        if (File.Exists(marker)) return false;
+        Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+        File.WriteAllText(marker, DateTime.Now.ToString("O"));
+        return true;
+    }
+
     private static int? Number(string tag) =>
         tag.StartsWith("build-", StringComparison.Ordinal) && int.TryParse(tag[6..], out var n) ? n : null;
 
