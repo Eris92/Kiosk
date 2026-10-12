@@ -106,6 +106,46 @@ internal sealed class CtapCard : IDisposable
         Command(0x06, Cbor.Map((1L, 1L), (2L, 3L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc)));
     }
 
+    /// <summary>Szybka pomoc → Zmień PIN karty: clientPIN changePIN (PIN protocol 1); the Kiosk credential keeps working.</summary>
+    internal void ChangePin(string currentPin, string newPin)
+    {
+        var bytes = Encoding.UTF8.GetBytes(newPin);
+        if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
+        var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
+        var cardKey = ECDiffieHellman.Create(new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
+        });
+        platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
+        var padded = new byte[64];
+        bytes.CopyTo(padded, 0);
+        var newPinEnc = Encrypt(padded);
+        var pinHashEnc = Encrypt(SHA256.HashData(Encoding.UTF8.GetBytes(currentPin)).AsSpan(0, 16).ToArray());
+        Array.Clear(padded);
+        Array.Clear(bytes);
+        var pinAuth = HMACSHA256.HashData(shared, [.. newPinEnc, .. pinHashEnc]).AsSpan(0, 16).ToArray();
+        Command(0x06, Cbor.Map((1L, 1L), (2L, 4L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc), (6L, pinHashEnc)));
+    }
+
+    /// <summary>
+    /// Szybka pomoc → Resetuj kartę: authenticatorReset. Deletes the PIN and every FIDO2 key on the card (also other sites').
+    /// Cards allow it only seconds after they got power, so <see cref="PowerCycle"/> runs first.
+    /// </summary>
+    internal void Reset() => Command(0x07, null);
+
+    /// <summary>Switches the card off and on (SCARD_UNPOWER_CARD), as if it had just been put on the reader.</summary>
+    internal static void PowerCycle(string reader)
+    {
+        if (SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out var context) != 0) return;
+        try
+        {
+            if (SCardConnect(context, reader, 2, 3, out var card, out _) == 0) SCardDisconnect(card, 2);
+        }
+        finally { SCardReleaseContext(context); }
+    }
+
     /// <summary>The only relying party Kiosk ever uses on the card.</summary>
     internal const string RelyingParty = "kiosk.local";
 
@@ -207,6 +247,9 @@ internal sealed class CtapCard : IDisposable
         0x34 => "Za dużo błędnych PIN-ów. Zabierz kartę i przyłóż ją ponownie.",
         0x35 => "Karta nie ma ustawionego PIN-u.",
         0x2E => "Na karcie nie ma klucza tego Kiosku.",
+        0x30 => "Karta pozwala na to tylko zaraz po przyłożeniu. Zdejmij kartę i przyłóż ją ponownie.",
+        0x27 => "Karta odmówiła (operacja anulowana).",
+        0x2F => "Nie potwierdzono na karcie (dotknij jej, jeśli miga).",
         _ => "Błąd karty FIDO2 (0x" + code.ToString("X2") + ")."
     };
 

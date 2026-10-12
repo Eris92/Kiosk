@@ -92,6 +92,8 @@ internal sealed record Config
     /// <summary>Folder or share with kiosk-news.json: company messages scrolling on the desktop. Empty = none.</summary>
     public string NewsFolder { get; init; } = "";
     public int NewsSeconds { get; init; } = 8;
+    /// <summary>Szybka pomoc on the desktop, also on the lock screen (MFA, password reset, card PIN). Empty = none.</summary>
+    public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
@@ -164,6 +166,11 @@ internal sealed record Config
         }
         if (NewsFolder == null || NewsFolder.Length > 0 && !Path.IsPathFullyQualified(NewsFolder))
             throw new InvalidDataException("Folder komunikatów podaj jako pełną ścieżkę, np. \\\\serwer\\kiosk\\komunikaty albo C:\\ProgramData\\Kiosk\\news.");
+        foreach (var help in HelpActions ?? throw new InvalidDataException("Lista Szybkiej pomocy nie może być null."))
+            if (help == null || string.IsNullOrWhiteSpace(help.Name) ||
+                !(HelpAction.BuiltIn.Contains(help.Action, StringComparer.OrdinalIgnoreCase) ||
+                  Uri.TryCreate(help.Action, UriKind.Absolute, out var helpUri) && helpUri.Scheme == Uri.UriSchemeHttps))
+                throw new InvalidDataException("Szybka pomoc: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||

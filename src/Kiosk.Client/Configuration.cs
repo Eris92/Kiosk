@@ -27,6 +27,28 @@ internal sealed record ApplicationEntry
     internal bool IsBuiltIn => IsBuiltInNotes || IsBuiltInBrowser;
 }
 
+/// <summary>
+/// Szybka pomoc: a button on the desktop that works locked and unlocked. Action: https://… (a guest browser window when
+/// nobody is signed in), kiosk:zmien-pin, kiosk:nowa-karta (set the card up again), kiosk:reset-karty.
+/// </summary>
+internal sealed record HelpAction
+{
+    public string Name { get; init; } = "";
+    public string Action { get; init; } = "";
+
+    internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty";
+    internal static readonly string[] BuiltIn = [ChangePin, Reenroll, ResetCard];
+
+    internal static HelpAction[] Defaults =>
+    [
+        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup" },
+        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr" },
+        new() { Name = "Zmień PIN karty", Action = ChangePin },
+        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll },
+        new() { Name = "Resetuj kartę", Action = ResetCard },
+    ];
+}
+
 internal static class Configuration
 {
     internal static Config Load(string path)

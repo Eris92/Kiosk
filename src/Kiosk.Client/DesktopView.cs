@@ -94,6 +94,8 @@ internal sealed class DesktopView : UserControl
     private readonly StatusCard card = new();
     /// <summary>Company messages at the bottom (Konfiguracja → Komunikaty).</summary>
     internal NewsCarousel News { get; } = new();
+    /// <summary>Szybka pomoc (Konfiguracja → Szybka pomoc), shown locked and unlocked.</summary>
+    internal HelpBar Help { get; } = new();
     private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
     private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
@@ -155,7 +157,7 @@ internal sealed class DesktopView : UserControl
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
-        Controls.AddRange(new Control[] { card, News, logo, brand, subtitle, clock, date });
+        Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -207,6 +209,13 @@ internal sealed class DesktopView : UserControl
         ArrangeControls();
     }
 
+    internal void SetHelp(HelpAction[] actions)
+    {
+        if (ReferenceEquals(Help.Items, actions)) return;
+        Help.SetItems(actions);
+        ArrangeControls();
+    }
+
     internal void SetNews(List<NewsItem> items, int seconds)
     {
         News.Seconds = seconds;
@@ -253,9 +262,15 @@ internal sealed class DesktopView : UserControl
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : 324);
+        // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
+        bool help = Help.Count > 0 && !AskingPin;
+        var column = Help.Needed(true);
+        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - Scale(125) >= column.Height;
+        int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
+        Help.Vertical = helpColumn;
         // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
         int newsHeight = Scale(132), newsGap = Scale(20), bottom = Height;
-        bool news = News.Count > 0 && !AskingPin && Height - Scale(125) - cardHeight - newsHeight - newsGap * 2 >= 0;
+        bool news = News.Count > 0 && !AskingPin && Height - Scale(125) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
         News.Visible = news;
         if (news)
         {
@@ -263,9 +278,17 @@ internal sealed class DesktopView : UserControl
             News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
             bottom = News.Top - newsGap;
         }
-        int top = Math.Max(Scale(125), (bottom - cardHeight) / 2 + Scale(12));
-        if (news) top = Math.Min(top, bottom - cardHeight);
+        int top = Math.Max(Scale(125), (bottom - cardHeight - helpRow) / 2 + Scale(12));
+        if (news) top = Math.Min(top, bottom - cardHeight - helpRow);
         card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
+        Help.Visible = help;
+        if (helpColumn) Help.SetBounds(margin, Scale(125), column.Width, column.Height);
+        else if (help)
+        {
+            var row = Help.Needed(false);
+            int rowWidth = Math.Min(row.Width, Width - margin * 2);
+            Help.SetBounds((Width - rowWidth) / 2, card.Bottom + Scale(16), rowWidth, row.Height);
+        }
         int innerMargin = Scale(30);
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
         heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));

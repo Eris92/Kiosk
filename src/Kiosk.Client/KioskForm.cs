@@ -109,6 +109,7 @@ internal sealed class KioskForm : Form
         Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
+        desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
@@ -760,7 +761,7 @@ internal sealed class KioskForm : Form
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
         if (reader.Snapshot(config.ReaderName) != null) shellCardSeen = true;
-        else if (shellCardSeen && config.DisconnectOnCardRemoval) { DisconnectWindows("card_removed"); return; }
+        else if (shellCardSeen && config.DisconnectOnCardRemoval && !verifying) { DisconnectWindows("card_removed"); return; }
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
@@ -795,6 +796,7 @@ internal sealed class KioskForm : Form
     {
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
+        desktop.SetHelp(config.HelpActions);
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -1030,6 +1032,129 @@ internal sealed class KioskForm : Form
             Close();
         }
         catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
+    }
+
+    private HelpBrowserForm? helpBrowser;
+
+    /// <summary>
+    /// Szybka pomoc, locked or not: a help page (the person's browser when signed in, else a guest window),
+    /// or the card itself: change its PIN, set it up again, reset it.
+    /// </summary>
+    private async Task RunHelpAsync(HelpAction item)
+    {
+        if (verifying || desktop.AskingPin) return;
+        Audit.Write("help_action", item.Name + " " + item.Action);
+        switch (item.Action.ToLowerInvariant())
+        {
+            case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
+            case HelpAction.Reenroll: ForgetCard(); break;
+            case HelpAction.ResetCard: await ResetCardAsync(); break;
+            default:
+                if (CanUseApps && config.Applications.Any(a => a.IsBuiltInBrowser)) { await OpenBrowserAsync(item.Action); break; }
+                helpBrowser?.Close();
+                helpBrowser = new HelpBrowserForm(item.Name, item.Action, config.BrowserAllowedDomains) { Bounds = Screen.FromControl(this).Bounds };
+                helpBrowser.FormClosed += (_, _) => helpBrowser = null;
+                helpBrowser.Show(this);
+                break;
+        }
+        RefreshChrome();
+    }
+
+    private bool CardForHelp(out string readerName)
+    {
+        readerName = reader.ActiveReader;
+        if (cardPresent() && !string.IsNullOrEmpty(readerName)) return true;
+        notice = "Przyłóż kartę do czytnika i wybierz to jeszcze raz.";
+        if (current != null) current.Notice = notice;
+        return false;
+    }
+
+    private void ShowHelpResult(string text)
+    {
+        notice = text;
+        if (current != null) current.Notice = text;
+    }
+
+    /// <summary>Szybka pomoc → Zmień PIN karty: current PIN, then the new one twice, all on the lock card.</summary>
+    private async Task ChangeCardPinAsync()
+    {
+        if (!CardForHelp(out var readerName)) return;
+        verifying = true;
+        try
+        {
+            string message = "Zmiana PIN-u karty: wpisz obecny PIN.";
+            while (await desktop.AskPinAsync(message, cardPresent) is { } old)
+            {
+                var fresh = await desktop.AskPinAsync("Wpisz nowy PIN (od 4 znaków).", cardPresent);
+                if (fresh == null) break;
+                if (fresh.Length < 4) { message = "Nowy PIN musi mieć co najmniej 4 znaki. Wpisz obecny PIN."; continue; }
+                var again = await desktop.AskPinAsync("Wpisz nowy PIN jeszcze raz.", cardPresent);
+                if (again == null) break;
+                if (again != fresh) { message = "Nowe PIN-y się różnią. Wpisz obecny PIN."; continue; }
+                var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "changepin", Reader = readerName, Pin = old, NewPin = fresh }));
+                Audit.Write(answer.Code == 0 ? "card_pin_changed" : "card_pin_change_failed", answer.Code + " " + answer.Message);
+                if (answer.Code == 0x31) { message = "Obecny PIN jest nieprawidłowy. Spróbuj ponownie."; continue; }
+                ShowHelpResult(answer.Code == 0 ? "PIN karty został zmieniony. Od teraz używaj nowego PIN-u." : "Nie udało się zmienić PIN-u: " + answer.Message);
+                break;
+            }
+        }
+        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+    }
+
+    /// <summary>Szybka pomoc → Skonfiguruj kartę od nowa: Kiosk forgets the account saved for this card.</summary>
+    private void ForgetCard()
+    {
+        if (!CardForHelp(out _)) return;
+        var id = identifyCard()?.Id;
+        if (id == null) { ShowHelpResult("Nie udało się odczytać karty."); return; }
+        if (MessageBox.Show(this, "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
+                "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", "Skonfiguruj kartę od nowa",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        CardVault.Forget(id);
+        Audit.Write("card_forgotten");
+        ShowHelpResult("Karta zostanie skonfigurowana od nowa przy następnym logowaniu: podasz login, hasło i PIN.");
+    }
+
+    /// <summary>
+    /// Szybka pomoc → Resetuj kartę: the card's own FIDO2 reset (no PIN, no keys), then a new PIN right away.
+    /// Cards allow it only just after they got power: Kiosk powers the card again, or asks to put it on the reader again.
+    /// </summary>
+    private async Task ResetCardAsync()
+    {
+        if (!CardForHelp(out var readerName)) return;
+        if (MessageBox.Show(this, "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
+                "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).
+
+Zresetować kartę?",
+                "Resetuj kartę", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        if (MessageBox.Show(this, "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", "Resetuj kartę",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        var id = identifyCard()?.Id;
+        verifying = true;
+        try
+        {
+            var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
+            if (answer.Code is 0x30 or 0x27)
+            {
+                // Too late after power-up: the person takes the card off and puts it back; the reset follows at once.
+                ShowHelpResult("Zdejmij kartę z czytnika i przyłóż ją ponownie – Kiosk od razu ją zresetuje.");
+                RefreshChrome();
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
+                while (!cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
+                if (!cardPresent()) { ShowHelpResult("Reset karty anulowany: karta nie wróciła do czytnika."); return; }
+                readerName = reader.ActiveReader;
+                answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
+            }
+            Audit.Write(answer.Code == 0 ? "card_reset" : "card_reset_failed", answer.Code + " " + answer.Message);
+            if (answer.Code != 0) { ShowHelpResult("Nie udało się zresetować karty: " + answer.Message); return; }
+            if (id != null) CardVault.Forget(id);
+            var pin = await EnsureCardPinAsync(readerName);
+            ShowHelpResult(pin != null
+                ? "Karta zresetowana i ma nowy PIN. Przy logowaniu podasz login, hasło i nowy PIN; klucz do logowania w Windows dodaj ponownie."
+                : "Karta zresetowana. Przy następnym logowaniu ustawisz nowy PIN.");
+        }
+        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
     }
 
     /// <summary>Company messages from Konfiguracja → Komunikaty (kiosk-news.json in a folder or on a share).</summary>
@@ -1601,6 +1726,7 @@ internal sealed class KioskForm : Form
             if (!trusted.Allows(items[1].Action) || !trusted.Allows("https://wp.pl/news") || trusted.Allows("https://example.org") ||
                 trusted.Allows(new Uri(Path.Combine(Path.GetTempPath(), "other.html")).AbsoluteUri))
                 throw new InvalidOperationException("Company message pages are not allowed in the browser.");
+            if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Szybka pomoc is not on the desktop.");
             desktop.SetNews(items, 8);
             if (desktop.News.Count != 2) throw new InvalidOperationException("Company messages are not on the desktop.");
             var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));

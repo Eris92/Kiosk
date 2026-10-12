@@ -10,7 +10,8 @@ namespace Kiosk.Client;
 /// <summary>
 /// "Kiosk Card": a small Windows service (LocalSystem) that talks FIDO2 to the card for Kiosk. Windows lets only
 /// administrators and services send FIDO2 commands to a card, so the Kiosk (a normal user) asks the service over
-/// a local pipe. The service does only this: check the card PIN, create the Kiosk credential and return its
+/// a local pipe. The service does only this (plus changing the PIN or resetting the card for its holder, Szybka pomoc):
+/// check the card PIN, create the Kiosk credential and return its
 /// hmac-secret, always for the relying party "kiosk.local" — never signatures or sign-ins for other sites.
 /// It also installs the latest official Kiosk release on request ("update"), so updating needs no administrator.
 /// </summary>
@@ -23,7 +24,8 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | update
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update
+        public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
         public string? CredentialId { get; set; }
@@ -59,7 +61,7 @@ internal static class CardService
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) return Handle(request);
             return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie działa. Zainstaluj ją: scripts\\Install-KioskCardService.ps1." };
         }
-        finally { request.Pin = ""; }
+        finally { request.Pin = ""; request.NewPin = ""; }
     }
 
     // ------------------------------------------------------------------ the work
@@ -70,6 +72,15 @@ internal static class CardService
         try
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
+            if (request.Op == "reset")
+            {
+                // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.
+                step = "reset karty";
+                CtapCard.PowerCycle(request.Reader);
+                using var fresh = new CtapCard(request.Reader);
+                fresh.Reset();
+                return new Response { Message = "Karta została zresetowana." };
+            }
             using var card = new CtapCard(request.Reader);
             if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
             if (request.Op == "haspin") return new Response { Code = card.HasPin() ? 0 : 0x35 };
@@ -80,6 +91,12 @@ internal static class CardService
                 step = "ustawianie PIN-u";
                 card.SetPin(request.Pin);
                 return new Response { Message = "PIN karty ustawiony." };
+            }
+            if (request.Op == "changepin")
+            {
+                step = "zmiana PIN-u";
+                card.ChangePin(request.Pin, request.NewPin);
+                return new Response { Message = "PIN karty zmieniony." };
             }
             step = "PIN";
             card.UsePin(request.Pin);
@@ -109,7 +126,7 @@ internal static class CardService
         }
         catch (CtapException ex) { return new Response { Code = ex.Code, Message = ex.Message + " [" + step + "]" }; }
         catch (Exception ex) { return new Response { Code = -1, Message = ex.Message }; }
-        finally { request.Pin = ""; }
+        finally { request.Pin = ""; request.NewPin = ""; }
     }
 
     // ------------------------------------------------------------------ service

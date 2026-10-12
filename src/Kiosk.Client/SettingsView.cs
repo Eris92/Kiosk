@@ -51,6 +51,7 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView adminCards = Grid();
     private readonly DataGridView idleScreens = Grid();
     private readonly DataGridView commands = Grid();
+    private readonly DataGridView helpActions = Grid();
     private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
     private bool scaled;
     /// <summary>Self-test pictures: lays the view out as on a screen with this scale.</summary>
@@ -279,6 +280,23 @@ internal sealed class SettingsView : UserControl
         commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
             "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
+
+        var helpTab = new TabPage("Szybka pomoc") { Padding = new Padding(12) };
+        tabs.TabPages.Add(helpTab);
+        helpActions.Columns.Add("Name", "Napis na przycisku");
+        helpActions.Columns.Add("Action", "Akcja");
+        foreach (var h in config.HelpActions) helpActions.Rows.Add(h.Name, h.Action);
+        SetupGridTab(helpTab, helpActions, "Przyciski „Szybka pomoc” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
+            "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
+            HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
+            " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN). Usuń wiersz, aby ukryć przycisk.", helpHeight: 80);
+        var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
+        helpDefaults.Click += (_, _) =>
+        {
+            helpActions.Rows.Clear();
+            foreach (var h in HelpAction.Defaults) helpActions.Rows.Add(h.Name, h.Action);
+        };
+        helpTab.Controls.Add(helpDefaults);
 
         var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
         tabs.TabPages.Add(newsTab);
@@ -579,12 +597,12 @@ internal sealed class SettingsView : UserControl
         panel.Controls.Add(control, 1, row);
     }
 
-    private static void SetupGridTab(TabPage page, DataGridView grid, string help)
+    private static void SetupGridTab(TabPage page, DataGridView grid, string help, int helpHeight = 48)
     {
         var remove = new Button { Text = "Usuń wybrany wiersz", AutoSize = true, Dock = DockStyle.Bottom };
         remove.Click += (_, _) => { if (grid.CurrentRow is { IsNewRow: false } row) grid.Rows.Remove(row); };
         page.Controls.Add(grid);
-        page.Controls.Add(new Label { Text = help, Dock = DockStyle.Top, Height = 48, ForeColor = HelpText });
+        page.Controls.Add(new Label { Text = help, Dock = DockStyle.Top, Height = helpHeight, ForeColor = HelpText });
         page.Controls.Add(remove);
     }
 
@@ -629,7 +647,7 @@ internal sealed class SettingsView : UserControl
     /// <summary>Builds and validates the edited configuration without saving it.</summary>
     internal Config BuildConfig()
     {
-        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit(); commands.EndEdit();
+        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit(); commands.EndEdit(); helpActions.EndEdit();
         var selected = autoConnect.SelectedItem as string;
         var result = original with
         {
@@ -640,6 +658,8 @@ internal sealed class SettingsView : UserControl
             BrandSubtitle = brandSubtitle.Text.Trim(),
             BrandLogo = brandLogo.Text.Trim().Trim('"'),
             NewsFolder = newsFolder.Text.Trim().Trim('"'),
+            HelpActions = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Name").Length > 0 || Cell(r, "Action").Length > 0))
+                .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim() }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
