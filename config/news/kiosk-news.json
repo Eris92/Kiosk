@@ -2,7 +2,18 @@
 // Title, Text, Image (plik w tym folderze), Button (napis przycisku),
 // Action: https://… | plik z tego folderu (np. zglos-problem.html) | app:Nazwa | rdp:Nazwa | cmd:Nazwa
 // From / Until (yyyy-MM-dd): opcjonalnie, od kiedy / do kiedy pokazywać.
+// "Kind": "Pasek": pasek na górze pulpitu zamiast slajdu; Color (tło) i TextColor (tekst): nazwa (red, orange, green…) albo #RRGGBB.
+// Przykładowy pasek poniżej: usuń go albo ustaw Until, gdy awaria minie.
 [
+  {
+    "Kind": "Pasek",
+    "Title": "Nie działa system XXX",
+    "Text": "Trwa naprawa. Przepraszamy za utrudnienia.",
+    "Color": "red",
+    "TextColor": "white",
+    "Button": "Szczegóły",
+    "Action": "zglos-problem.html"
+  },
   {
     "Title": "Aktualizacja A",
     "Text": "W piątek po 18:00 aktualizujemy system. Zapisz pracę przed wyjściem.",

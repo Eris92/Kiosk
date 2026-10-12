@@ -1718,9 +1718,14 @@ internal sealed class KioskForm : Form
                   { "Title": "Aktualizacja A", "Text": "W piątek po 18:00 aktualizujemy system kadrowy.", "Image": "a.png", "Button": "Szczegóły", "Action": "https://example.com/aktualizacja" },
                   { "Title": "Zgłoś problem", "Text": "Coś nie działa? Wyślij zgłoszenie do IT.", "Button": "Zgłoś", "Action": "pomoc.html" },
                   { "Title": "Stary", "Until": "2020-01-01" },
+                  { "Kind": "Pasek", "Title": "Nie działa system XXX", "Text": "Trwa naprawa.", "Color": "red", "TextColor": "white" },
                 ]
                 """);
-            var items = News.Load(folder);
+            var all = News.Load(folder);
+            var items = all.Where(i => !i.IsBar).ToList();
+            if (all.Count(i => i.IsBar) != 1 || News.ParseColor("red", Color.Empty).ToArgb() != Color.Red.ToArgb() ||
+                News.ParseColor("#00FF00", Color.Empty).ToArgb() != Color.Lime.ToArgb() || News.ParseColor("nic", Color.Blue) != Color.Blue)
+                throw new InvalidOperationException("The bar message was not read.");
             if (items.Count != 2 || items[0].Picture == null || !items[1].Action.StartsWith("file:///", StringComparison.Ordinal) || News.Load("").Count != 0)
                 throw new InvalidOperationException("Company messages were not read correctly.");
             if (News.ResolveAction("https:// wp.pl", folder) != "https://wp.pl" || News.ResolveAction("wp.pl", folder) != "https://wp.pl" ||
@@ -1738,8 +1743,8 @@ internal sealed class KioskForm : Form
                 merged[0] != spItems[0] || merged[1] != items[0] || News.Merge(items, spItems, NewsOrdering.MineFirst)[0] != items[0])
                 throw new InvalidOperationException("SharePoint news were not merged with the folder's messages.");
             if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Szybka pomoc is not on the desktop.");
-            desktop.SetNews(items, 8);
-            if (desktop.News.Count != 2) throw new InvalidOperationException("Company messages are not on the desktop.");
+            desktop.SetNews(all, 8);
+            if (desktop.News.Count != 2 || desktop.BarCount != 1) throw new InvalidOperationException("Company messages are not on the desktop.");
             var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
             Directory.CreateDirectory(screenshots);
             if (desktop.Width > 0 && desktop.Height > 0)

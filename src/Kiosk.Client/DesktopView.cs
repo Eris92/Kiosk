@@ -222,12 +222,29 @@ internal sealed class DesktopView : UserControl
     }
 
     private NewsBanner banner;
+    private readonly List<AlertBar> bars = [];
+    internal int BarCount => bars.Count;
 
     internal void SetNews(List<NewsItem> items, int seconds, NewsBanner size = NewsBanner.Standard)
     {
         News.Seconds = seconds;
         banner = size;
-        News.SetItems(items);
+        // Bars ("Kind": "Pasek") go across the top, at most three; the rest scroll at the bottom.
+        var wanted = items.Where(i => i.IsBar).Take(3).ToList();
+        if (!wanted.SequenceEqual(bars.Select(b => b.Item)))
+        {
+            foreach (var old in bars) { Controls.Remove(old); old.Dispose(); }
+            bars.Clear();
+            foreach (var item in wanted)
+            {
+                var bar = new AlertBar(item);
+                bar.ActionRequested += News.RequestAction;
+                bars.Add(bar);
+                Controls.Add(bar);
+                bar.BringToFront();
+            }
+        }
+        News.SetItems(items.Where(i => !i.IsBar).ToList());
         ArrangeControls();
     }
 
@@ -250,6 +267,9 @@ internal sealed class DesktopView : UserControl
     {
         if (card == null) return;
         int margin = Scale(36);
+        // Bars across the top (Komunikaty, "Kind": "Pasek"); everything else moves down under them.
+        int bar = 0;
+        foreach (var alert in bars) { alert.SetBounds(0, bar, Width, Scale(44)); bar += Scale(44); }
         int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
         int logoSize = Scale(76), textLeft = margin;
         // Visible reads false while the desktop itself is hidden, so the layout looks at the content.
@@ -258,15 +278,15 @@ internal sealed class DesktopView : UserControl
             // Wide logos keep their proportions up to three times their height.
             var image = logo.Image!;
             int logoWidth = Math.Min(logoSize * 3, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
-            logo.SetBounds(margin, Scale(24), logoWidth, logoSize);
+            logo.SetBounds(margin, bar + Scale(24), logoWidth, logoSize);
             textLeft = margin + logoWidth + Scale(16);
         }
         int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
         // Only a line under it: the line moves up to where the name would be.
-        brand.SetBounds(textLeft, Scale(24), textWidth0, Scale(47));
-        subtitle.SetBounds(textLeft + Scale(2), brand.Text.Length > 0 ? Scale(75) : Scale(30), textWidth0, Scale(25));
-        clock.SetBounds(Width - clockWidth - margin, Scale(25), clockWidth, Scale(47));
-        date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
+        brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
+        subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
+        clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
+        date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin;
@@ -274,16 +294,16 @@ internal sealed class DesktopView : UserControl
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
         bool help = Help.Count > 0 && !AskingPin;
         var column = Help.Needed(true);
-        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - Scale(125) >= column.Height;
+        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
         Help.Vertical = helpColumn;
         // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
         // The size set in Konfiguracja, or the largest smaller one that fits.
         int[] heights = [132, 220, 320], widths = [980, 1200, 1400];
         int size = (int)banner, newsGap = Scale(20), bottom = Height;
-        while (size > 0 && Height - Scale(125) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
+        while (size > 0 && Height - (bar + Scale(125)) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
         int newsHeight = Scale(heights[size]);
-        bool news = News.Count > 0 && !AskingPin && Height - Scale(125) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
+        bool news = News.Count > 0 && !AskingPin && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
         News.Visible = news;
         if (news)
         {
@@ -291,11 +311,11 @@ internal sealed class DesktopView : UserControl
             News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
             bottom = News.Top - newsGap;
         }
-        int top = Math.Max(Scale(125), (bottom - cardHeight - helpRow) / 2 + Scale(12));
+        int top = Math.Max((bar + Scale(125)), (bottom - cardHeight - helpRow) / 2 + Scale(12));
         if (news) top = Math.Min(top, bottom - cardHeight - helpRow);
         card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
         Help.Visible = help;
-        if (helpColumn) Help.SetBounds(margin, Scale(125), column.Width, column.Height);
+        if (helpColumn) Help.SetBounds(margin, (bar + Scale(125)), column.Width, column.Height);
         else if (help)
         {
             var row = Help.Needed(false);

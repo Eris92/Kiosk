@@ -17,6 +17,14 @@ internal sealed record NewsItem
     /// <summary>Optional: shown only from / until this day (yyyy-MM-dd).</summary>
     public DateTime? From { get; init; }
     public DateTime? Until { get; init; }
+    /// <summary>"Pasek": a bar across the top of the desktop (e.g. "Nie działa system XXX, trwa naprawa") instead of a slide.</summary>
+    public string Kind { get; init; } = "";
+    /// <summary>The bar's colours: a name (red, orange, green…) or #RRGGBB; default red with white text.</summary>
+    public string Color { get; init; } = "";
+    public string TextColor { get; init; } = "";
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal bool IsBar => Kind.Equals("pasek", StringComparison.OrdinalIgnoreCase) || Kind.Equals("bar", StringComparison.OrdinalIgnoreCase);
 
     [System.Text.Json.Serialization.JsonIgnore] internal Image? Picture { get; init; }
 }
@@ -67,6 +75,21 @@ internal static class News
         return merged;
     }
 
+    /// <summary>"red", "#C62828" or "198,40,40"; anything else gives the fallback.</summary>
+    internal static System.Drawing.Color ParseColor(string text, System.Drawing.Color fallback)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return fallback;
+        try
+        {
+            var parts = text.Split(',');
+            if (parts.Length == 3) return System.Drawing.Color.FromArgb(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]));
+            var color = ColorTranslator.FromHtml(text);
+            return color.IsEmpty ? fallback : System.Drawing.Color.FromArgb(255, color);
+        }
+        catch (Exception) { return fallback; }
+    }
+
     /// <summary>A relative file (e.g. zglos-problem.html next to the json) becomes a file:// address for the browser.</summary>
     /// <remarks>"https:// wp.pl" and "wp.pl" both become https://wp.pl.</remarks>
     internal static string ResolveAction(string action, string folder)
@@ -102,6 +125,7 @@ internal sealed class NewsCarousel : Control
     internal int Count => items.Count;
     internal int Index => index;
     internal event Action<NewsItem>? ActionRequested;
+    internal void RequestAction(NewsItem item) => ActionRequested?.Invoke(item);
 
     internal NewsCarousel()
     {
@@ -264,5 +288,56 @@ internal sealed class NewsCarousel : Control
     {
         if (disposing) { animation.Dispose(); rotation.Dispose(); foreach (var item in items) item.Picture?.Dispose(); }
         base.Dispose(disposing);
+    }
+}
+
+/// <summary>A bar across the top of the desktop for something everyone must see now ("Nie działa system XXX, trwa naprawa").</summary>
+internal sealed class AlertBar : Control
+{
+    internal NewsItem Item { get; }
+    internal event Action<NewsItem>? ActionRequested;
+
+    internal AlertBar(NewsItem item)
+    {
+        Item = item;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+        BackColor = News.ParseColor(item.Color, Color.FromArgb(198, 40, 40));
+        ForeColor = News.ParseColor(item.TextColor, Color.White);
+        Cursor = item.Action.Length > 0 ? Cursors.Hand : Cursors.Default;
+    }
+
+    private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (Item.Action.Length > 0) ActionRequested?.Invoke(Item);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(BackColor);
+        using var bold = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+        using var regular = new Font("Segoe UI", 11.5f);
+        var flags = TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding;
+        string link = Item.Action.Length > 0 ? (Item.Button.Length > 0 ? Item.Button : "Szczegóły") + "  ›" : "";
+        string text = Item.Text.Length > 0 ? "  " + Item.Text : "";
+        int icon = S(22), gap = S(10);
+        int titleWidth = TextRenderer.MeasureText(g, Item.Title, bold, Size.Empty, flags).Width;
+        int textWidth = TextRenderer.MeasureText(g, text, regular, Size.Empty, flags).Width;
+        int linkWidth = link.Length > 0 ? TextRenderer.MeasureText(g, link, bold, Size.Empty, flags).Width + S(24) : 0;
+        int available = Width - S(32) - linkWidth;
+        int total = Math.Min(available, icon + gap + titleWidth + textWidth);
+        int x = Math.Max(S(16), (Width - linkWidth - total) / 2);
+        KioskIcons.Draw(g, new Rectangle(x, 0, icon, Height), "\uE7BA", null, ForeColor); // warning
+        x += icon + gap;
+        int right = Width - S(16) - linkWidth;
+        TextRenderer.DrawText(g, Item.Title, bold, new Rectangle(x, 0, Math.Max(0, Math.Min(titleWidth, right - x)), Height), ForeColor, flags | TextFormatFlags.EndEllipsis);
+        x += titleWidth;
+        if (text.Length > 0 && x < right)
+            TextRenderer.DrawText(g, text, regular, new Rectangle(x, 0, right - x, Height), ForeColor, flags | TextFormatFlags.EndEllipsis);
+        if (link.Length > 0)
+            TextRenderer.DrawText(g, link, bold, new Rectangle(Width - S(16) - linkWidth + S(24), 0, linkWidth - S(24), Height), ForeColor, flags);
     }
 }
