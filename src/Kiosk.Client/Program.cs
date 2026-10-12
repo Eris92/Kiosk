@@ -77,7 +77,10 @@ internal static class Program
                 Application.Run(form);
                 return result;
             }
-            var path = args.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "client.json") : Path.GetFullPath(args[0]);
+            // Without a path: the PC's shared configuration (Install-KioskShell.ps1) wins over the example next to the exe,
+            // so every account and every copy of the Kiosk on this PC shows the same Konfiguracja.
+            var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "client.json");
+            var path = args.Length > 0 ? Path.GetFullPath(args[0]) : File.Exists(shared) ? shared : Path.Combine(AppContext.BaseDirectory, "client.json");
             var config = Configuration.Load(path);
             KioskTheme.SetAccent(config.AccentColor);
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
