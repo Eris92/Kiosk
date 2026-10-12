@@ -32,6 +32,16 @@ internal sealed class BrowserView : UserControl
     private readonly bool windowsAccount;
     /// <summary>One page, no tabs (Szybka pomoc): links for a new window open in the same page.</summary>
     private readonly bool singlePage;
+    /// <summary>Someone used the page (click, touch, key, scroll); only for <see cref="singlePage"/>.</summary>
+    internal event Action? Activity;
+    private const string ActivityScript = """
+        (() => {
+          let last = 0;
+          const seen = () => { const now = Date.now(); if (now - last > 400) { last = now; try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { } } };
+          for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'input', 'scroll'])
+            addEventListener(type, seen, { capture: true, passive: true });
+        })();
+        """;
 
     private readonly TextBox address = new()
     {
@@ -241,6 +251,11 @@ internal sealed class BrowserView : UserControl
             e.Handled = true;
         };
         core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
+        if (singlePage)
+        {
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);
+            core.WebMessageReceived += (_, e) => { if (e.TryGetWebMessageAsString() == "kiosk-activity") Activity?.Invoke(); };
+        }
         core.NavigationStarting += (_, e) =>
         {
             // NavigateToString uses an internal data document (also used by the smoke test).

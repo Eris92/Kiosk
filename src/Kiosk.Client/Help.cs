@@ -124,6 +124,9 @@ internal sealed class HelpBrowserForm : Form
     private readonly string url;
     private readonly System.Windows.Forms.Timer limit = new() { Interval = 1000 };
     private readonly int idleSeconds;
+    private DateTime lastActivity = DateTime.UtcNow;
+    private readonly Label heading;
+    private readonly string headingText;
 
     internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60)
     {
@@ -141,9 +144,10 @@ internal sealed class HelpBrowserForm : Form
         policy.Trust(url);
         browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true) { Dock = DockStyle.Fill };
         var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
-        var heading = new Label
+        headingText = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane  ·  zamknie się po " + idleSeconds + " s bez aktywności";
+        heading = new Label
         {
-            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane  ·  zamknie się po " + idleSeconds + " s bez aktywności", AutoSize = false, Dock = DockStyle.Fill,
+            Text = headingText, AutoSize = false, Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
         };
         var close = new Button { Text = "Zamknij", Dock = DockStyle.Right, Width = 140 };
@@ -153,15 +157,27 @@ internal sealed class HelpBrowserForm : Form
         header.Controls.Add(close);
         Controls.Add(browser);
         Controls.Add(header);
-        // Nobody touches the mouse, keyboard or screen for the time set in Konfiguracja → Szybka pomoc: the window closes.
-        limit.Tick += (_, _) => { try { if (Native.IdleMilliseconds() >= idleSeconds * 1000L) Close(); } catch (Exception) { } };
+        // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
+        // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
+        browser.Activity += Touched;
+        header.MouseMove += (_, _) => Touched();
+        heading.MouseMove += (_, _) => Touched();
+        limit.Tick += (_, _) =>
+        {
+            var left = idleSeconds - (int)(DateTime.UtcNow - lastActivity).TotalSeconds;
+            if (left <= 0) { Close(); return; }
+            heading.Text = left <= 5 ? title + "  ·  brak aktywności: okno zamknie się za " + left + " s" : headingText;
+        };
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
     }
 
+    private void Touched() => lastActivity = DateTime.UtcNow;
+
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        Touched();
         limit.Start();
         try { await browser.InitializeAsync(url); }
         catch (Exception ex)
