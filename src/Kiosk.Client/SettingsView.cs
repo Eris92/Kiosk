@@ -324,7 +324,7 @@ internal sealed class SettingsView : UserControl
         scaled = true;
         float factor = ScaleOverride ?? DeviceDpi / 96f;
         if (Math.Abs(factor - 1) < 0.01) return;
-        Scale(new SizeF(factor, factor));
+        ScaleLayout(this, factor);
         foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands })
         {
             grid.ColumnHeadersHeight = (int)(34 * factor);
@@ -332,6 +332,39 @@ internal sealed class SettingsView : UserControl
             grid.RowHeadersWidth = (int)(28 * factor);
             foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
         }
+    }
+
+    /// <summary>
+    /// Enlarges sizes, margins and table columns/rows. Not Control.Scale: inside a TableLayoutPanel it collapsed the
+    /// fixed-width fields (number boxes, drop-downs) to nothing at 125 % / 150 %.
+    /// </summary>
+    private static void ScaleLayout(Control control, float factor)
+    {
+        int S(int value) => (int)Math.Round(value * factor);
+        Padding P(Padding p) => new(S(p.Left), S(p.Top), S(p.Right), S(p.Bottom));
+        control.Padding = P(control.Padding);
+        control.Margin = P(control.Margin);
+        if (control is TableLayoutPanel table)
+        {
+            foreach (ColumnStyle column in table.ColumnStyles) if (column.SizeType == SizeType.Absolute) column.Width *= factor;
+            foreach (RowStyle row in table.RowStyles) if (row.SizeType == SizeType.Absolute) row.Height *= factor;
+        }
+        if (control is ComboBox { DrawMode: DrawMode.OwnerDrawFixed } combo) combo.ItemHeight = S(combo.ItemHeight);
+        if (control is Label { MaximumSize.Width: > 0 } wrapping) wrapping.MaximumSize = new Size(S(wrapping.MaximumSize.Width), 0);
+        if (control.Dock == DockStyle.None && control is not TabPage && control is not SettingsView)
+            control.Location = new Point(S(control.Left), S(control.Top));
+        if (!control.AutoSize && control is not TabPage && control is not SettingsView)
+        {
+            switch (control.Dock)
+            {
+                case DockStyle.None:
+                    control.Size = new Size(S(control.Width), control is ComboBox or NumericUpDown or TextBox ? control.Height : S(control.Height));
+                    break;
+                case DockStyle.Top or DockStyle.Bottom: control.Height = S(control.Height); break;
+                case DockStyle.Left or DockStyle.Right: control.Width = S(control.Width); break;
+            }
+        }
+        foreach (Control child in control.Controls) ScaleLayout(child, factor);
     }
 
     private static DataGridView Grid() => new()
