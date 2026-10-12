@@ -242,6 +242,7 @@ internal sealed class DesktopView : UserControl
                 bars.Add(bar);
                 Controls.Add(bar);
                 bar.BringToFront();
+                if (IsHandleCreated) _ = bar.Handle; // Also while the desktop is hidden (an app in front), so it is ready when it shows.
             }
         }
         News.SetItems(items.Where(i => !i.IsBar).ToList());
