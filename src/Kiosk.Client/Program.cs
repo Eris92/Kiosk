@@ -82,7 +82,9 @@ internal static class Program
             // so every account and every copy of the Kiosk on this PC shows the same Konfiguracja.
             var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "client.json");
             var path = args.Length > 0 ? Path.GetFullPath(args[0]) : File.Exists(shared) ? shared : Path.Combine(AppContext.BaseDirectory, "client.json");
-            var config = Configuration.Load(path);
+            // Konfiguracja z serwera: the server's client.json and files are fetched first (CentralConfig).
+            var loaded = CentralConfig.Load(path);
+            var config = loaded.Effective;
             KioskTheme.SetAccent(config.AccentColor);
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
             // "Uruchom ponownie": the previous copy may still be closing — wait for it a moment.
@@ -92,7 +94,7 @@ internal static class Program
                 catch (AbandonedMutexException) { first = true; }
             }
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
-            Application.Run(new KioskForm(config, path));
+            Application.Run(new KioskForm(config, path, loaded));
             return 0;
         }
         catch (Exception ex)

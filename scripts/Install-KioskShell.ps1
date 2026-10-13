@@ -19,6 +19,8 @@ Shell Launcher profile in config/intune (this script does the same locally, e.g.
   * Sign-in screen: no last user name, fast user switching on (disconnected sessions keep running),
     Windows' own card-removal action off (the Kiosk disconnects the session itself).
   * -RequireSmartCard additionally forbids password sign-in for everyone. Test card sign-in first.
+  * -ConfigSource \\serwer\kiosk: Konfiguracja z serwera. Kiosk downloads that folder (client.json, logo, ...) at every start
+    and Konfiguracja on the PC becomes a preview. -ConfigSource "" switches back to the PC's own configuration.
 
 -Uninstall reverts the shell and sign-in settings (files are left in place).
 Supports -WhatIf. Nothing here bypasses execution policy; sign the script per your policy.
@@ -31,6 +33,7 @@ param(
     [string]$SourceConfig = (Join-Path $PSScriptRoot '..\config\client.json'),
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
+    [string]$ConfigSource,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -96,6 +99,7 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode Windo
     # An installed configuration keeps its mode (e.g. Kiosk: one shared account, people switch by card).
     if (-not $existing -or -not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force }
     $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
+    if ($PSBoundParameters.ContainsKey('ConfigSource')) { $json | Add-Member -NotePropertyName ConfigSource -NotePropertyValue $ConfigSource.Trim() -Force }
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
     # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null

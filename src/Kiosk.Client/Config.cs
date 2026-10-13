@@ -128,6 +128,9 @@ internal sealed record Config
     public bool RequireCredentialPrompt { get; init; } = true;
     public string AutoConnectRdpName { get; init; } = "";
     public int ConnectTimeoutSeconds { get; init; } = 60;
+    /// <summary>Konfiguracja z serwera: a folder or share whose client.json (and files) Kiosk downloads at every start.
+    /// Kept in the PC's own client.json; empty = this PC's configuration is edited here.</summary>
+    public string ConfigSource { get; init; } = "";
     public bool TestMode { get; init; } = true;
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
@@ -209,6 +212,8 @@ internal sealed record Config
                 throw new InvalidDataException("Strona dla ekranu " + s.Screen + " musi być adresem HTTP/HTTPS.");
             if (s.Url.Length == 0 && s.Path.Length == 0) throw new InvalidDataException("Ekran " + s.Screen + " potrzebuje strony albo aplikacji.");
         }
+        if (ConfigSource == null || ConfigSource.Length > 0 && !Path.IsPathFullyQualified(ConfigSource))
+            throw new InvalidDataException("Konfigurację z serwera podaj jako pełną ścieżkę folderu, np. \\\\serwer\\kiosk albo C:\\KioskCentral.");
         if (NewsFolder == null || NewsFolder.Length > 0 && !Path.IsPathFullyQualified(NewsFolder))
             throw new InvalidDataException("Folder komunikatów podaj jako pełną ścieżkę, np. \\\\serwer\\kiosk\\komunikaty albo C:\\ProgramData\\Kiosk\\news.");
         foreach (var help in HelpActions ?? throw new InvalidDataException("Lista Szybkiej pomocy nie może być null."))

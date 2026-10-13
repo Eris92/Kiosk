@@ -31,6 +31,7 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
+    private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
@@ -416,6 +417,16 @@ internal sealed class SettingsView : UserControl
         updatePanel.Controls.Add(autoUpdate);
         updatePanel.Controls.Add(updateButton);
         updatePanel.Controls.Add(updateStatus);
+        updatePanel.Controls.Add(new Label { Text = "Konfiguracja z serwera", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 24, 4, 4) });
+        updatePanel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 8),
+            Text = "Folder lub udział z plikiem client.json (i np. logo, kiosk-news.json). Przy każdym uruchomieniu Kiosk pobiera cały folder i stosuje go na tym komputerze; " +
+                   "ścieżki w client.json mogą być względne, np. \"BrandLogo\": \"logo.jpg\". Bez połączenia używa ostatnio pobranej kopii. " +
+                   "Tutaj Konfiguracja jest wtedy tylko podglądem – zmienia się ją na serwerze. Puste = konfiguracja tego komputera."
+        });
+        configSource.Text = config.ConfigSource;
+        updatePanel.Controls.Add(configSource);
         updateTab.Controls.Add(updatePanel);
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
@@ -447,8 +458,40 @@ internal sealed class SettingsView : UserControl
         void MarkSelected() { foreach (NavItem item in nav.Controls) item.Selected = item.Text == tabs.SelectedTab?.Text; }
         tabs.SelectedIndexChanged += (_, _) => MarkSelected();
         MarkSelected();
-        Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(header);
+        var banner = new Label
+        {
+            Dock = DockStyle.Top, Height = 64, Padding = new Padding(24, 6, 24, 6), ForeColor = KioskTheme.Text, BackColor = Card, Visible = Central,
+            Text = "Podgląd – konfiguracja z serwera " + config.ConfigSource + ". Zmiany wprowadza się w plikach na serwerze; " +
+                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera)."
+        };
+        if (Central)
+        {
+            foreach (TabPage page in tabs.TabPages) Preview(page);
+            autoUpdate.Enabled = false;
+            configSource.ReadOnly = false;
+            updateButton.Enabled = true;
+        }
+        Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
+    }
+
+    /// <summary>The configuration comes from a server (ConfigSource): everything here is a preview.</summary>
+    private bool Central => original.ConfigSource.Length > 0;
+
+    /// <summary>Read-only view of a section: values stay visible (and scrollable), nothing can be changed.</summary>
+    private static void Preview(Control root)
+    {
+        foreach (Control c in root.Controls)
+        {
+            switch (c)
+            {
+                case TextBoxBase box: box.ReadOnly = true; break;
+                case NumericUpDown number: number.ReadOnly = true; number.Increment = 0; break;
+                case DataGridView grid: grid.ReadOnly = true; grid.AllowUserToAddRows = false; grid.AllowUserToDeleteRows = false; break;
+                case CheckBox or ComboBox or Button: c.Enabled = false; break;
+            }
+            Preview(c);
+        }
     }
 
     /// <summary>Dark Windows 11 colours for everything inside (inputs, lists, buttons, help text).</summary>
@@ -743,6 +786,7 @@ internal sealed class SettingsView : UserControl
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
+            ConfigSource = configSource.Text.Trim().Trim('"'),
             ShowHelp = showHelp.Checked,
             HelpCloseSeconds = (int)helpCloseSeconds.Value,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
@@ -774,6 +818,14 @@ internal sealed class SettingsView : UserControl
     {
         try
         {
+            if (Central)
+            {
+                // Only the server's address can change here; the PC's own file keeps everything else.
+                var source = original with { ConfigSource = configSource.Text.Trim().Trim('"') };
+                source.Validate();
+                SaveRequested?.Invoke(source);
+                return;
+            }
             var result = BuildConfig();
             if (keepsAccess != null && !keepsAccess(result))
                 throw new InvalidDataException("Po zapisie nie miałbyś dostępu do Konfiguracji. Dodaj swoją kartę na liście administratorów.");

@@ -81,10 +81,15 @@ internal sealed class KioskForm : Form
 
     private bool CanUseApps => current is { Locked: false };
 
-    internal KioskForm(Config config, string? configPath = null)
+    /// <summary>The PC's own client.json when the configuration comes from a server (it keeps ConfigSource).</summary>
+    private Config? localConfig;
+
+    internal KioskForm(Config config, string? configPath = null, CentralConfig.Loaded? loaded = null)
     {
         this.config = config;
         this.configPath = configPath;
+        localConfig = loaded?.Local;
+        notice = loaded?.Problem;
         identifyCard = IdentifyPresentCard;
         cardPresent = () => reader.Snapshot(this.config.ReaderName) != null;
         Text = "Kiosk";
@@ -1678,14 +1683,30 @@ internal sealed class KioskForm : Form
         if (current != null && CanUseApps && IsAdmin(current)) { OpenSettings(); return; }
         AdminSettings.Open(this, configPath, () =>
         {
-            try { config = Configuration.Load(configPath); }
-            catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return; }
-            KioskTheme.SetAccent(config.AccentColor);
+            if (!ReloadConfig()) return;
             Invalidate(true);
             StartIdleScreens();
             RefreshChrome();
         }, () => _ = UpdateFromSettingsAsync());
     }
+
+    /// <summary>Reads the saved configuration again (and the server's, when it has a ConfigSource).</summary>
+    private bool ReloadConfig()
+    {
+        try
+        {
+            var loaded = CentralConfig.Load(configPath!);
+            config = loaded.Effective;
+            localConfig = loaded.Local;
+            notice = loaded.Problem;
+        }
+        catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return false; }
+        KioskTheme.SetAccent(config.AccentColor);
+        return true;
+    }
+
+    /// <summary>From a server's configuration only its address (ConfigSource) is saved into the PC's own file.</summary>
+    private Config ToSave(Config edited) => localConfig is { ConfigSource.Length: > 0 } local ? local with { ConfigSource = edited.ConfigSource } : edited;
 
     private bool updating;
 
@@ -1753,9 +1774,8 @@ internal sealed class KioskForm : Form
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, updated);
-            config = updated;
-            KioskTheme.SetAccent(updated.AccentColor);
+            Configuration.Save(configPath, ToSave(updated));
+            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Invalidate(true);
             Audit.Write("settings_saved");
             StartIdleScreens();

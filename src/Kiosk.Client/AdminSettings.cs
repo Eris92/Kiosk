@@ -72,7 +72,8 @@ internal static class AdminSettings
     /// <summary>Kiosk.Client.exe --settings &lt;configuration&gt; (elevated): exit code 0 = saved, 1 = cancelled, 2 = update.</summary>
     internal static int Run(string configPath)
     {
-        var config = Configuration.Load(configPath);
+        var loaded = CentralConfig.Load(configPath);
+        var config = loaded.Effective;
         KioskTheme.SetAccent(config.AccentColor);
         var result = 1;
         using var form = new Form
@@ -83,7 +84,8 @@ internal static class AdminSettings
         var view = new SettingsView(config) { UpdateByKiosk = true };
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, updated);
+            // From a server's configuration only its address is saved here; the rest is edited on the server.
+            Configuration.Save(configPath, loaded.Central ? loaded.Local with { ConfigSource = updated.ConfigSource } : updated);
             Audit.Write("settings_saved", "administrator");
             result = 0;
             form.Close();
