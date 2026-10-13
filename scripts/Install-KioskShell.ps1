@@ -21,6 +21,8 @@ Shell Launcher profile in config/intune (this script does the same locally, e.g.
   * -RequireSmartCard additionally forbids password sign-in for everyone. Test card sign-in first.
   * -ConfigSource \\serwer\kiosk: Konfiguracja z serwera. Kiosk downloads that folder (client.json, logo, ...) at every start
     and Konfiguracja on the PC becomes a preview. -ConfigSource "" switches back to the PC's own configuration.
+    The Kiosk Card service reads the share as the computer account; -ConfigSourceCredential (Get-Credential) saves
+    an account for it instead (see Set-KioskConfigSource.ps1).
 
 -Uninstall reverts the shell and sign-in settings (files are left in place).
 Supports -WhatIf. Nothing here bypasses execution policy; sign the script per your policy.
@@ -34,6 +36,7 @@ param(
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
     [string]$ConfigSource,
+    [pscredential]$ConfigSourceCredential,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -127,6 +130,9 @@ Set-Value $system 'HideFastUserSwitching' 0            # Disconnected sessions s
 Set-Value $winlogon 'ScRemoveOption' '0' 'String'      # Windows does nothing on card removal; the Kiosk disconnects.
 if ($RequireSmartCard) { Set-Value $system 'scforceoption' 1 }   # Card (or Windows Hello for Business) only.
 Set-Service -Name SCardSvr -StartupType Automatic -WhatIf:$WhatIfPreference
+
+# Konfiguracja z serwera: an account for the share (domain PCs read it as the computer account, without one).
+if ($ConfigSourceCredential) { & (Join-Path $PSScriptRoot 'Set-KioskConfigSource.ps1') -ConfigPath $ConfigPath -Credential $ConfigSourceCredential }
 
 Write-Output "Done. Kiosk shell: $shellCommand"
 Write-Output 'Sign out and sign in with a card as a non-administrator account to test.'
