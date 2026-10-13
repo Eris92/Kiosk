@@ -12,6 +12,7 @@ internal static class AdminSettings
 {
     internal const string Argument = "--settings";
     private const int HotkeyId = 0x4B53;            // "KS"
+    private const int UpdateHotkeyId = 0x4B55;      // "KU"
     private const int WM_HOTKEY = 0x0312;
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
 
@@ -21,9 +22,13 @@ internal static class AdminSettings
         // Fails when another program in this session already owns Ctrl+Alt+K (graphics or keyboard utilities).
         if (!RegisterHotKey(window, HotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.K))
             Audit.Write("admin_hotkey_unavailable", "Win32 " + Marshal.GetLastWin32Error());
+        // Ctrl+Alt+U: anyone may install the latest official release (the Kiosk Card service copies it, no administrator).
+        if (!RegisterHotKey(window, UpdateHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.U))
+            Audit.Write("update_hotkey_unavailable", "Win32 " + Marshal.GetLastWin32Error());
     }
-    internal static void UnregisterHotkey(IntPtr window) => UnregisterHotKey(window, HotkeyId);
+    internal static void UnregisterHotkey(IntPtr window) { UnregisterHotKey(window, HotkeyId); UnregisterHotKey(window, UpdateHotkeyId); }
     internal static bool IsHotkey(Message m) => m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HotkeyId;
+    internal static bool IsUpdateHotkey(Message m) => m.Msg == WM_HOTKEY && m.WParam.ToInt32() == UpdateHotkeyId;
 
     /// <summary>Exit code of the settings window when Aktualizacja was pressed: the Kiosk that owns the files installs it.</summary>
     internal const int UpdateExitCode = 2;

@@ -1667,6 +1667,7 @@ internal sealed class KioskForm : Form
     protected override void WndProc(ref Message m)
     {
         if (AdminSettings.IsHotkey(m)) { OpenSettingsAsAdministrator(); return; }
+        if (AdminSettings.IsUpdateHotkey(m)) { _ = UpdateByHotkeyAsync(); return; }
         base.WndProc(ref m);
     }
 
@@ -1684,6 +1685,31 @@ internal sealed class KioskForm : Form
             StartIdleScreens();
             RefreshChrome();
         }, () => _ = UpdateFromSettingsAsync());
+    }
+
+    private bool updating;
+
+    /// <summary>Ctrl+Alt+U, for anyone: the latest official release when it is newer (installed by the Kiosk Card service).</summary>
+    private async Task UpdateByHotkeyAsync()
+    {
+        if (updating) return;
+        updating = true;
+        try
+        {
+            Audit.Write("update_hotkey");
+            notice = "Sprawdzam najnowszą wersję…";
+            RefreshChrome();
+            var release = await Updater.LatestAsync();
+            if (release.Tag == Updater.CurrentVersion)
+            {
+                notice = "Masz najnowszą wersję (" + release.Tag + ").";
+                RefreshChrome();
+                return;
+            }
+            await UpdateFromSettingsAsync();
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+        finally { updating = false; }
     }
 
     /// <summary>"Sprawdź i zaktualizuj" in the administrator's settings window: this Kiosk downloads the release and installs it.</summary>
