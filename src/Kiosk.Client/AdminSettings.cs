@@ -75,7 +75,7 @@ internal static class AdminSettings
             Text = "Konfiguracja Kiosku (administrator)", FormBorderStyle = FormBorderStyle.None,
             WindowState = FormWindowState.Maximized, TopMost = true, ShowInTaskbar = false
         };
-        var view = new SettingsView(config);
+        var view = new SettingsView(config) { UpdateByKiosk = true };
         view.SaveRequested += updated =>
         {
             Configuration.Save(configPath, updated);

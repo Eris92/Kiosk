@@ -67,6 +67,8 @@ internal sealed class SettingsView : UserControl
     internal event Action? IdentifyScreensRequested;
     /// <summary>A new version is downloaded (folder with its Kiosk.Client.exe); Kiosk closes and the new copy installs itself.</summary>
     internal event Action<string>? UpdateRequested;
+    /// <summary>The administrator's window: the running Kiosk downloads and installs, so this window does not download too.</summary>
+    internal bool UpdateByKiosk { get; init; }
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
@@ -399,6 +401,7 @@ internal sealed class SettingsView : UserControl
                     updateStatus.Text = "Masz najnowszą wersję (" + release.Tag + ").";
                     return;
                 }
+                if (UpdateByKiosk) { updateStatus.Text = "Kiosk pobiera i instaluje " + release.Tag + "…"; UpdateRequested?.Invoke(""); return; }
                 updateStatus.Text = "Pobieram " + release.Tag + "…";
                 var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
                     updateStatus.Text = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Rozpakowuję " + release.Tag + "…"));

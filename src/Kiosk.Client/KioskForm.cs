@@ -1076,6 +1076,7 @@ internal sealed class KioskForm : Form
     {
         notice = text;
         if (current != null) current.Notice = text;
+        RefreshChrome();
     }
 
     /// <summary>Szybka pomoc → Zmień PIN karty: current PIN, then the new one twice, all on the lock card.</summary>
