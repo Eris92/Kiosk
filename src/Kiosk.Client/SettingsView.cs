@@ -400,7 +400,8 @@ internal sealed class SettingsView : UserControl
                     return;
                 }
                 updateStatus.Text = "Pobieram " + release.Tag + "…";
-                var folder = await Updater.DownloadAsync(release);
+                var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
+                    updateStatus.Text = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Rozpakowuję " + release.Tag + "…"));
                 updateStatus.Text = "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
                 UpdateRequested?.Invoke(folder);
             }

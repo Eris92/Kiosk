@@ -55,18 +55,37 @@ internal static class Updater
     }
 
     /// <summary>Downloads and unpacks the release; returns the folder with the new Kiosk.Client.exe.</summary>
-    internal static async Task<string> DownloadAsync(Release release)
+    internal static async Task<string> DownloadAsync(Release release, IProgress<int>? percent = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "Kiosk-update", release.Tag);
         if (Directory.Exists(root)) Directory.Delete(root, true);
         Directory.CreateDirectory(root);
         var zip = Path.Combine(root, Asset);
         using (var client = Client())
-        await using (var download = await client.GetStreamAsync(release.DownloadUrl))
-        await using (var file = File.Create(zip))
-            await download.CopyToAsync(file);
+        using (var response = await client.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead))
+        {
+            response.EnsureSuccessStatusCode();
+            var total = response.Content.Headers.ContentLength ?? 0;
+            await using var download = await response.Content.ReadAsStreamAsync();
+            await using var file = File.Create(zip);
+            var buffer = new byte[81920];
+            long done = 0;
+            int read, shown = -1;
+            // A stalled connection fails after a minute instead of leaving "Pobieram…" on screen for good.
+            using var stalled = new CancellationTokenSource();
+            while (true)
+            {
+                stalled.CancelAfter(TimeSpan.FromSeconds(60));
+                try { read = await download.ReadAsync(buffer, stalled.Token); }
+                catch (OperationCanceledException) { throw new TimeoutException("Pobieranie stoi od minuty, sprawdź połączenie z internetem."); }
+                if (read == 0) break;
+                await file.WriteAsync(buffer.AsMemory(0, read));
+                done += read;
+                if (total > 0 && (int)(done * 100 / total) is var p && p != shown) percent?.Report(shown = p);
+            }
+        }
         var extracted = Path.Combine(root, "package");
-        ZipFile.ExtractToDirectory(zip, extracted);
+        await Task.Run(() => ZipFile.ExtractToDirectory(zip, extracted)); // Off the window's thread: unpacking takes a while.
         var exe = Path.Combine(extracted, "out", "client", "Kiosk.Client.exe");
         if (!File.Exists(exe)) throw new InvalidDataException("W paczce nie ma out\\client\\Kiosk.Client.exe.");
         return Path.GetDirectoryName(exe)!;

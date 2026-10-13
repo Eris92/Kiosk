@@ -1108,7 +1108,7 @@ internal sealed class KioskForm : Form
     private void ForgetCard()
     {
         if (!CardForHelp(out _)) return;
-        var id = identifyCard()?.Id;
+        var id = (identifyCard() ?? UncertifiedCard()).Id;
         if (id == null) { ShowHelpResult("Nie udało się odczytać karty."); return; }
         // While the question is open the card and idle screens wait (taking the card away must not switch the desktop under it).
         verifying = true;
@@ -1122,7 +1122,15 @@ internal sealed class KioskForm : Form
         if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
         CardVault.Forget(id);
         Audit.Write("card_forgotten");
-        ShowHelpResult("Karta zostanie skonfigurowana od nowa przy następnym logowaniu: podasz login, hasło i PIN.");
+        // The account stays signed in for an open session of this card: close it, so the next sign-in really asks again.
+        if (sessions.TryGetValue(id, out var session) && (!session.HasWork || ConfirmEnd([session])))
+        {
+            bool wasCurrent = session == current;
+            CloseSession(session, "card_forgotten");
+            if (wasCurrent) requireRemoval = cardKey != null;
+            RefreshChrome();
+        }
+        ShowHelpResult("Kiosk zapomniał konto tej karty. Wyjmij kartę i przyłóż ją ponownie: podasz login, hasło i PIN.");
     }
 
     /// <summary>
@@ -1143,7 +1151,7 @@ internal sealed class KioskForm : Form
         }
         finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
         if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
-        var id = identifyCard()?.Id;
+        var id = (identifyCard() ?? UncertifiedCard()).Id;
         verifying = true;
         try
         {
