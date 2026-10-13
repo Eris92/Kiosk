@@ -57,9 +57,18 @@ internal static class Updater
     /// <summary>Downloads and unpacks the release; returns the folder with the new Kiosk.Client.exe.</summary>
     internal static async Task<string> DownloadAsync(Release release, IProgress<int>? percent = null)
     {
-        var root = Path.Combine(Path.GetTempPath(), "Kiosk-update", release.Tag);
-        if (Directory.Exists(root)) Directory.Delete(root, true);
+        // Its own folder per download: the update at start and "Sprawdź i zaktualizuj" may run at the same time
+        // (one folder for both ended in "Kiosk-win-x64.zip is being used by another process").
+        var parent = Path.Combine(Path.GetTempPath(), "Kiosk-update");
+        var root = Path.Combine(parent, release.Tag + "-" + Environment.ProcessId + "-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(root);
+        try
+        {
+            foreach (var old in Directory.EnumerateDirectories(parent, release.Tag + "*"))
+                if (old != root && Directory.GetLastWriteTimeUtc(old) < DateTime.UtcNow.AddHours(-1))
+                    try { Directory.Delete(old, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        catch (IOException) { }
         var zip = Path.Combine(root, Asset);
         using (var client = Client())
         using (var response = await client.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead))
