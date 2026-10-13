@@ -1667,7 +1667,13 @@ internal sealed class KioskForm : Form
         try
         {
             var release = await Updater.LatestAsync();
-            var folder = await Updater.DownloadAsync(release);
+            notice = "Pobieram " + release.Tag + "…";
+            RefreshChrome();
+            var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
+            {
+                notice = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
+                RefreshChrome();
+            }));
             InstallUpdate(folder);
         }
         catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
