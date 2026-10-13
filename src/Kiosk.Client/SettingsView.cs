@@ -27,7 +27,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
-    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, Items = { "Kiosk: jedno konto Windows, osoby przełącza Kiosk kartą", "Powłoka Windows: każdy loguje się do Windows kartą/Hello (pełne SSO)" } };
+    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Kiosk: karta + PIN w Kiosku, aplikacje i przeglądarka jako ta osoba (SSO)", "Powłoka Windows: bez karty w Kiosku, liczy się konto zalogowane do Windows" } };
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
