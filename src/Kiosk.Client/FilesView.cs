@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 
 namespace Kiosk.Client;
@@ -60,7 +61,7 @@ internal sealed class FilesView : UserControl
         Tool("Nowy folder", NewFolder, 120);
         Tool("Kopiuj", () => Remember(move: false), 90);
         Tool("Wytnij", () => Remember(move: true), 90);
-        Tool("Wklej", Paste, 90);
+        Tool("Wklej", () => Paste(), 90);
         Tool("Zmień nazwę", () => { if (list.SelectedItems.Count == 1) list.SelectedItems[0].BeginEdit(); }, 130);
         Tool("Usuń", Delete, 80);
 
@@ -82,6 +83,7 @@ internal sealed class FilesView : UserControl
             else if (e.Control && e.KeyCode == Keys.V) Paste();
             else if (e.KeyCode == Keys.F5) Navigate(folder, remember: false);
         };
+        list.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowMenu(e.Location); };
         places.BackColor = KioskTheme.Taskbar; places.ForeColor = KioskTheme.Text;
         places.SelectedIndexChanged += (_, _) => { if (places.SelectedIndex >= 0) Navigate(placeList[places.SelectedIndex].Path); };
         status.BackColor = KioskTheme.Taskbar; status.ForeColor = KioskTheme.Muted;
@@ -168,6 +170,124 @@ internal sealed class FilesView : UserControl
         catch (Exception ex) { Problem(ex); }
     }
 
+    /// <summary>Right click: what can be done with the clicked files, or with this folder when nothing is under the mouse.</summary>
+    private void ShowMenu(Point point)
+    {
+        var hit = list.GetItemAt(point.X, point.Y);
+        if (hit == null) list.SelectedItems.Clear();
+        else if (!hit.Selected) { list.SelectedItems.Clear(); hit.Selected = true; }
+        var paths = Selected();
+        var menu = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
+        void Item(string text, Action action, bool enabled = true, string keys = "")
+        {
+            var item = new ToolStripMenuItem(text) { Enabled = enabled, ShortcutKeyDisplayString = keys };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+        if (paths.Length > 0)
+        {
+            Item("Otwórz", OpenSelected, keys: "Enter");
+            menu.Items.Add(new ToolStripSeparator());
+            Item("Kopiuj", () => Remember(move: false), keys: "Ctrl+C");
+            Item("Wytnij", () => Remember(move: true), keys: "Ctrl+X");
+            if (paths.Length == 1 && As(() => Directory.Exists(paths[0])))
+                Item("Wklej do tego folderu", () => Paste(paths[0]), clipboard != null);
+            Item("Zmień nazwę", () => list.SelectedItems[0].BeginEdit(), paths.Length == 1, "F2");
+            Item("Usuń", Delete, keys: "Delete");
+            menu.Items.Add(new ToolStripSeparator());
+            Item("Kompresuj do pliku ZIP", () => Zip(paths));
+            if (paths.Length == 1 && string.Equals(Path.GetExtension(paths[0]), ".zip", StringComparison.OrdinalIgnoreCase))
+                Item("Wyodrębnij tutaj", () => Unzip(paths[0]));
+            Item("Kopiuj ścieżkę", () => CopyText(string.Join(Environment.NewLine, paths)));
+            Item("Właściwości", () => Properties(paths));
+        }
+        else
+        {
+            Item("Wklej", () => Paste(), clipboard != null, "Ctrl+V");
+            Item("Nowy folder", NewFolder);
+            Item("Odśwież", () => Navigate(folder, remember: false), keys: "F5");
+            menu.Items.Add(new ToolStripSeparator());
+            Item("Kopiuj ścieżkę folderu", () => CopyText(folder));
+            Item("Właściwości folderu", () => Properties([folder]));
+        }
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        menu.Show(list, point);
+    }
+
+    private void CopyText(string text)
+    {
+        try { Clipboard.SetText(text); status.Text = "Skopiowano: " + text; }
+        catch (Exception ex) { Problem(ex); }
+    }
+
+    private void Zip(string[] paths)
+    {
+        try
+        {
+            var name = paths.Length == 1 ? Path.GetFileNameWithoutExtension(paths[0].TrimEnd('\\')) : Path.GetFileName(folder.TrimEnd('\\'));
+            var target = Free(Path.Combine(folder, (name.Length > 0 ? name : "Archiwum") + ".zip"));
+            As<object?>(() =>
+            {
+                using var zip = System.IO.Compression.ZipFile.Open(target, System.IO.Compression.ZipArchiveMode.Create);
+                foreach (var path in paths)
+                {
+                    if (File.Exists(path)) { zip.CreateEntryFromFile(path, Path.GetFileName(path)); continue; }
+                    var root = Path.GetDirectoryName(path.TrimEnd('\\'))!;
+                    foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                        zip.CreateEntryFromFile(file, Path.GetRelativePath(root, file));
+                }
+                return null;
+            });
+            Navigate(folder, remember: false);
+            status.Text = "Utworzono " + Path.GetFileName(target);
+        }
+        catch (Exception ex) { Problem(ex); }
+    }
+
+    private void Unzip(string path)
+    {
+        try
+        {
+            var target = Free(Path.Combine(folder, Path.GetFileNameWithoutExtension(path)));
+            As<object?>(() => { System.IO.Compression.ZipFile.ExtractToDirectory(path, target); return null; });
+            Navigate(folder, remember: false);
+            status.Text = "Wyodrębniono do " + Path.GetFileName(target);
+        }
+        catch (Exception ex) { Problem(ex); }
+    }
+
+    private void Properties(string[] paths)
+    {
+        try
+        {
+            var text = As(() =>
+            {
+                if (paths.Length > 1)
+                {
+                    long total = paths.Where(File.Exists).Sum(p => new FileInfo(p).Length);
+                    return paths.Length + " elementów\nRozmiar plików: " + Size(total) + "\nLokalizacja: " + folder;
+                }
+                var path = paths[0];
+                FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+                string size;
+                if (info is FileInfo f) size = Size(f.Length);
+                else
+                {
+                    // A folder's size: its files, as far as this account may read them.
+                    long bytes = 0; int files = 0;
+                    foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+                    { try { bytes += new FileInfo(file).Length; files++; } catch (IOException) { } }
+                    size = Size(bytes) + " (" + files + " plików)";
+                }
+                return "Nazwa: " + info.Name + "\nTyp: " + (info is DirectoryInfo ? "Folder" : TypeName(path)) + "\nLokalizacja: " + Path.GetDirectoryName(path.TrimEnd('\\')) +
+                    "\nRozmiar: " + size + "\nUtworzono: " + info.CreationTime.ToString("yyyy-MM-dd HH:mm") + "\nZmodyfikowano: " + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") +
+                    ((info.Attributes & FileAttributes.ReadOnly) != 0 ? "\nTylko do odczytu" : "");
+            });
+            MessageBox.Show(this, text, "Właściwości", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) { Problem(ex); }
+    }
+
     private void GoBack() { if (back.Count > 0) Navigate(back.Pop(), remember: false); }
 
     private void GoUp()
@@ -238,9 +358,10 @@ internal sealed class FilesView : UserControl
         status.Text = "W schowku: " + paths.Length + (move ? " (wytnij)" : " (kopiuj)") + " – wybierz folder i „Wklej”.";
     }
 
-    private void Paste()
+    private void Paste(string? into = null)
     {
         if (clipboard is not { } c) return;
+        var folder = into ?? this.folder;
         try
         {
             As<object?>(() =>
@@ -262,7 +383,7 @@ internal sealed class FilesView : UserControl
             if (c.Move) clipboard = null;
         }
         catch (Exception ex) { Problem(ex); }
-        Navigate(folder, remember: false);
+        Navigate(this.folder, remember: false);
     }
 
     /// <summary>"Raport.docx" → "Raport (2).docx" when the name is taken.</summary>
