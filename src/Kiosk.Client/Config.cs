@@ -134,6 +134,8 @@ internal sealed record Config
     /// <summary>Konfiguracja z serwera: a folder or share whose client.json (and files) Kiosk downloads at every start.
     /// Kept in the PC's own client.json; empty = this PC's configuration is edited here.</summary>
     public string ConfigSource { get; init; } = "";
+    /// <summary>Pages the Kiosk clicks through or signs in to by itself (cookies, sign-in with a shared account).</summary>
+    public PageAction[] PageActions { get; init; } = [];
     public bool TestMode { get; init; } = true;
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
@@ -156,6 +158,7 @@ internal sealed record Config
             EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
             IdleScreens = IdleScreens.Where(s => s.Enabled).ToArray(),
             Commands = Commands.Where(c => c.Enabled).ToArray(),
+            PageActions = PageActions.Where(a => a.Enabled).ToArray(),
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
             HelpActions = ShowHelp ? HelpActions.Where(h => h.Enabled).ToArray() : [],
         };
@@ -256,6 +259,9 @@ internal sealed record Config
                 app.Arguments == null || app.WorkingDirectory == null ||
                 (app.WorkingDirectory.Length > 0 && !Path.IsPathFullyQualified(app.WorkingDirectory))))
                 throw new InvalidDataException("Aplikacja wymaga nazwy i pełnej ścieżki do pliku EXE.");
+        if (PageActions == null || PageActions.Any(a => a == null || a.Url == null || a.Click == null || a.Account == null || a.Submit == null || a.Url.Trim().Length == 0))
+            throw new InvalidDataException("Każda akcja strony potrzebuje adresu (np. portal.firma.pl).");
+        if (Applications.Any(a => a.RunAs == null)) throw new InvalidDataException("Konto aplikacji nie może być null.");
         if (Applications.Select(a => a.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != Applications.Length)
             throw new InvalidDataException("Nazwy aplikacji muszą być unikalne.");
         if (Applications.Count(a => a.IsBuiltInNotes) > 1) throw new InvalidDataException("Wbudowany Notatnik może być na liście tylko raz.");

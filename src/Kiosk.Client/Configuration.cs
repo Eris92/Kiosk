@@ -16,6 +16,9 @@ internal sealed record ApplicationEntry
     public string Path { get; init; } = "";
     public string Arguments { get; init; } = "";
     public string WorkingDirectory { get; init; } = "";
+    /// <summary>A shared account (accounts.kiosk) for the network, like "runas /netonly": the program runs on this PC as
+    /// usual and opens shares and servers (e.g. its own EXE on a file server) as that account. Empty = as usual.</summary>
+    public string RunAs { get; init; } = "";
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
 
@@ -33,6 +36,34 @@ internal sealed record ApplicationEntry
     internal static ApplicationEntry Files => new() { Name = "Pliki", Path = BuiltInFiles };
     internal bool IsBuiltInFiles => string.Equals(Path, BuiltInFiles, StringComparison.OrdinalIgnoreCase);
     internal bool IsBuiltIn => IsBuiltInNotes || IsBuiltInBrowser || IsBuiltInFiles;
+}
+
+/// <summary>
+/// What the Kiosk does on a page by itself (start pages, screens, the Kiosk browser): clicks buttons by their text
+/// (e.g. accepting cookies) and signs in with a shared account (accounts.kiosk): login, password, the sign-in button.
+/// </summary>
+internal sealed record PageAction
+{
+    /// <summary>The start of the address (https://portal.firma.pl/login) or just a host (portal.firma.pl).</summary>
+    public string Url { get; init; } = "";
+    /// <summary>Texts of buttons or links to click when they appear, separated by ";" (e.g. "Akceptuj wszystkie;Accept all").</summary>
+    public string Click { get; init; } = "";
+    /// <summary>A shared account (accounts.kiosk) whose login and password are filled in. Empty = no sign-in.</summary>
+    public string Account { get; init; } = "";
+    /// <summary>Text of the sign-in button; empty = the form's own submit button.</summary>
+    public string Submit { get; init; } = "";
+    /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
+    public bool Enabled { get; init; } = true;
+
+    internal bool Matches(string url)
+    {
+        if (Url.Trim().Length == 0 || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        var rule = Url.Trim();
+        if (rule.Contains("://")) return url.StartsWith(rule, StringComparison.OrdinalIgnoreCase);
+        rule = rule.TrimEnd('/').ToLowerInvariant();
+        var host = uri.Host.ToLowerInvariant();
+        return host == rule || host.EndsWith("." + rule, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>
@@ -86,21 +117,21 @@ internal static class Configuration
     /// Saves the configuration. The shared configuration folder is read-only for users (Install-KioskShell.ps1), so in
     /// a person's own Windows session Windows asks for an administrator, and only that one copy step runs elevated.
     /// </summary>
-    /// <param name="account">Konfiguracja z serwera: the share's account to save or remove (null = unchanged), in the same step.</param>
-    internal static void Save(string path, Config config, CentralConfig.AccountChange? account = null)
+    /// <param name="secrets">The share's account and the shared accounts' key to save or remove (null = unchanged), in the same step.</param>
+    internal static void Save(string path, Config config, CentralConfig.Secrets? secrets = null)
     {
         config.Validate();
         var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
         try
         {
             Replace(path, json);
-            if (account != null) CentralConfig.WriteAccount(account);
+            if (secrets is { Any: true }) CentralConfig.WriteSecrets(secrets);
             return;
         }
         catch (UnauthorizedAccessException) { }
         var staged = Path.Combine(Path.GetTempPath(), "Kiosk-config-" + Guid.NewGuid().ToString("N") + ".json");
         File.WriteAllText(staged, json);
-        var stagedAccount = account == null ? null : CentralConfig.StageAccount(account);
+        var stagedAccount = secrets is { Any: true } ? CentralConfig.StageSecrets(secrets) : null;
         try
         {
             using var copy = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
@@ -125,7 +156,7 @@ internal static class Configuration
         {
             Load(staged);   // validates
             Replace(path, File.ReadAllText(staged));
-            if (stagedAccount != null) CentralConfig.WriteAccount(CentralConfig.ReadStaged(stagedAccount));
+            if (stagedAccount != null) CentralConfig.WriteSecrets(CentralConfig.ReadStaged(stagedAccount));
             return 0;
         }
         catch (Exception ex) { Audit.Write("settings_save_failed", ex.Message); return 2; }

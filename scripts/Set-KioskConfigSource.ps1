@@ -13,6 +13,7 @@ the folder (client.json, logo, kiosk-news.json, ...) into C:\ProgramData\Kiosk\C
   * Otherwise (Entra ID only, workgroup, NAS): -Credential (Get-Credential) saves an account for the share,
     encrypted for this computer (DPAPI) in C:\ProgramData\Kiosk\ConfigSource.cred, readable only by SYSTEM and
     administrators. Use an account that can only read that share.
+  * -AccountsKey (Read-Host -AsSecureString): the key of the shared accounts in accounts.kiosk (Set-KioskSharedAccount.ps1).
   * -ConfigSource "" switches back to the PC's own configuration; -RemoveCredential deletes the saved account.
   * -Test (also run after every change): can this account and the computer account (SYSTEM, as the service reads
     it) or the saved account reach the folder, and is its client.json there and readable? Nothing is copied.
@@ -27,6 +28,8 @@ param(
     [string]$ConfigSource,
     [pscredential]$Credential,
     [switch]$RemoveCredential,
+    # Konta wspólne: the key of accounts.kiosk (Set-KioskSharedAccount.ps1); an empty one removes it.
+    [securestring]$AccountsKey,
     [switch]$Test,
     [string]$ConfigPath = (Join-Path $env:ProgramData 'Kiosk\client.json')
 )
@@ -64,9 +67,27 @@ if ($Credential -and $PSCmdlet.ShouldProcess($credentialFile, "save account $($C
     [IO.File]::WriteAllBytes($credentialFile, $blob)
 }
 
+$keyFile = Join-Path (Split-Path $ConfigPath) 'AccountsKey.cred'
+if ($AccountsKey -and $PSCmdlet.ShouldProcess($keyFile, 'save the key of the shared accounts')) {
+    $keyText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AccountsKey))
+    if ($keyText.Length -eq 0) { Remove-Item $keyFile -Force -ErrorAction SilentlyContinue }
+    else {
+        Add-Type -AssemblyName System.Security
+        $bytes = [Text.Encoding]::UTF8.GetBytes($keyText)
+        $blob = [Security.Cryptography.ProtectedData]::Protect($bytes, [Text.Encoding]::UTF8.GetBytes('Kiosk.SharedAccounts'),
+            [Security.Cryptography.DataProtectionScope]::LocalMachine)
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        if (-not (Test-Path $keyFile)) { New-Item -ItemType File -Path $keyFile | Out-Null }
+        & icacls.exe $keyFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "icacls failed for $keyFile" }
+        [IO.File]::WriteAllBytes($keyFile, $blob)
+    }
+}
+
 $current = (Get-Content $ConfigPath -Raw | ConvertFrom-Json).ConfigSource
 Write-Output ("Konfiguracja z serwera: " + $(if ($current) { $current } else { '(brak - konfiguracja tego komputera)' }))
 Write-Output ("Konto do serwera: " + $(if (Test-Path $credentialFile) { 'zapisane' } else { 'konto komputera (DOMENA\KOMPUTER$)' }))
+Write-Output ("Klucz kont wspólnych: " + $(if (Test-Path $keyFile) { 'zapisany' } else { 'brak' }))
 Write-Output 'Kiosk pobierze konfigurację przy następnym uruchomieniu.'
 
 if (-not $current -or $WhatIfPreference -or -not ($Test -or $PSBoundParameters.ContainsKey('ConfigSource') -or $Credential)) { return }

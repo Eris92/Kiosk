@@ -53,10 +53,12 @@ internal sealed class ApplicationView : Panel
 
     internal ApplicationView() { Dock = DockStyle.Fill; BackColor = KioskTheme.Background; }
 
-    /// <param name="logon">When set, the program runs as that person (runas), otherwise as the Kiosk account.</param>
-    internal async Task StartAsync(ApplicationEntry entry, UserLogon? logon = null)
+    /// <param name="logon">When set, the program runs as that person (runas) or with a shared account for the network,
+    /// otherwise as the Kiosk account.</param>
+    internal async Task StartAsync(ApplicationEntry entry, IProgramStarter? logon = null)
     {
-        if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
+        // A program on a file server that only the shared account may read is not visible from here.
+        if (logon is not NetworkAccountStarter && !File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
         ProgramPath = entry.Path;
         _ = Handle;
         var before = WindowsOfHostedProcesses();

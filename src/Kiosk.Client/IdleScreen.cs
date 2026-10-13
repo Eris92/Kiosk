@@ -67,6 +67,7 @@ internal sealed class IdleScreen : Form
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.
+                PageScripts.Attach(web.CoreWebView2);
                 web.CoreWebView2.Navigate(content.Url);
             }
             else await RestartAppAsync();

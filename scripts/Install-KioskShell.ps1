@@ -23,6 +23,8 @@ Shell Launcher profile in config/intune (this script does the same locally, e.g.
     and Konfiguracja on the PC becomes a preview. -ConfigSource "" switches back to the PC's own configuration.
     The Kiosk Card service reads the share as the computer account; -ConfigSourceCredential (Get-Credential) saves
     an account for it instead (see Set-KioskConfigSource.ps1).
+  * -AccountsKey (Read-Host -AsSecureString): the key of the shared accounts (accounts.kiosk next to client.json,
+    Set-KioskSharedAccount.ps1) used to sign in to pages and to run programs from a file server.
   * A new configuration without -ConfigSource shows a first-start screen: local configuration or a server.
     -SkipSetup leaves it out (the PC keeps its own configuration).
 
@@ -40,6 +42,8 @@ param(
     [string]$ConfigSource,
     [switch]$SkipSetup,
     [pscredential]$ConfigSourceCredential,
+    # Konta wspólne: the key of accounts.kiosk (Set-KioskSharedAccount.ps1), the same on every PC.
+    [securestring]$AccountsKey,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -139,6 +143,7 @@ Set-Service -Name SCardSvr -StartupType Automatic -WhatIf:$WhatIfPreference
 
 # Konfiguracja z serwera: an account for the share (domain PCs read it as the computer account, without one).
 if ($ConfigSourceCredential) { & (Join-Path $PSScriptRoot 'Set-KioskConfigSource.ps1') -ConfigPath $ConfigPath -Credential $ConfigSourceCredential }
+if ($AccountsKey) { & (Join-Path $PSScriptRoot 'Set-KioskConfigSource.ps1') -ConfigPath $ConfigPath -AccountsKey $AccountsKey }
 
 Write-Output "Done. Kiosk shell: $shellCommand"
 Write-Output 'Sign out and sign in with a card as a non-administrator account to test.'

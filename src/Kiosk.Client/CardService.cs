@@ -24,7 +24,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | sharedaccount
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -73,6 +73,7 @@ internal static class CardService
         try
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
+            if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
             if (request.Op == "reset")
             {
@@ -184,6 +185,8 @@ internal static class CardService
                     : request.Op == "firstsignin" ? FirstSignIn.Arm(GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var session) ? session : -1)
                     // Read-only check, nothing is copied; another server than the saved one only for an elevated administrator.
                     : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: ClientIsAdministrator(pipe))
+                    // A shared account's password only for the installed Kiosk program, named by Windows (the pipe's client process).
+                    : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
                     : Handle(request);
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');
@@ -192,6 +195,13 @@ internal static class CardService
             }
             catch (Exception) { Thread.Sleep(200); } // One bad client must not stop the service.
         }
+    }
+
+    private static string? ClientProgram(NamedPipeServerStream pipe)
+    {
+        if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var id)) return null;
+        try { using var process = System.Diagnostics.Process.GetProcessById((int)id); return process.MainModule?.FileName; }
+        catch (Exception) { return null; }
     }
 
     /// <summary>The pipe's client runs elevated as an administrator (the Ctrl+Alt+K Konfiguracja window).</summary>
@@ -226,4 +236,5 @@ internal static class CardService
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr RegisterServiceCtrlHandlerEx(string name, HandlerEx handler, IntPtr context);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetServiceStatus(IntPtr handle, ref ServiceStatus status);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientSessionId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out int session);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
 }

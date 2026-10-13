@@ -152,6 +152,14 @@ internal static class CentralConfig
         return folder;
     }
 
+    /// <summary>The folder whose client.json this PC uses: the server's copy (C:\ProgramData\Kiosk\Central\…) or C:\ProgramData\Kiosk.</summary>
+    internal static string MachineConfigFolder()
+    {
+        try { if (Configuration.Load(SharedConfig).ConfigSource.Length > 0 && Current(MachineCache) is { } folder) return folder; }
+        catch (Exception) { }
+        return KioskData;
+    }
+
     private static string? Current(string cache)
     {
         try
@@ -223,42 +231,62 @@ internal static class CentralConfig
 
     private static readonly byte[] StagedEntropy = Encoding.UTF8.GetBytes("Kiosk.ConfigSource.Staged");
 
+    /// <summary>What the save step changes besides client.json: the share's account and the shared accounts' key (null = unchanged).</summary>
+    internal sealed record Secrets(AccountChange? Account, string? AccountsKey)
+    {
+        internal bool Any => Account != null || AccountsKey != null;
+    }
+
+    internal static void WriteSecrets(Secrets secrets)
+    {
+        if (secrets.Account != null) WriteAccount(secrets.Account);
+        if (secrets.AccountsKey != null) SharedAccounts.WriteKey(secrets.AccountsKey);
+    }
+
     /// <summary>Saves or removes the share's account; needs an administrator (or SYSTEM).</summary>
     internal static void WriteAccount(AccountChange change)
     {
         if (File.Exists(CredentialFile)) File.Delete(CredentialFile);
         if (change.User.Trim().Length == 0) { Audit.Write("config_source_account_removed"); return; }
         var plain = JsonSerializer.SerializeToUtf8Bytes(new ShareAccount(change.User.Trim(), change.Password));
-        byte[] blob;
-        try { blob = Protect(plain, Entropy); }
+        try { WriteSecret(CredentialFile, plain, Entropy); }
         finally { Array.Clear(plain); }
+        Audit.Write("config_source_account_saved", change.User.Trim());
+    }
+
+    /// <summary>A secret for this computer: DPAPI (computer) in a file only SYSTEM and administrators may open.</summary>
+    internal static void WriteSecret(string path, byte[] plain, byte[] entropyBytes)
+    {
+        if (File.Exists(path)) File.Delete(path);
+        var blob = Protect(plain, entropyBytes);
         // Only SYSTEM (the Kiosk Card service) and administrators: DPAPI for the computer alone would let any local user read it.
         var security = new System.Security.AccessControl.FileSecurity();
         security.SetAccessRuleProtection(true, false);
         foreach (var sid in new[] { System.Security.Principal.WellKnownSidType.LocalSystemSid, System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid })
             security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(sid, null),
                 System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
-        Directory.CreateDirectory(KioskData);
-        using (var file = FileSystemAclExtensions.Create(new FileInfo(CredentialFile), FileMode.CreateNew, System.Security.AccessControl.FileSystemRights.FullControl,
-            FileShare.None, 4096, FileOptions.None, security))
-            file.Write(blob);
-        Audit.Write("config_source_account_saved", change.User.Trim());
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var file = FileSystemAclExtensions.Create(new FileInfo(path), FileMode.CreateNew, System.Security.AccessControl.FileSystemRights.FullControl,
+            FileShare.None, 4096, FileOptions.None, security);
+        file.Write(blob);
     }
 
+    internal static byte[] ReadSecret(string path, byte[] entropyBytes) => Unprotect(File.ReadAllBytes(path), entropyBytes);
+
     /// <summary>For the elevated save step: the change in this person's temporary folder, protected for this computer.</summary>
-    internal static string StageAccount(AccountChange change)
+    internal static string StageSecrets(Secrets secrets)
     {
-        var staged = Path.Combine(Path.GetTempPath(), "Kiosk-account-" + Guid.NewGuid().ToString("N") + ".bin");
-        var plain = JsonSerializer.SerializeToUtf8Bytes(change);
+        var staged = Path.Combine(Path.GetTempPath(), "Kiosk-secrets-" + Guid.NewGuid().ToString("N") + ".bin");
+        var plain = JsonSerializer.SerializeToUtf8Bytes(secrets);
         try { File.WriteAllBytes(staged, Protect(plain, StagedEntropy)); }
         finally { Array.Clear(plain); }
         return staged;
     }
 
-    internal static AccountChange ReadStaged(string staged)
+    internal static Secrets ReadStaged(string staged)
     {
         var plain = Unprotect(File.ReadAllBytes(staged), StagedEntropy);
-        try { return JsonSerializer.Deserialize<AccountChange>(plain) ?? throw new InvalidDataException("Puste konto."); }
+        try { return JsonSerializer.Deserialize<Secrets>(plain) ?? throw new InvalidDataException("Puste dane."); }
         finally { Array.Clear(plain); }
     }
 

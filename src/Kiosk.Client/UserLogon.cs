@@ -10,7 +10,7 @@ namespace Kiosk.Client;
 /// them, with their profile, bookmarks and SSO. The password is kept only in this process's memory, encrypted
 /// with CryptProtectMemory, until the Kiosk session is closed; it is never written anywhere.
 /// </summary>
-internal sealed class UserLogon : IDisposable
+internal sealed class UserLogon : IDisposable, IProgramStarter
 {
     private readonly string user;
     private readonly string? domain;
@@ -128,7 +128,7 @@ internal sealed class UserLogon : IDisposable
     }
 
     /// <summary>Starts a program as this person (with their profile), suspended, like runas.</summary>
-    internal (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
+    public (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
     {
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = show };
         var password = Reveal();

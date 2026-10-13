@@ -13,6 +13,7 @@ internal sealed class FirstRunSetup : Form
     private readonly TextBox source = new() { Width = 640, Font = new Font("Segoe UI", 12), PlaceholderText = @"\\serwer\kiosk", Margin = new Padding(0, 4, 0, 8), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox user = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = @"DOMENA\użytkownik", Margin = new Padding(0, 0, 8, 0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox password = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = "hasło", UseSystemPasswordChar = true, Margin = new Padding(0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox key = new() { Width = 640, Font = new Font("Segoe UI", 12), PlaceholderText = "klucz kont wspólnych (opcjonalnie)", UseSystemPasswordChar = true, Margin = new Padding(0, 0, 0, 8), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
     private CentralConfig.AccountChange? Account => user.Text.Trim().Length > 0 ? new(user.Text.Trim(), password.Text) : null;
     private readonly Label result = new() { AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = KioskTheme.Text, Margin = new Padding(0, 4, 0, 8) };
     private readonly Label error = new() { AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = Color.FromArgb(255, 153, 164), Margin = new Padding(0, 12, 0, 0) };
@@ -58,6 +59,12 @@ internal sealed class FirstRunSetup : Form
         account.Controls.Add(user);
         account.Controls.Add(password);
         server.Controls.Add(account);
+        server.Controls.Add(new Label
+        {
+            Text = "Klucz kont wspólnych (opcjonalnie) – gdy obok client.json jest " + SharedAccounts.FileName + " z kontami do stron i aplikacji.",
+            AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = KioskTheme.Muted, Margin = new Padding(0, 0, 0, 2)
+        });
+        server.Controls.Add(key);
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Margin = new Padding(0), BackColor = KioskTheme.Surface };
         var test = new Button { Text = "Test", AutoSize = true, Padding = new Padding(12, 0, 12, 0), Margin = new Padding(0, 0, 8, 0) };
         var save = new Button { Text = "Zapisz i uruchom", AutoSize = true, Padding = new Padding(12, 0, 12, 0), Margin = new Padding(0) };
@@ -113,7 +120,7 @@ internal sealed class FirstRunSetup : Form
         {
             if (kind == "server" && chosen.ConfigSource.Length == 0) throw new InvalidDataException("Podaj folder lub udział, np. \\\\serwer\\kiosk.");
             chosen.Validate();
-            Configuration.Save(path, chosen, kind == "server" ? Account : null);   // Shared configuration: Windows asks for an administrator.
+            Configuration.Save(path, chosen, kind == "server" ? new CentralConfig.Secrets(Account, key.Text.Length > 0 ? key.Text : null) : null);   // Shared configuration: Windows asks for an administrator.
             Audit.Write("first_run_setup", kind == "server" ? chosen.ConfigSource : "local");
             DialogResult = DialogResult.OK;
             Close();

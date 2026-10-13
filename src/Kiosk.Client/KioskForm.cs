@@ -54,7 +54,7 @@ internal sealed class KioskForm : Form
     private const string BrowserKey = "browser", NotesKey = "notes", FilesKey = "files", SettingsKey = "settings";
     // As saved in Konfiguracja (unticked entries included) and what Kiosk works with (only the ticked ones).
     private Config fullConfig = null!, activeConfig = null!;
-    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); } }
+    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); PageScripts.Actions = activeConfig.PageActions; } }
     private readonly string? configPath;
     private readonly Panel surface = new() { Dock = DockStyle.Fill };
     private readonly DesktopView desktop = new();
@@ -1646,7 +1646,11 @@ internal sealed class KioskForm : Form
         AddWindow(session, key, entry.Name, requested);
         try
         {
-            await requested.StartAsync(entry, session.Logon);
+            // Konto wspólne: this PC's account runs it, the shared one signs in to the file server (runas /netonly).
+            IProgramStarter? starter = string.IsNullOrWhiteSpace(entry.RunAs) ? session.Logon
+                : new NetworkAccountStarter(await Task.Run(() => SharedAccounts.Get(entry.RunAs.Trim())));
+            if (requested.IsDisposed) return;
+            await requested.StartAsync(entry, starter);
             if (!requested.IsDisposed) Audit.Write("application_opened", entry.Name);
         }
         catch (Exception ex)
@@ -1811,7 +1815,7 @@ internal sealed class KioskForm : Form
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, ToSave(updated), view.AccountChange);
+            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Invalidate(true);
             Audit.Write("settings_saved");

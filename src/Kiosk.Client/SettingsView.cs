@@ -40,6 +40,11 @@ internal sealed class SettingsView : UserControl
     /// <summary>The share's account typed in (or "remove") for the save step; null = leave it as it is.</summary>
     internal CentralConfig.AccountChange? AccountChange =>
         removeAccount.Checked ? new("", "") : sourceUser.Text.Trim().Length > 0 ? new(sourceUser.Text.Trim(), sourcePassword.Text) : null;
+    private readonly TextBox accountsKey = new() { Width = 300, UseSystemPasswordChar = true, PlaceholderText = "klucz kont wspólnych", Margin = new Padding(4, 0, 4, 4) };
+    private readonly CheckBox removeKey = new() { Text = "Usuń zapisany klucz", AutoSize = true, Margin = new Padding(4, 4, 4, 4) };
+
+    /// <summary>The shared accounts' key typed in ("" = remove) for the save step; null = leave it as it is.</summary>
+    internal string? AccountsKey => removeKey.Checked ? "" : accountsKey.Text.Length > 0 ? accountsKey.Text : null;
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
@@ -68,6 +73,7 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView idleScreens = Grid();
     private readonly DataGridView commands = Grid();
     private readonly DataGridView helpActions = Grid();
+    private readonly DataGridView pageActions = Grid();
     private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
     private bool scaled;
     /// <summary>Self-test pictures: lays the view out as on a screen with this scale.</summary>
@@ -228,8 +234,9 @@ internal sealed class SettingsView : UserControl
         apps.Columns.Add("Path", "Pełna ścieżka do EXE");
         apps.Columns.Add("Arguments", "Argumenty");
         apps.Columns.Add("WorkingDirectory", "Katalog roboczy (opcjonalny)");
+        apps.Columns.Add("RunAs", "Konto wspólne do sieci (opcjonalne)");
         AddEnabledColumn(apps);
-        foreach (var app in config.Applications) SetEnabled(apps, apps.Rows.Add(app.Name, app.Path, app.Arguments, app.WorkingDirectory), app.Enabled);
+        foreach (var app in config.Applications) SetEnabled(apps, apps.Rows.Add(app.Name, app.Path, app.Arguments, app.WorkingDirectory, app.RunAs), app.Enabled);
         bookmarks.Columns.Add("Name", "Nazwa zakładki");
         bookmarks.Columns.Add("Url", "Adres HTTP/HTTPS");
         AddEnabledColumn(bookmarks);
@@ -247,7 +254,20 @@ internal sealed class SettingsView : UserControl
         allowedDomains.Text = string.Join(", ", config.BrowserAllowedDomains);
         allowedDomains.Enabled = onlyBookmarks.Checked;
         onlyBookmarks.CheckedChanged += (_, _) => allowedDomains.Enabled = onlyBookmarks.Checked;
-        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Przeglądarka (" + ApplicationEntry.BuiltInBrowser + "), Notatnik (" + ApplicationEntry.BuiltInNotes + ") i Pliki (" + ApplicationEntry.BuiltInFiles + ") to aplikacje wbudowane: usuń wiersz, aby je wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32.");
+        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Przeglądarka (" + ApplicationEntry.BuiltInBrowser + "), Notatnik (" + ApplicationEntry.BuiltInNotes + ") i Pliki (" + ApplicationEntry.BuiltInFiles + ") to aplikacje wbudowane: usuń wiersz, aby je wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32. " +
+            "„Konto wspólne do sieci”: nazwa konta z " + SharedAccounts.FileName + " – program działa na tym komputerze jak zwykle, a serwery i udziały (np. EXE na serwerze plików) otwiera jako to konto.", helpHeight: 64);
+
+        var pagesTab = new TabPage("Akcje stron") { Padding = new Padding(12) };
+        tabs.TabPages.Insert(tabs.TabPages.IndexOf(applications), pagesTab);
+        pageActions.Columns.Add("Url", "Adres lub początek adresu");
+        pageActions.Columns.Add("Click", "Kliknij przyciski (napisy, oddziel ;)");
+        pageActions.Columns.Add("Account", "Zaloguj kontem wspólnym");
+        pageActions.Columns.Add("Submit", "Napis przycisku logowania (opcjonalny)");
+        AddEnabledColumn(pageActions);
+        foreach (var a in config.PageActions) SetEnabled(pageActions, pageActions.Rows.Add(a.Url, a.Click, a.Account, a.Submit), a.Enabled);
+        SetupGridTab(pagesTab, pageActions, "Kiosk sam klika na stronach (strona startowa, ekrany, przeglądarka Kiosku). Adres: portal.firma.pl (z subdomenami) " +
+            "albo https://portal.firma.pl/login (początek adresu). „Kliknij”: np. Akceptuj wszystkie;Accept all – przycisk z tym napisem jest klikany, gdy się pojawi. " +
+            "„Zaloguj kontem wspólnym”: nazwa konta z " + SharedAccounts.FileName + " (obok client.json, skrypt Set-KioskSharedAccount.ps1) – Kiosk wpisuje login i hasło i klika przycisk logowania.", helpHeight: 80);
         var choose = new Button { Text = "Wybierz plik EXE…", AutoSize = true, Dock = DockStyle.Bottom };
         choose.Click += (_, _) => ChooseExecutable();
         applications.Controls.Add(choose);
@@ -470,6 +490,17 @@ internal sealed class SettingsView : UserControl
         };
         updatePanel.Controls.Add(sourceTest);
         updatePanel.Controls.Add(sourceResult);
+        updatePanel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 16, 4, 4),
+            Text = "Klucz kont wspólnych. Hasła kont do stron i aplikacji są w pliku " + SharedAccounts.FileName + " obok client.json (na serwerze: jeden plik dla wszystkich komputerów), " +
+                   "zaszyfrowane tym kluczem (scripts\\Set-KioskSharedAccount.ps1). Ten komputer trzyma klucz zaszyfrowany dla siebie, czytelny tylko dla usługi Kiosku i administratorów. " +
+                   (SharedAccounts.KeySaved ? "Klucz jest zapisany – wpisz nowy, aby go zmienić." : "Klucz nie jest zapisany.")
+        });
+        updatePanel.Controls.Add(accountsKey);
+        removeKey.Visible = SharedAccounts.KeySaved;
+        removeKey.CheckedChanged += (_, _) => accountsKey.Enabled = !removeKey.Checked;
+        updatePanel.Controls.Add(removeKey);
         updateTab.Controls.Add(updatePanel);
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
@@ -514,6 +545,8 @@ internal sealed class SettingsView : UserControl
             configSource.ReadOnly = false;
             sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
             removeAccount.Enabled = true;
+            accountsKey.ReadOnly = false;
+            removeKey.Enabled = true;
             sourceTest.Enabled = true;
             updateButton.Enabled = true;
         }
@@ -799,7 +832,7 @@ internal sealed class SettingsView : UserControl
     /// <summary>Builds and validates the edited configuration without saving it.</summary>
     internal Config BuildConfig()
     {
-        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit(); commands.EndEdit(); helpActions.EndEdit();
+        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit(); commands.EndEdit(); helpActions.EndEdit(); pageActions.EndEdit();
         var selected = autoConnect.SelectedItem as string;
         var result = original with
         {
@@ -839,7 +872,12 @@ internal sealed class SettingsView : UserControl
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry
             {
-                Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), WorkingDirectory = PathCell(r, "WorkingDirectory"), Enabled = IsEnabled(r)
+                Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"), WorkingDirectory = PathCell(r, "WorkingDirectory"),
+                RunAs = Cell(r, "RunAs"), Enabled = IsEnabled(r)
+            }).ToArray(),
+            PageActions = pageActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Cell(r, "Url").Length > 0).Select(r => new PageAction
+            {
+                Url = Cell(r, "Url"), Click = Cell(r, "Click"), Account = Cell(r, "Account"), Submit = Cell(r, "Submit"), Enabled = IsEnabled(r)
             }).ToArray(),
             Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url"), Enabled = IsEnabled(r) }).ToArray(),
             IdleAfterSeconds = (int)idleAfter.Value,
@@ -877,7 +915,7 @@ internal sealed class SettingsView : UserControl
                 throw new InvalidDataException("Po zapisie nie miałbyś dostępu do Konfiguracji. Dodaj swoją kartę na liście administratorów.");
             foreach (var app in result.Applications)
             {
-                if (app.IsBuiltIn) continue;
+                if (app.IsBuiltIn || app.RunAs.Length > 0) continue;   // A shared account's share is not visible from here.
                 if (!File.Exists(app.Path)) throw new InvalidDataException("Nie znaleziono pliku: " + app.Path);
                 if (app.WorkingDirectory.Length > 0 && !Directory.Exists(app.WorkingDirectory))
                     throw new InvalidDataException("Nie znaleziono katalogu: " + app.WorkingDirectory);
