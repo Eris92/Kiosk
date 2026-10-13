@@ -1585,14 +1585,15 @@ internal sealed class KioskForm : Form
 
     /// <summary>
     /// Who may open Konfiguracja: a card on the AdminCards list, or (when allowed) a member of this PC's local
-    /// Administrators group: the card's account, or the Windows account running Kiosk (an administrator starting it
+    /// Administrators group: the card's account, the account signed in with Zaloguj, or the Windows account running Kiosk (an administrator starting it
     /// to set it up). Test mode no longer opens it for everyone: configuration is decided by administrators.
     /// </summary>
     private bool IsAdmin(UserSession session, Config? settings = null)
     {
         settings ??= config;
         if (settings.AdminCards.Any(a => a.Id == session.Identity.Id)) return true;
-        return settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || RunningAsWindowsAdmin);
+        // The account signed in with "Zaloguj" counts too: FIDO2 cards carry no certificate naming it.
+        return settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || session.Logon?.IsAdministrator == true || RunningAsWindowsAdmin);
     }
 
     // Includes the deny-only Administrators SID of a UAC-filtered admin token.

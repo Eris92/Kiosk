@@ -41,6 +41,8 @@ internal sealed class UserLogon : IDisposable
     internal string? ProfileDirectory =>
         Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
     internal string? Domain => domain;
+    /// <summary>The account is in this PC's local Administrators group (also through a group, also UAC-filtered).</summary>
+    internal bool IsAdministrator { get; private set; }
 
     /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
     /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
@@ -70,7 +72,8 @@ internal sealed class UserLogon : IDisposable
             using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
             return new UserLogon(login, domain, password, length, identity.Name)
             {
-                Sid = identity.User?.Value ?? "", FriendlyName = People.FriendlyName(DirectoryName(identity), login, identity.Name)
+                Sid = identity.User?.Value ?? "", FriendlyName = People.FriendlyName(DirectoryName(identity), login, identity.Name),
+                IsAdministrator = identity.Groups?.Any(g => g.Value == "S-1-5-32-544") == true
             };
         }
     }
