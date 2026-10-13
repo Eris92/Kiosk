@@ -1649,7 +1649,29 @@ internal sealed class KioskForm : Form
             Invalidate(true);
             StartIdleScreens();
             RefreshChrome();
-        });
+        }, () => _ = UpdateFromSettingsAsync());
+    }
+
+    /// <summary>"Sprawdź i zaktualizuj" in the administrator's settings window: this Kiosk downloads the release and installs it.</summary>
+    private async Task UpdateFromSettingsAsync()
+    {
+        try
+        {
+            var release = await Updater.LatestAsync();
+            var folder = await Updater.DownloadAsync(release);
+            InstallUpdate(folder);
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+    }
+
+    private void InstallUpdate(string folder)
+    {
+        Audit.Write("update_requested", folder);
+        closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
+        if (!closeConfirmed) return;
+        // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
+        Updater.Launch(folder);
+        Close();
     }
 
     private void OpenSettings()
@@ -1660,15 +1682,7 @@ internal sealed class KioskForm : Form
         var session = current!;
         var view = new SettingsView(fullConfig, session.Identity, updated => IsAdmin(session, updated.Active()));
         view.IdentifyScreensRequested += ShowScreenNumbers;
-        view.UpdateRequested += folder =>
-        {
-            Audit.Write("update_requested", folder);
-            closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
-            if (!closeConfirmed) return;
-            // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
-            Updater.Launch(folder);
-            Close();
-        };
+        view.UpdateRequested += InstallUpdate;
         settingsView = view;
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>

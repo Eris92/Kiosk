@@ -160,8 +160,10 @@ internal static class Updater
         return 0;
     }
 
-    /// <summary>True when <paramref name="tag"/> is a later build than the running one (local "dev" builds never update themselves).</summary>
-    internal static bool IsNewer(string tag) => Number(tag) is { } latest && Number(CurrentVersion) is { } installed && latest > installed;
+    /// <summary>True when <paramref name="tag"/> is a later build than the running one (local "dev" builds never update
+    /// themselves; a build named by its commit, e.g. build-4c800f4, counts as older than any numbered release).</summary>
+    internal static bool IsNewer(string tag) => Number(tag) is { } latest &&
+        (Number(CurrentVersion) is { } installed ? latest > installed : CurrentVersion.StartsWith("build-", StringComparison.Ordinal));
 
     /// <summary>Remembers that this release was already tried, so a failing install does not restart Kiosk at every start.</summary>
     internal static bool FirstAttempt(string tag)

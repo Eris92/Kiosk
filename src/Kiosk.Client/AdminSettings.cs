@@ -25,8 +25,12 @@ internal static class AdminSettings
     internal static void UnregisterHotkey(IntPtr window) => UnregisterHotKey(window, HotkeyId);
     internal static bool IsHotkey(Message m) => m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HotkeyId;
 
-    /// <summary>Starts the elevated settings window; <paramref name="saved"/> runs on the caller's thread after a save.</summary>
-    internal static void Open(Control owner, string configPath, Action saved)
+    /// <summary>Exit code of the settings window when Aktualizacja was pressed: the Kiosk that owns the files installs it.</summary>
+    internal const int UpdateExitCode = 2;
+
+    /// <summary>Starts the elevated settings window; <paramref name="saved"/> runs on the caller's thread after a save,
+    /// <paramref name="update"/> after "Sprawdź i zaktualizuj".</summary>
+    internal static void Open(Control owner, string configPath, Action saved, Action update)
     {
         Process process;
         try
@@ -54,11 +58,13 @@ internal static class AdminSettings
         {
             var code = process.ExitCode;
             process.Dispose();
-            if (code == 0 && !owner.IsDisposed) owner.BeginInvoke(saved);
+            if (owner.IsDisposed) return;
+            if (code == 0) owner.BeginInvoke(saved);
+            else if (code == UpdateExitCode) owner.BeginInvoke(update);
         };
     }
 
-    /// <summary>Kiosk.Client.exe --settings &lt;configuration&gt; (elevated): exit code 0 = saved, 1 = cancelled.</summary>
+    /// <summary>Kiosk.Client.exe --settings &lt;configuration&gt; (elevated): exit code 0 = saved, 1 = cancelled, 2 = update.</summary>
     internal static int Run(string configPath)
     {
         var config = Configuration.Load(configPath);
@@ -78,6 +84,8 @@ internal static class AdminSettings
             form.Close();
         };
         view.CancelRequested += form.Close;
+        // The running Kiosk holds the program files: it closes and installs the update itself.
+        view.UpdateRequested += _ => { result = UpdateExitCode; form.Close(); };
         form.Controls.Add(view);
         Application.Run(form);
         return result;
