@@ -24,12 +24,13 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
         public string? CredentialId { get; set; }
         public string? Salt { get; set; }
+        public string Source { get; set; } = "";      // testconfig: the folder or share to check
     }
 
     internal sealed class Response
@@ -73,6 +74,7 @@ internal static class CardService
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
+            if (request.Op == "testconfig") return CentralConfig.Test(request.Source, savedAccount: true);   // Read-only check, nothing is copied.
             if (request.Op == "reset")
             {
                 // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.

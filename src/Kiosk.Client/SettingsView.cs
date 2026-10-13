@@ -32,6 +32,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
+    private readonly Button sourceTest;
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
@@ -427,6 +428,29 @@ internal sealed class SettingsView : UserControl
         });
         configSource.Text = config.ConfigSource;
         updatePanel.Controls.Add(configSource);
+        sourceTest = new Button { Text = "Test", Size = new Size(120, 34), Margin = new Padding(4, 8, 4, 4) };
+        KioskTheme.StyleButton(sourceTest);
+        var sourceResult = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 8, 4, 4) };
+        sourceTest.Click += async (_, _) =>
+        {
+            var source = configSource.Text;
+            sourceTest.Enabled = false;
+            sourceResult.Text = "Sprawdzam dostęp do " + source.Trim() + "…";
+            try
+            {
+                // As the Kiosk will read it (the Kiosk Card service: this computer's account, or the saved one), and as you.
+                var machine = Task.Run(() => CardService.Call(new CardService.Request { Op = "testconfig", Source = source }));
+                var person = Task.Run(() => CentralConfig.Test(source, savedAccount: false));
+                await Task.WhenAll(machine, person);
+                // A service from before "testconfig" treats it as a card request and answers about the card.
+                static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
+                    (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – zaktualizuj Kiosk (Ctrl+Alt+U)" : r.Message);
+                sourceResult.Text = "Komputer (usługa Kiosk Card): " + Line(machine.Result) + "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
+            }
+            finally { if (!IsDisposed) sourceTest.Enabled = true; }
+        };
+        updatePanel.Controls.Add(sourceTest);
+        updatePanel.Controls.Add(sourceResult);
         updateTab.Controls.Add(updatePanel);
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
@@ -469,6 +493,7 @@ internal sealed class SettingsView : UserControl
             foreach (TabPage page in tabs.TabPages) Preview(page);
             autoUpdate.Enabled = false;
             configSource.ReadOnly = false;
+            sourceTest.Enabled = true;
             updateButton.Enabled = true;
         }
         Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);

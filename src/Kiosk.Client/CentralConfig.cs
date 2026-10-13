@@ -82,6 +82,29 @@ internal static class CentralConfig
     }
 
     /// <summary>
+    /// Konfiguracja → "Test": can this account reach the folder, and is its client.json usable? Nothing is copied.
+    /// The service checks as the computer (or the saved account), the Konfiguracja window as the person signed in.
+    /// </summary>
+    internal static CardService.Response Test(string source, bool savedAccount)
+    {
+        try
+        {
+            source = source.Trim().Trim('"');
+            if (source.Length == 0 || !Path.IsPathFullyQualified(source)) return new CardService.Response { Code = -2, Message = "podaj pełną ścieżkę, np. \\\\serwer\\kiosk" };
+            using (savedAccount ? Connect(source) : null)
+            {
+                if (!Directory.Exists(source)) return new CardService.Response { Code = -1, Message = "brak dostępu do folderu" };
+                var file = Path.Combine(source, FileName);
+                if (!File.Exists(file)) return new CardService.Response { Code = -1, Message = "folder dostępny, ale nie ma w nim " + FileName };
+                Configuration.Load(file);
+                int files = Directory.GetFiles(source, "*", SearchOption.AllDirectories).Length;
+                return new CardService.Response { Message = "OK – " + FileName + " poprawny, plików: " + files };
+            }
+        }
+        catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
+    }
+
+    /// <summary>
     /// Copies the server's folder into a new folder of the copy, checks its client.json, then points the copy at it.
     /// Earlier folders are removed when nothing uses them any more (an open logo in another session keeps its folder).
     /// </summary>
