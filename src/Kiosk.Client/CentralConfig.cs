@@ -85,13 +85,19 @@ internal static class CentralConfig
     /// Konfiguracja → "Test": can this account reach the folder, and is its client.json usable? Nothing is copied.
     /// The service checks as the computer (or the saved account), the Konfiguracja window as the person signed in.
     /// </summary>
-    internal static CardService.Response Test(string source, bool savedAccount)
+    internal static CardService.Response Test(string source, bool savedAccount, bool administrator = true)
     {
         try
         {
             source = source.Trim().Trim('"');
             if (source.Length == 0 || !Path.IsPathFullyQualified(source)) return new CardService.Response { Code = -2, Message = "podaj pełną ścieżkę, np. \\\\serwer\\kiosk" };
-            using (savedAccount ? Connect(source) : null)
+            // The service signs in to the server as the computer (or the saved account): any other server could
+            // collect that sign-in. A person may test only the saved server; another one, an administrator.
+            var saved = SavedServer();
+            var sameServer = saved != null && string.Equals(Server(source), saved, StringComparison.OrdinalIgnoreCase);
+            if (savedAccount && Server(source) != null && !sameServer && !administrator)
+                return new CardService.Response { Code = -2, Message = "inny serwer niż zapisany – sprawdzi go Konfiguracja administratora (Ctrl+Alt+K)" };
+            using (savedAccount && sameServer ? Connect(source) : null)
             {
                 if (!Directory.Exists(source)) return new CardService.Response { Code = -1, Message = "brak dostępu do folderu" };
                 var file = Path.Combine(source, FileName);
@@ -160,6 +166,16 @@ internal static class CentralConfig
     // ------------------------------------------------------------------ the account for the share
 
     private sealed record ShareAccount(string User, string Password);
+
+    /// <summary>\\server of a share path, null for a local folder.</summary>
+    private static string? Server(string source) =>
+        source.StartsWith(@"\\", StringComparison.Ordinal) ? source.TrimStart('\\').Split('\\')[0] : null;
+
+    private static string? SavedServer()
+    {
+        try { return Server(Configuration.Load(SharedConfig).ConfigSource); }
+        catch (Exception) { return null; }
+    }
 
     /// <summary>With a saved account: a connection to the share root for the copy (closed afterwards). Without: null.</summary>
     private static IDisposable? Connect(string source)

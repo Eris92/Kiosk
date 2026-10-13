@@ -74,7 +74,6 @@ internal static class CardService
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
-            if (request.Op == "testconfig") return CentralConfig.Test(request.Source, savedAccount: true);   // Read-only check, nothing is copied.
             if (request.Op == "reset")
             {
                 // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.
@@ -183,6 +182,8 @@ internal static class CardService
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }
                     // The session comes from Windows (the pipe's client), not from the request.
                     : request.Op == "firstsignin" ? FirstSignIn.Arm(GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var session) ? session : -1)
+                    // Read-only check, nothing is copied; another server than the saved one only for an elevated administrator.
+                    : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: ClientIsAdministrator(pipe))
                     : Handle(request);
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');
@@ -191,6 +192,22 @@ internal static class CardService
             }
             catch (Exception) { Thread.Sleep(200); } // One bad client must not stop the service.
         }
+    }
+
+    /// <summary>The pipe's client runs elevated as an administrator (the Ctrl+Alt+K Konfiguracja window).</summary>
+    private static bool ClientIsAdministrator(NamedPipeServerStream pipe)
+    {
+        var administrator = false;
+        try
+        {
+            pipe.RunAsClient(() =>
+            {
+                using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+                administrator = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+            });
+        }
+        catch (Exception) { administrator = false; }
+        return administrator;
     }
 
     private static void SetStatus(int state)
