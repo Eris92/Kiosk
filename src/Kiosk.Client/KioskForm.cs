@@ -1811,7 +1811,7 @@ internal sealed class KioskForm : Form
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, ToSave(updated));
+            Configuration.Save(configPath, ToSave(updated), view.AccountChange);
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Invalidate(true);
             Audit.Write("settings_saved");

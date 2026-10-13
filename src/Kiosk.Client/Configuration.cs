@@ -86,20 +86,27 @@ internal static class Configuration
     /// Saves the configuration. The shared configuration folder is read-only for users (Install-KioskShell.ps1), so in
     /// a person's own Windows session Windows asks for an administrator, and only that one copy step runs elevated.
     /// </summary>
-    internal static void Save(string path, Config config)
+    /// <param name="account">Konfiguracja z serwera: the share's account to save or remove (null = unchanged), in the same step.</param>
+    internal static void Save(string path, Config config, CentralConfig.AccountChange? account = null)
     {
         config.Validate();
         var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-        try { Replace(path, json); return; }
+        try
+        {
+            Replace(path, json);
+            if (account != null) CentralConfig.WriteAccount(account);
+            return;
+        }
         catch (UnauthorizedAccessException) { }
         var staged = Path.Combine(Path.GetTempPath(), "Kiosk-config-" + Guid.NewGuid().ToString("N") + ".json");
         File.WriteAllText(staged, json);
+        var stagedAccount = account == null ? null : CentralConfig.StageAccount(account);
         try
         {
             using var copy = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
             {
                 UseShellExecute = true, Verb = "runas", WorkingDirectory = AppContext.BaseDirectory,
-                Arguments = "\"" + SaveArgument + "\" \"" + staged + "\" \"" + path + "\""
+                Arguments = "\"" + SaveArgument + "\" \"" + staged + "\" \"" + path + "\"" + (stagedAccount == null ? "" : " \"" + stagedAccount + "\"")
             })!;
             copy.WaitForExit();
             if (copy.ExitCode != 0) throw new UnauthorizedAccessException("Administrator nie zapisał konfiguracji (kod " + copy.ExitCode + ").");
@@ -108,16 +115,17 @@ internal static class Configuration
         {
             throw new UnauthorizedAccessException("Konfigurację zapisuje administrator Windows tego komputera. Zapis anulowany.");
         }
-        finally { File.Delete(staged); }
+        finally { File.Delete(staged); if (stagedAccount != null) File.Delete(stagedAccount); }
     }
 
-    /// <summary>Kiosk.Client.exe --save-config &lt;staged file&gt; &lt;configuration&gt; (elevated): validates and copies.</summary>
-    internal static int SaveElevated(string staged, string path)
+    /// <summary>Kiosk.Client.exe --save-config &lt;staged file&gt; &lt;configuration&gt; [&lt;staged account&gt;] (elevated): validates and copies.</summary>
+    internal static int SaveElevated(string staged, string path, string? stagedAccount = null)
     {
         try
         {
             Load(staged);   // validates
             Replace(path, File.ReadAllText(staged));
+            if (stagedAccount != null) CentralConfig.WriteAccount(CentralConfig.ReadStaged(stagedAccount));
             return 0;
         }
         catch (Exception ex) { Audit.Write("settings_save_failed", ex.Message); return 2; }

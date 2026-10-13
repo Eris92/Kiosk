@@ -11,6 +11,9 @@ internal sealed class FirstRunSetup : Form
     private readonly string path;
     private readonly Config local;
     private readonly TextBox source = new() { Width = 640, Font = new Font("Segoe UI", 12), PlaceholderText = @"\\serwer\kiosk", Margin = new Padding(0, 4, 0, 8), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox user = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = @"DOMENA\użytkownik", Margin = new Padding(0, 0, 8, 0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox password = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = "hasło", UseSystemPasswordChar = true, Margin = new Padding(0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
+    private CentralConfig.AccountChange? Account => user.Text.Trim().Length > 0 ? new(user.Text.Trim(), password.Text) : null;
     private readonly Label result = new() { AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = KioskTheme.Text, Margin = new Padding(0, 4, 0, 8) };
     private readonly Label error = new() { AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = Color.FromArgb(255, 153, 164), Margin = new Padding(0, 12, 0, 0) };
 
@@ -46,6 +49,15 @@ internal sealed class FirstRunSetup : Form
         var server = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Visible = false, Margin = new Padding(0, 16, 0, 0), BackColor = KioskTheme.Surface };
         server.Controls.Add(new Label { Text = "Folder lub udział z plikiem client.json", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
         server.Controls.Add(source);
+        server.Controls.Add(new Label
+        {
+            Text = "Konto do serwera (opcjonalnie) – potrzebne, gdy komputer nie jest w domenie albo udział nie wpuszcza komputera. Najlepiej wspólne konto tylko do odczytu.",
+            AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = KioskTheme.Muted, Margin = new Padding(0, 8, 0, 2)
+        });
+        var account = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Margin = new Padding(0, 0, 0, 8), BackColor = KioskTheme.Surface };
+        account.Controls.Add(user);
+        account.Controls.Add(password);
+        server.Controls.Add(account);
         var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, Margin = new Padding(0), BackColor = KioskTheme.Surface };
         var test = new Button { Text = "Test", AutoSize = true, Padding = new Padding(12, 0, 12, 0), Margin = new Padding(0, 0, 8, 0) };
         var save = new Button { Text = "Zapisz i uruchom", AutoSize = true, Padding = new Padding(12, 0, 12, 0), Margin = new Padding(0) };
@@ -68,7 +80,7 @@ internal sealed class FirstRunSetup : Form
         {
             test.Enabled = false;
             result.Text = "Sprawdzam dostęp do " + source.Text.Trim() + "…";
-            try { result.Text = await CentralConfig.DescribeTestAsync(source.Text); }
+            try { result.Text = await CentralConfig.DescribeTestAsync(source.Text, Account); }
             finally { if (!IsDisposed) test.Enabled = true; }
         };
         save.Click += (_, _) => Save(local with { ConfigSource = source.Text.Trim().Trim('"'), ShowSetup = false }, "server");
@@ -101,7 +113,7 @@ internal sealed class FirstRunSetup : Form
         {
             if (kind == "server" && chosen.ConfigSource.Length == 0) throw new InvalidDataException("Podaj folder lub udział, np. \\\\serwer\\kiosk.");
             chosen.Validate();
-            Configuration.Save(path, chosen);   // Shared configuration: Windows asks for an administrator.
+            Configuration.Save(path, chosen, kind == "server" ? Account : null);   // Shared configuration: Windows asks for an administrator.
             Audit.Write("first_run_setup", kind == "server" ? chosen.ConfigSource : "local");
             DialogResult = DialogResult.OK;
             Close();

@@ -33,6 +33,13 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
+    private readonly TextBox sourceUser = new() { Width = 300, PlaceholderText = @"DOMENA\użytkownik  albo  serwer\użytkownik", Margin = new Padding(4, 0, 4, 4) };
+    private readonly TextBox sourcePassword = new() { Width = 300, UseSystemPasswordChar = true, PlaceholderText = "hasło", Margin = new Padding(4, 0, 4, 4) };
+    private readonly CheckBox removeAccount = new() { Text = "Usuń zapisane konto (łącz jako komputer)", AutoSize = true, Margin = new Padding(4, 4, 4, 4) };
+
+    /// <summary>The share's account typed in (or "remove") for the save step; null = leave it as it is.</summary>
+    internal CentralConfig.AccountChange? AccountChange =>
+        removeAccount.Checked ? new("", "") : sourceUser.Text.Trim().Length > 0 ? new(sourceUser.Text.Trim(), sourcePassword.Text) : null;
     private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
@@ -435,6 +442,21 @@ internal sealed class SettingsView : UserControl
         });
         configSource.Text = config.ConfigSource;
         updatePanel.Controls.Add(configSource);
+        updatePanel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 12, 4, 4),
+            Text = "Konto do serwera (opcjonalnie). Bez niego Kiosk łączy się jako komputer (DOMENA\\KOMPUTER$) – to działa tylko na komputerze w domenie " +
+                   "i gdy udział ma odczyt dla „Komputery domeny”; „Wszyscy” nie obejmuje komputera spoza domeny. Podaj konto tylko do odczytu, może być wspólne. " +
+                   "Hasło jest szyfrowane dla tego komputera i czytelne tylko dla usługi Kiosku i administratorów. " +
+                   (CentralConfig.AccountSaved ? "Konto jest zapisane – wpisz nowe, aby je zmienić." : "Żadne konto nie jest zapisane.")
+        });
+        var accountRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        accountRow.Controls.Add(sourceUser);
+        accountRow.Controls.Add(sourcePassword);
+        updatePanel.Controls.Add(accountRow);
+        removeAccount.Visible = CentralConfig.AccountSaved;
+        removeAccount.CheckedChanged += (_, _) => { sourceUser.Enabled = sourcePassword.Enabled = !removeAccount.Checked; };
+        updatePanel.Controls.Add(removeAccount);
         sourceTest = new Button { Text = "Test", Size = new Size(120, 34), Margin = new Padding(4, 8, 4, 4) };
         KioskTheme.StyleButton(sourceTest);
         var sourceResult = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 8, 4, 4) };
@@ -443,7 +465,7 @@ internal sealed class SettingsView : UserControl
             var source = configSource.Text;
             sourceTest.Enabled = false;
             sourceResult.Text = "Sprawdzam dostęp do " + source.Trim() + "…";
-            try { sourceResult.Text = await CentralConfig.DescribeTestAsync(source); }
+            try { sourceResult.Text = await CentralConfig.DescribeTestAsync(source, removeAccount.Checked ? null : AccountChange); }
             finally { if (!IsDisposed) sourceTest.Enabled = true; }
         };
         updatePanel.Controls.Add(sourceTest);
@@ -490,6 +512,8 @@ internal sealed class SettingsView : UserControl
             foreach (TabPage page in tabs.TabPages) Preview(page);
             autoUpdate.Enabled = false;
             configSource.ReadOnly = false;
+            sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
+            removeAccount.Enabled = true;
             sourceTest.Enabled = true;
             updateButton.Enabled = true;
         }

@@ -82,23 +82,27 @@ internal static class CentralConfig
     }
 
     /// <summary>"Test" (Konfiguracja and the first-start screen): both checks as two lines, ✔ or ✖ with the reason.</summary>
-    internal static async Task<string> DescribeTestAsync(string source)
+    internal static async Task<string> DescribeTestAsync(string source, AccountChange? typed = null)
     {
-        // As the Kiosk will read it (the Kiosk Card service: this computer's account, or the saved one), and as you.
+        // As the Kiosk will read it (the Kiosk Card service: this computer's account, or the saved one), and as you;
+        // an account typed in but not saved yet is checked from here.
         var machine = Task.Run(() => CardService.Call(new CardService.Request { Op = "testconfig", Source = source }));
         var person = Task.Run(() => Test(source, savedAccount: false));
-        await Task.WhenAll(machine, person);
+        var account = typed is { User.Length: > 0 } ? Task.Run(() => Test(source, savedAccount: false, typed: typed)) : null;
+        await Task.WhenAll(machine, person, account ?? Task.FromResult(new CardService.Response()));
         // A service from before "testconfig" treats it as a card request and answers about the card.
         static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
             (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – zaktualizuj Kiosk (Ctrl+Alt+U)" : r.Message);
-        return "Komputer (usługa Kiosk Card): " + Line(machine.Result) + "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
+        return "Komputer (usługa Kiosk Card): " + Line(machine.Result) +
+            (account != null ? "\nKonto " + typed!.User.Trim() + " (zapisze się po Zapisz): " + Line(account.Result) : "") +
+            "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
     }
 
     /// <summary>
     /// Konfiguracja → "Test": can this account reach the folder, and is its client.json usable? Nothing is copied.
     /// The service checks as the computer (or the saved account), the Konfiguracja window as the person signed in.
     /// </summary>
-    internal static CardService.Response Test(string source, bool savedAccount, bool administrator = true)
+    internal static CardService.Response Test(string source, bool savedAccount, bool administrator = true, AccountChange? typed = null)
     {
         try
         {
@@ -110,7 +114,7 @@ internal static class CentralConfig
             var sameServer = saved != null && string.Equals(Server(source), saved, StringComparison.OrdinalIgnoreCase);
             if (savedAccount && Server(source) != null && !sameServer && !administrator)
                 return new CardService.Response { Code = -2, Message = "inny serwer niż zapisany – sprawdzi go Konfiguracja administratora (Ctrl+Alt+K)" };
-            using (savedAccount && sameServer ? Connect(source) : null)
+            using (typed is { User.Length: > 0 } ? Connect(source, new ShareAccount(typed.User.Trim(), typed.Password)) : savedAccount && sameServer ? Connect(source) : null)
             {
                 if (!Directory.Exists(source)) return new CardService.Response { Code = -1, Message = "brak dostępu do folderu" };
                 var file = Path.Combine(source, FileName);
@@ -191,10 +195,10 @@ internal static class CentralConfig
     }
 
     /// <summary>With a saved account: a connection to the share root for the copy (closed afterwards). Without: null.</summary>
-    private static IDisposable? Connect(string source)
+    private static IDisposable? Connect(string source, ShareAccount? typed = null)
     {
-        if (!File.Exists(CredentialFile) || !source.StartsWith(@"\\", StringComparison.Ordinal)) return null;
-        var account = JsonSerializer.Deserialize<ShareAccount>(Unprotect(File.ReadAllBytes(CredentialFile)))
+        if (typed == null && !File.Exists(CredentialFile) || !source.StartsWith(@"\\", StringComparison.Ordinal)) return null;
+        var account = typed ?? JsonSerializer.Deserialize<ShareAccount>(Unprotect(File.ReadAllBytes(CredentialFile), Entropy))
             ?? throw new InvalidDataException("Zapisane konto do serwera jest puste.");
         var parts = source.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 2) throw new InvalidDataException("Adres udziału podaj jako \\\\serwer\\udział\\…");
@@ -211,10 +215,76 @@ internal static class CentralConfig
         public void Dispose() => WNetCancelConnection2(share, 0, true);
     }
 
-    private static byte[] Unprotect(byte[] data)
+    /// <summary>A change of the share's account from Konfiguracja or the first start; an empty User removes the saved one.</summary>
+    internal sealed record AccountChange(string User, string Password);
+
+    /// <summary>An account is saved (the file itself is readable only by SYSTEM and administrators).</summary>
+    internal static bool AccountSaved => File.Exists(CredentialFile);
+
+    private static readonly byte[] StagedEntropy = Encoding.UTF8.GetBytes("Kiosk.ConfigSource.Staged");
+
+    /// <summary>Saves or removes the share's account; needs an administrator (or SYSTEM).</summary>
+    internal static void WriteAccount(AccountChange change)
+    {
+        if (File.Exists(CredentialFile)) File.Delete(CredentialFile);
+        if (change.User.Trim().Length == 0) { Audit.Write("config_source_account_removed"); return; }
+        var plain = JsonSerializer.SerializeToUtf8Bytes(new ShareAccount(change.User.Trim(), change.Password));
+        byte[] blob;
+        try { blob = Protect(plain, Entropy); }
+        finally { Array.Clear(plain); }
+        // Only SYSTEM (the Kiosk Card service) and administrators: DPAPI for the computer alone would let any local user read it.
+        var security = new System.Security.AccessControl.FileSecurity();
+        security.SetAccessRuleProtection(true, false);
+        foreach (var sid in new[] { System.Security.Principal.WellKnownSidType.LocalSystemSid, System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid })
+            security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(sid, null),
+                System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        Directory.CreateDirectory(KioskData);
+        using (var file = FileSystemAclExtensions.Create(new FileInfo(CredentialFile), FileMode.CreateNew, System.Security.AccessControl.FileSystemRights.FullControl,
+            FileShare.None, 4096, FileOptions.None, security))
+            file.Write(blob);
+        Audit.Write("config_source_account_saved", change.User.Trim());
+    }
+
+    /// <summary>For the elevated save step: the change in this person's temporary folder, protected for this computer.</summary>
+    internal static string StageAccount(AccountChange change)
+    {
+        var staged = Path.Combine(Path.GetTempPath(), "Kiosk-account-" + Guid.NewGuid().ToString("N") + ".bin");
+        var plain = JsonSerializer.SerializeToUtf8Bytes(change);
+        try { File.WriteAllBytes(staged, Protect(plain, StagedEntropy)); }
+        finally { Array.Clear(plain); }
+        return staged;
+    }
+
+    internal static AccountChange ReadStaged(string staged)
+    {
+        var plain = Unprotect(File.ReadAllBytes(staged), StagedEntropy);
+        try { return JsonSerializer.Deserialize<AccountChange>(plain) ?? throw new InvalidDataException("Puste konto."); }
+        finally { Array.Clear(plain); }
+    }
+
+    private static byte[] Protect(byte[] data, byte[] entropyBytes)
     {
         var input = Pin(data);
-        var entropy = Pin(Entropy);
+        var entropy = Pin(entropyBytes);
+        try
+        {
+            if (!CryptProtectData(ref input.Blob, null, ref entropy.Blob, IntPtr.Zero, IntPtr.Zero, 0x1 | 0x4, out var output))   // UI_FORBIDDEN | LOCAL_MACHINE
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Nie można zaszyfrować konta do serwera.");
+            try
+            {
+                var blob = new byte[output.Size];
+                Marshal.Copy(output.Data, blob, 0, output.Size);
+                return blob;
+            }
+            finally { LocalFree(output.Data); }
+        }
+        finally { input.Handle.Free(); entropy.Handle.Free(); }
+    }
+
+    private static byte[] Unprotect(byte[] data, byte[] entropyBytes)
+    {
+        var input = Pin(data);
+        var entropy = Pin(entropyBytes);
         try
         {
             if (!CryptUnprotectData(ref input.Blob, IntPtr.Zero, ref entropy.Blob, IntPtr.Zero, IntPtr.Zero, 0x1, out var output))   // CRYPTPROTECT_UI_FORBIDDEN
@@ -242,6 +312,8 @@ internal static class CentralConfig
     [DllImport("crypt32.dll", SetLastError = true)]
     private static extern bool CryptUnprotectData(ref DataBlob input, IntPtr description, ref DataBlob entropy, IntPtr reserved, IntPtr prompt, int flags, out DataBlob output);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CryptProtectData(ref DataBlob input, string? description, ref DataBlob entropy, IntPtr reserved, IntPtr prompt, int flags, out DataBlob output);
     [DllImport("mpr.dll", CharSet = CharSet.Unicode)] private static extern int WNetAddConnection2(ref NetResource resource, string? password, string? user, int flags);
     [DllImport("mpr.dll", CharSet = CharSet.Unicode)] private static extern int WNetCancelConnection2(string name, int flags, bool force);
 }

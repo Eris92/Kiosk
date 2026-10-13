@@ -85,7 +85,7 @@ internal static class AdminSettings
         view.SaveRequested += updated =>
         {
             // From a server's configuration only its address is saved here; the rest is edited on the server.
-            Configuration.Save(configPath, loaded.Central ? loaded.Local with { ConfigSource = updated.ConfigSource } : updated);
+            Configuration.Save(configPath, loaded.Central ? loaded.Local with { ConfigSource = updated.ConfigSource } : updated, view.AccountChange);
             Audit.Write("settings_saved", "administrator");
             result = 0;
             form.Close();
