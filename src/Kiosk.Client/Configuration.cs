@@ -33,7 +33,8 @@ internal sealed record ApplicationEntry
 
 /// <summary>
 /// Szybka pomoc: a button on the desktop that works locked and unlocked. Action: https://… (a guest browser window when
-/// nobody is signed in), kiosk:zmien-pin, kiosk:nowa-karta (set the card up again), kiosk:reset-karty.
+/// nobody is signed in), kiosk:zmien-pin, kiosk:nowa-karta (set the card up again), kiosk:reset-karty,
+/// kiosk:pierwsze-logowanie (one Windows sign-in for the profile and SSO, then back to the Kiosk).
 /// </summary>
 internal sealed record HelpAction
 {
@@ -42,11 +43,13 @@ internal sealed record HelpAction
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
 
-    internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty";
-    internal static readonly string[] BuiltIn = [ChangePin, Reenroll, ResetCard];
+    internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty",
+        FirstSignIn = "kiosk:pierwsze-logowanie";
+    internal static readonly string[] BuiltIn = [ChangePin, Reenroll, ResetCard, FirstSignIn];
 
     internal static HelpAction[] Defaults =>
     [
+        new() { Name = "Pierwsze logowanie", Action = FirstSignIn },
         new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup" },
         new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr" },
         new() { Name = "Zmień PIN karty", Action = ChangePin },

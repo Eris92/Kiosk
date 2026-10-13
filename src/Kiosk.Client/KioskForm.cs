@@ -1052,6 +1052,7 @@ internal sealed class KioskForm : Form
             case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
             case HelpAction.Reenroll: ForgetCard(); break;
             case HelpAction.ResetCard: await ResetCardAsync(); break;
+            case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
             default:
                 // Always the help window (also when signed in), so it closes after the time set for Szybka pomoc.
                 helpBrowser?.Close();
@@ -1103,6 +1104,30 @@ internal sealed class KioskForm : Form
             }
         }
         finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+    }
+
+    /// <summary>
+    /// Szybka pomoc → Pierwsze logowanie: the Windows sign-in screen for one sign-in (profile, SSO); the Kiosk Card
+    /// service brings this session back and signs the person out as soon as their desktop has started.
+    /// </summary>
+    private async Task FirstSignInAsync()
+    {
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Pierwsze logowanie", "Za chwilę pojawi się ekran logowania Windows. Zaloguj się swoim kontem (kartą, Windows Hello albo hasłem). " +
+                "Windows przygotuje Twój profil i logowanie jednokrotne, a potem sam wróci do Kiosku – to może potrwać kilka minut. Kontynuować?", config.HelpCloseSeconds);
+        }
+        finally { verifying = false; }
+        if (!confirmed) { ShowHelpResult("Anulowano."); return; }
+        var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "firstsignin" }));
+        Audit.Write(answer.Code == 0 ? "first_signin_started" : "first_signin_unavailable", answer.Message);
+        if (answer.Code != 0) { ShowHelpResult("Pierwsze logowanie nie jest dostępne: " + answer.Message); return; }
+        ShowHelpResult("Po zalogowaniu do Windows wrócisz tu automatycznie.");
+        if (current != null) Park(current, "first_signin");
+        try { WindowsSession.Disconnect(); }
+        catch (Exception ex) { ShowHelpResult("Nie udało się pokazać ekranu logowania Windows: " + ex.Message); }
     }
 
     /// <summary>Szybka pomoc → Skonfiguruj kartę od nowa: Kiosk forgets the account saved for this card.</summary>

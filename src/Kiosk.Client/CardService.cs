@@ -24,7 +24,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -146,9 +146,11 @@ internal static class CardService
 
     private static void ServiceMainProc(int argc, IntPtr argv)
     {
-        handler = (control, _, _, _) =>
+        handler = (control, eventType, eventData, _) =>
         {
             if (control is 1 or 5) { SetStatus(3); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
+            // SESSIONCHANGE / WTS_SESSION_LOGON: Szybka pomoc → Pierwsze logowanie waits for it.
+            if (control == 0x0E && eventType == 5 && eventData != IntPtr.Zero) FirstSignIn.SignedIn(Marshal.ReadInt32(eventData, 4));
             return 0;
         };
         statusHandle = RegisterServiceCtrlHandlerEx(ServiceName, handler, IntPtr.Zero);
@@ -175,7 +177,10 @@ internal static class CardService
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
                 var line = reader.ReadLine();
                 var request = line == null ? null : JsonSerializer.Deserialize<Request>(line);
-                var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." } : Handle(request);
+                var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }
+                    // The session comes from Windows (the pipe's client), not from the request.
+                    : request.Op == "firstsignin" ? FirstSignIn.Arm(GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var session) ? session : -1)
+                    : Handle(request);
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');
                 pipe.Flush();
@@ -187,7 +192,7 @@ internal static class CardService
 
     private static void SetStatus(int state)
     {
-        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 : 0, WaitHint = 3000 };
+        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 | 0x80 : 0, WaitHint = 3000 };
         SetServiceStatus(statusHandle, ref status);
     }
 
@@ -200,4 +205,5 @@ internal static class CardService
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool StartServiceCtrlDispatcher(ServiceTableEntry[] table);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr RegisterServiceCtrlHandlerEx(string name, HandlerEx handler, IntPtr context);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetServiceStatus(IntPtr handle, ref ServiceStatus status);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientSessionId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out int session);
 }

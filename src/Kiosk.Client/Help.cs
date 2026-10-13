@@ -36,6 +36,7 @@ internal sealed class HelpBar : Control
     {
         HelpAction.ChangePin => "",   // key
         HelpAction.Reenroll => "",    // person
+        HelpAction.FirstSignIn => "\uE77B",  // contact
         HelpAction.ResetCard => "",   // restore
         var a when a.Contains("mfa") || a.Contains("security") => "", // lock
         _ => ""                        // globe
