@@ -143,6 +143,20 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(password); }
     }
 
+    private Microsoft.Win32.SafeHandles.SafeAccessTokenHandle? token;
+
+    /// <summary>Runs <paramref name="work"/> as this person (Pliki: their folders, with their rights).</summary>
+    internal object? RunAs(Func<object?> work)
+    {
+        if (token == null || token.IsInvalid)
+        {
+            var password = Reveal();
+            try { if (!LogonUser(user, domain, password, 2, 0, out token)) throw new Win32Exception(); }   // LOGON32_LOGON_INTERACTIVE
+            finally { Array.Clear(password); }
+        }
+        return System.Security.Principal.WindowsIdentity.RunImpersonated(token, work);
+    }
+
     /// <summary>
     /// First use on this PC: Windows creates the person's profile (C:\Users\…) when a program first starts as them.
     /// Do it once with a hidden "cmd /c exit" and wait, so Edge and the apps start in a finished profile instead of
@@ -178,7 +192,7 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(copy); }
     }
 
-    public void Dispose() { if (secret != null) { Array.Clear(secret); secret = null; } }
+    public void Dispose() { if (secret != null) { Array.Clear(secret); secret = null; } token?.Dispose(); token = null; }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }

@@ -28,7 +28,11 @@ internal sealed record ApplicationEntry
     internal const string BuiltInBrowser = "kiosk:przegladarka";
     internal static ApplicationEntry Browser => new() { Name = "Przeglądarka", Path = BuiltInBrowser };
     internal bool IsBuiltInBrowser => string.Equals(Path, BuiltInBrowser, StringComparison.OrdinalIgnoreCase);
-    internal bool IsBuiltIn => IsBuiltInNotes || IsBuiltInBrowser;
+    /// <summary>Path of the built-in file manager (Pliki); Explorer itself cannot run inside the Kiosk.</summary>
+    internal const string BuiltInFiles = "kiosk:pliki";
+    internal static ApplicationEntry Files => new() { Name = "Pliki", Path = BuiltInFiles };
+    internal bool IsBuiltInFiles => string.Equals(Path, BuiltInFiles, StringComparison.OrdinalIgnoreCase);
+    internal bool IsBuiltIn => IsBuiltInNotes || IsBuiltInBrowser || IsBuiltInFiles;
 }
 
 /// <summary>

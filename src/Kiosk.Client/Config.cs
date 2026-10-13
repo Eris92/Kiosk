@@ -137,7 +137,7 @@ internal sealed record Config
     public bool TestMode { get; init; } = true;
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
-    internal const int CurrentVersion = 4;
+    internal const int CurrentVersion = 5;
 
     // Read older installations without losing their target or settings.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Server { get; init; }
@@ -167,6 +167,8 @@ internal sealed record Config
         var applications = ConfigVersion < 2 && Applications != null && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications!;
         // Version 3: the browser became an entry of the application list instead of the EnableBrowser switch.
         if (ConfigVersion < 3 && applications != null && EnableBrowser && !applications.Any(a => a.IsBuiltInBrowser)) applications = [ApplicationEntry.Browser, .. applications];
+        // Version 5: the built-in file manager (Pliki) joins the list; remove it there to turn it off.
+        if (ConfigVersion < 5 && applications != null && !applications.Any(a => a.IsBuiltInFiles)) applications = [.. applications, ApplicationEntry.Files];
         return this with
         {
             RdpConnections = RdpConnections.Length == 0 && !string.IsNullOrWhiteSpace(Server)
@@ -258,5 +260,6 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy aplikacji muszą być unikalne.");
         if (Applications.Count(a => a.IsBuiltInNotes) > 1) throw new InvalidDataException("Wbudowany Notatnik może być na liście tylko raz.");
         if (Applications.Count(a => a.IsBuiltInBrowser) > 1) throw new InvalidDataException("Wbudowana przeglądarka może być na liście tylko raz.");
+        if (Applications.Count(a => a.IsBuiltInFiles) > 1) throw new InvalidDataException("Wbudowane Pliki mogą być na liście tylko raz.");
     }
 }

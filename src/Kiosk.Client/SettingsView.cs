@@ -240,7 +240,7 @@ internal sealed class SettingsView : UserControl
         allowedDomains.Text = string.Join(", ", config.BrowserAllowedDomains);
         allowedDomains.Enabled = onlyBookmarks.Checked;
         onlyBookmarks.CheckedChanged += (_, _) => allowedDomains.Enabled = onlyBookmarks.Checked;
-        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Przeglądarka (" + ApplicationEntry.BuiltInBrowser + ") i Notatnik (" + ApplicationEntry.BuiltInNotes + ") to aplikacje wbudowane: usuń wiersz, aby je wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32.");
+        SetupGridTab(applications, apps, "Każda pozycja pojawia się w Menu. Przeglądarka (" + ApplicationEntry.BuiltInBrowser + "), Notatnik (" + ApplicationEntry.BuiltInNotes + ") i Pliki (" + ApplicationEntry.BuiltInFiles + ") to aplikacje wbudowane: usuń wiersz, aby je wyłączyć. Osadzanie obsługuje zgodne aplikacje Win32.");
         var choose = new Button { Text = "Wybierz plik EXE…", AutoSize = true, Dock = DockStyle.Bottom };
         choose.Click += (_, _) => ChooseExecutable();
         applications.Controls.Add(choose);
@@ -251,6 +251,13 @@ internal sealed class SettingsView : UserControl
             apps.Rows.Add(ApplicationEntry.Notes.Name, ApplicationEntry.BuiltInNotes, "", "");
         };
         applications.Controls.Add(addNotes);
+        var addFiles = new Button { Text = "Dodaj wbudowane Pliki", AutoSize = true, Dock = DockStyle.Bottom };
+        addFiles.Click += (_, _) =>
+        {
+            if (apps.Rows.Cast<DataGridViewRow>().Any(r => !r.IsNewRow && string.Equals(Cell(r, "Path"), ApplicationEntry.BuiltInFiles, StringComparison.OrdinalIgnoreCase))) return;
+            apps.Rows.Add(ApplicationEntry.Files.Name, ApplicationEntry.BuiltInFiles, "", "");
+        };
+        applications.Controls.Add(addFiles);
         var addBrowser = new Button { Text = "Dodaj wbudowaną przeglądarkę", AutoSize = true, Dock = DockStyle.Bottom };
         addBrowser.Click += (_, _) =>
         {

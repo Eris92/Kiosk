@@ -32,6 +32,7 @@ internal sealed class KioskForm : Form
         internal Dictionary<string, ApplicationView> Applications { get; } = new(StringComparer.OrdinalIgnoreCase);
         internal BrowserView? Browser { get; set; }
         internal NotesView? Notes { get; set; }
+        internal FilesView? Files { get; set; }
         internal Control? LastView { get; set; }
         internal bool Locked { get; set; } = true;
         internal bool Verified { get; set; }
@@ -50,7 +51,7 @@ internal sealed class KioskForm : Form
         internal bool ScreensOpened { get; set; }
     }
 
-    private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
+    private const string BrowserKey = "browser", NotesKey = "notes", FilesKey = "files", SettingsKey = "settings";
     // As saved in Konfiguracja (unticked entries included) and what Kiosk works with (only the ticked ones).
     private Config fullConfig = null!, activeConfig = null!;
     private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); } }
@@ -868,6 +869,8 @@ internal sealed class KioskForm : Form
                 KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null)
             : a.IsBuiltInNotes
             ? new MenuItemSpec(a.Name, s?.Notes != null ? "Otwarty" : "Notatki tekstowe", OpenNotes, can, KioskIcons.Notes)
+            : a.IsBuiltInFiles
+            ? new MenuItemSpec(a.Name, s?.Files != null ? "Otwarte" : "Foldery i pliki", OpenFiles, can, KioskIcons.Files)
             : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can,
                 KioskIcons.App, KioskIcons.ForProgram(a.Path))));
         if (apps.Count == 0) apps.Add(new MenuItemSpec("Brak aplikacji", "Dodaj je w Konfiguracji", () => { }, false));
@@ -913,6 +916,7 @@ internal sealed class KioskForm : Form
         if (w.Key.StartsWith("rdp:")) return (KioskIcons.Remote, null);
         if (w.Key == BrowserKey || w.Key.StartsWith("browser:") || w.Key.StartsWith("web:")) return (KioskIcons.Browser, null);
         if (w.Key == NotesKey) return (KioskIcons.Notes, null);
+        if (w.Key == FilesKey) return (KioskIcons.Files, null);
         if (w.Key == SettingsKey) return (KioskIcons.Settings, null);
         if (w.View is ApplicationView app && app.ProgramPath.Length > 0) return (KioskIcons.App, KioskIcons.ForProgram(app.ProgramPath));
         return (KioskIcons.App, null);
@@ -1359,6 +1363,7 @@ internal sealed class KioskForm : Form
         else if (window.Key.StartsWith("app:")) session.Applications.Remove(window.Key[4..]);
         else if (window.Key == BrowserKey) session.Browser = null;
         else if (window.Key == NotesKey) { session.Notes?.Editor.Clear(); session.Notes = null; }
+        else if (window.Key == FilesKey) session.Files = null;
         else if (window.Key == SettingsKey) settingsView = null;
         if (session.LastView == window.View) session.LastView = null;
         HostOf(window.View)?.Release();
@@ -1516,6 +1521,37 @@ internal sealed class KioskForm : Form
         session.Notes.Editor.Focus();
     }
 
+    /// <summary>Menu → Pliki: the Kiosk's file manager; after "Zaloguj" it works as that person, in their folders.</summary>
+    private void OpenFiles()
+    {
+        if (current?.Files != null) { ActivateExisting(FilesKey); return; }
+        if (!CheckCard()) return;
+        var session = current!;
+        var logon = session.Logon;
+        Func<Func<object?>, object?> runAs = logon != null ? logon.RunAs : work => work();
+        try { session.Files = new FilesView(runAs, logon?.ProfileDirectory); }
+        catch (Exception ex) { notice = "Nie można otworzyć Plików: " + ex.Message; Audit.Write("files_error", ex.Message); RefreshChrome(); return; }
+        session.Files.OpenRequested += path => _ = OpenFileAsync(session, path);
+        AddWindow(session, FilesKey, config.Applications.FirstOrDefault(a => a.IsBuiltInFiles)?.Name ?? "Pliki", session.Files);
+        Audit.Write("files_opened");
+    }
+
+    /// <summary>Pliki: a file opens in the program Windows associates with it, hosted like any application.</summary>
+    private async Task OpenFileAsync(UserSession session, string path)
+    {
+        if (current != session) return;
+        var command = FileAssociation.Command(path);
+        if (command == null)
+        {
+            notice = "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.";
+            Audit.Write("file_open_failed", Path.GetExtension(path));
+            RefreshChrome();
+            return;
+        }
+        Audit.Write("file_opened", Path.GetExtension(path));
+        await OpenApplicationAsync(new ApplicationEntry { Name = Path.GetFileName(path), Path = command.Value.Program, Arguments = command.Value.Arguments });
+    }
+
     private ApplicationEntry EdgeAsUser => new()
     {
         Name = "Przeglądarka",
@@ -1586,6 +1622,7 @@ internal sealed class KioskForm : Form
     private async Task OpenApplicationAsync(ApplicationEntry entry, bool another = false)
     {
         if (entry.IsBuiltInNotes) { OpenNotes(); return; }
+        if (entry.IsBuiltInFiles) { OpenFiles(); return; }
         if (entry.IsBuiltInBrowser) { await OpenBrowserAsync(); return; }
         var key = "app:" + entry.Name;
         if (current?.Applications.TryGetValue(entry.Name, out var existing) == true)
@@ -1935,8 +1972,8 @@ internal sealed class KioskForm : Form
         legacy.Validate();
         if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
-            legacy.Applications.Length != 2 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.EnableBrowser ||
-            legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 2)
+            legacy.Applications.Length != 3 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.Applications[2].IsBuiltInFiles || !legacy.EnableBrowser ||
+            legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 3)
             throw new InvalidOperationException("Legacy configuration migration failed.");
         foreach (var invalid in new[]
         {
