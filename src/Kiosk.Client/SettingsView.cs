@@ -596,8 +596,10 @@ internal sealed class SettingsView : UserControl
         if (Math.Abs(factor - 1) < 0.01) return;
         Scale(new SizeF(factor, factor));
         accent.ItemHeight = (int)(26 * factor);   // owner-drawn: Scale leaves the item height (the colour bar was cut off)
-        foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands })
+        // A check box that does not fit its row is not drawn at all (Szybka pomoc was missing here: empty "Wł." column).
+        foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands, helpActions })
         {
+            if (grid.Columns["Enabled"] is { } enabled) { enabled.MinimumWidth = (int)(40 * factor); enabled.Width = (int)(48 * factor); }
             grid.ColumnHeadersHeight = (int)(34 * factor);
             grid.RowTemplate.Height = (int)(30 * factor);
             grid.RowHeadersWidth = (int)(28 * factor);
