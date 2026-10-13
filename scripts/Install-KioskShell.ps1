@@ -8,7 +8,8 @@ Run as administrator on a domain-joined or Intune (Entra ID) PC. For Intune-mana
 Shell Launcher profile in config/intune (this script does the same locally, e.g. for testing).
 
   * Copies the Kiosk build to -InstallPath and the configuration to -ConfigPath
-    (administrators: full control, users: read only). SessionMode is set to WindowsShell and TestMode off,
+    (administrators: full control, users: read only). SessionMode becomes WindowsShell, except that an
+    existing configuration keeps the mode it has; TestMode is turned off,
     so only admin cards and Windows administrators see Konfiguracja; saving it asks for a Windows administrator.
   * Shell:
       ShellLauncher (Windows Enterprise / Education / IoT Enterprise): Kiosk is the shell for everyone
@@ -86,12 +87,14 @@ if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
 }
-if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode = WindowsShell)')) {
+if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode WindowsShell for a new configuration)')) {
     $directory = Split-Path $ConfigPath
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    if (-not (Test-Path $ConfigPath)) { Copy-Item $SourceConfig $ConfigPath }
+    $existing = Test-Path $ConfigPath
+    if (-not $existing) { Copy-Item $SourceConfig $ConfigPath }
     $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-    $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
+    # An installed configuration keeps its mode (e.g. Kiosk: one shared account, people switch by card).
+    if (-not $existing -or -not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force }
     $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
     # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
