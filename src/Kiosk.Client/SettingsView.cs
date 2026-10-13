@@ -436,17 +436,7 @@ internal sealed class SettingsView : UserControl
             var source = configSource.Text;
             sourceTest.Enabled = false;
             sourceResult.Text = "Sprawdzam dostęp do " + source.Trim() + "…";
-            try
-            {
-                // As the Kiosk will read it (the Kiosk Card service: this computer's account, or the saved one), and as you.
-                var machine = Task.Run(() => CardService.Call(new CardService.Request { Op = "testconfig", Source = source }));
-                var person = Task.Run(() => CentralConfig.Test(source, savedAccount: false));
-                await Task.WhenAll(machine, person);
-                // A service from before "testconfig" treats it as a card request and answers about the card.
-                static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
-                    (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – zaktualizuj Kiosk (Ctrl+Alt+U)" : r.Message);
-                sourceResult.Text = "Komputer (usługa Kiosk Card): " + Line(machine.Result) + "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
-            }
+            try { sourceResult.Text = await CentralConfig.DescribeTestAsync(source); }
             finally { if (!IsDisposed) sourceTest.Enabled = true; }
         };
         updatePanel.Controls.Add(sourceTest);

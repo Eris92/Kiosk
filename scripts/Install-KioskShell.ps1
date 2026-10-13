@@ -23,6 +23,8 @@ Shell Launcher profile in config/intune (this script does the same locally, e.g.
     and Konfiguracja on the PC becomes a preview. -ConfigSource "" switches back to the PC's own configuration.
     The Kiosk Card service reads the share as the computer account; -ConfigSourceCredential (Get-Credential) saves
     an account for it instead (see Set-KioskConfigSource.ps1).
+  * A new configuration without -ConfigSource shows a first-start screen: local configuration or a server.
+    -SkipSetup leaves it out (the PC keeps its own configuration).
 
 -Uninstall reverts the shell and sign-in settings (files are left in place).
 Supports -WhatIf. Nothing here bypasses execution policy; sign the script per your policy.
@@ -36,6 +38,7 @@ param(
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
     [string]$ConfigSource,
+    [switch]$SkipSetup,
     [pscredential]$ConfigSourceCredential,
     [switch]$Uninstall
 )
@@ -103,6 +106,9 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode Windo
     if (-not $existing -or -not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force }
     $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
     if ($PSBoundParameters.ContainsKey('ConfigSource')) { $json | Add-Member -NotePropertyName ConfigSource -NotePropertyValue $ConfigSource.Trim() -Force }
+    # A new configuration without a server asks once at the first start: local configuration or a server (one package for every site).
+    if (-not $existing) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue (-not $SkipSetup -and -not $ConfigSource) -Force }
+    elseif ($SkipSetup -or $ConfigSource) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue $false -Force }
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
     # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null

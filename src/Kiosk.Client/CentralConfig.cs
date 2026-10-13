@@ -81,6 +81,19 @@ internal static class CentralConfig
         }
     }
 
+    /// <summary>"Test" (Konfiguracja and the first-start screen): both checks as two lines, ✔ or ✖ with the reason.</summary>
+    internal static async Task<string> DescribeTestAsync(string source)
+    {
+        // As the Kiosk will read it (the Kiosk Card service: this computer's account, or the saved one), and as you.
+        var machine = Task.Run(() => CardService.Call(new CardService.Request { Op = "testconfig", Source = source }));
+        var person = Task.Run(() => Test(source, savedAccount: false));
+        await Task.WhenAll(machine, person);
+        // A service from before "testconfig" treats it as a card request and answers about the card.
+        static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
+            (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – zaktualizuj Kiosk (Ctrl+Alt+U)" : r.Message);
+        return "Komputer (usługa Kiosk Card): " + Line(machine.Result) + "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
+    }
+
     /// <summary>
     /// Konfiguracja → "Test": can this account reach the folder, and is its client.json usable? Nothing is copied.
     /// The service checks as the computer (or the saved account), the Konfiguracja window as the person signed in.

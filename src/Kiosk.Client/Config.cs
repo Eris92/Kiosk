@@ -80,6 +80,9 @@ internal sealed record Config
     public bool EnableBrowser { get; init; } = true;
     /// <summary>When Kiosk starts it installs a newer GitHub release by itself (Konfiguracja → Aktualizacja).</summary>
     public bool AutoUpdate { get; init; } = true;
+    /// <summary>First start: ask whether this PC uses its own configuration or one from a server (FirstRunSetup).
+    /// Set by Install-KioskShell.ps1 for a new configuration without -ConfigSource / -SkipSetup; cleared by the answer.</summary>
+    public bool ShowSetup { get; init; }
     public bool BrowserOnlyBookmarks { get; init; }
     public string[] BrowserAllowedDomains { get; init; } = [];
     public ApplicationEntry[] Applications { get; init; } = [];

@@ -94,6 +94,13 @@ internal static class Program
                 catch (AbandonedMutexException) { first = true; }
             }
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
+            // A new installation asks once: this PC's own configuration, or a server's (FirstRunSetup).
+            if (FirstRunSetup.RunIfNeeded(path, loaded.Local))
+            {
+                loaded = CentralConfig.Load(path);
+                config = loaded.Effective;
+                KioskTheme.SetAccent(config.AccentColor);
+            }
             Application.Run(new KioskForm(config, path, loaded));
             return 0;
         }
