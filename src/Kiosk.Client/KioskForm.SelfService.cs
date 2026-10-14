@@ -29,6 +29,39 @@ internal sealed partial class KioskForm
         catch (Exception ex) { Audit.Write("card_identity_error", ex.Message); return null; }
     }
 
+    /// <summary>Keeps the card's browser running between Szybka pomoc pages: a web sign-in is mostly a session cookie,
+    /// which lives only as long as the browser does, so without it every page asked to sign in again.</summary>
+    private CardBrowserKeeper? cardKeeper;
+    /// <summary>The Windows security window (passkey / security key) the card was already woken for.</summary>
+    private IntPtr credentialPrompt;
+
+    private static bool SameCardInPlace(string a, string b) =>
+        a[..a.IndexOf(':')] == b[..b.IndexOf(':')] && a[(a.LastIndexOf(':') + 1)..] == b[(b.LastIndexOf(':') + 1)..];
+
+    /// <summary>
+    /// Windows' security key window waits for a card to be put on the reader ("Dotknij czytnika kluczem"); a card
+    /// that already lies there is not noticed. When that window opens, the card is switched off and on once, which
+    /// Windows sees as a fresh tap, so the person only types the PIN.
+    /// </summary>
+    private void WakeCardForWindows()
+    {
+        var prompt = IntPtr.Zero;
+        foreach (var process in System.Diagnostics.Process.GetProcessesByName("CredentialUIBroker"))
+            using (process)
+                try { if (process.MainWindowHandle != IntPtr.Zero) prompt = process.MainWindowHandle; }
+                catch (InvalidOperationException) { }
+        if (prompt == IntPtr.Zero || prompt == credentialPrompt) return;
+        credentialPrompt = prompt;
+        var readerName = reader.ActiveReader;
+        Audit.Write("selfservice_card_wake");
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(800);   // Let the window start listening first.
+            try { CtapCard.PowerCycle(readerName); }
+            catch (Exception ex) { Audit.Write("selfservice_card_wake_error", ex.Message); }
+        });
+    }
+
     private void SelfServiceTick()
     {
         // While a PIN is asked or checked the card is reset on purpose; presence changes are evaluated afterwards.
@@ -40,8 +73,13 @@ internal sealed partial class KioskForm
             EndCardSession("selfservice_card_removed");
             return;
         }
+        if (cardFolder != null && key != null) WakeCardForWindows();
         if (key == cardKey) return;
+        var previous = cardKey;
         cardKey = key;
+        // Reset in place (Windows signing in with it, or the Kiosk waking it): the same reader and card, only the
+        // insert counter moved. Nobody swaps cards within a quarter second, and reading it now would disturb Windows.
+        if (cardFolder != null && cardAwaySince == null && previous != null && key != null && SameCardInPlace(previous, key)) return;
         if (key == null)
         {
             if (cardFolder == null) return;
@@ -67,6 +105,7 @@ internal sealed partial class KioskForm
         var folder = Path.Combine(CardFolders, Guid.NewGuid().ToString("N"));
         cardFolder = folder;
         cardId = PresentCardId();
+        cardKeeper = new CardBrowserKeeper(folder);
         notice = null;
         Audit.Write("selfservice_card");
         RefreshChrome();
@@ -93,6 +132,9 @@ internal sealed partial class KioskForm
         cardId = null;
         cardAwaySince = null;
         helpBrowser?.Close();
+        cardKeeper?.Close();
+        cardKeeper = null;
+        credentialPrompt = IntPtr.Zero;
         notice = null;
         if (reason != null) Audit.Write(reason);
         DeleteCardFolder(folder);
@@ -125,5 +167,32 @@ internal sealed partial class KioskForm
         else
             desktop.UpdateStatus("Karta przyłożona", notice ?? (verifying || desktop.AskingPin ? "Sprawdzam kartę…" :
                 "Wybierz zadanie z Szybkiej pomocy. Logujesz się raz – działa, dopóki karta leży na czytniku. Zabierz kartę, aby zakończyć."));
+    }
+}
+
+/// <summary>An invisible window holding the card session's browser open (see KioskForm.cardKeeper).</summary>
+internal sealed class CardBrowserKeeper : Form
+{
+    private readonly BrowserView browser;
+
+    internal CardBrowserKeeper(string folder)
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        Bounds = new Rectangle(-32000, -32000, 1, 1);
+        Opacity = 0;
+        browser = new BrowserView([], null, null, windowsAccount: false, singlePage: true, profileFolder: folder) { Dock = DockStyle.Fill };
+        Controls.Add(browser);
+        Show();
+        _ = Start();
+    }
+
+    protected override bool ShowWithoutActivation => true;
+
+    private async Task Start()
+    {
+        try { await browser.InitializeAsync("about:blank"); }
+        catch (Exception ex) { Audit.Write("selfservice_keeper_error", ex.Message); }
     }
 }
