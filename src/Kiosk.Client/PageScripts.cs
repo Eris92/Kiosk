@@ -89,10 +89,11 @@ internal static class PageScripts
               if (s) s.click();
               else if (form) { if (form.requestSubmit) form.requestSubmit(); else form.submit(); }
             }, 300);
-            const done = new Set();
+            // A button may come back (Onet shows a second consent layer): clicked again, at most 3 times per text.
+            const done = {};
             let tries = 0;
             const step = () => {
-              for (const t of clicks) if (!done.has(t)) { const b = find(t); if (b) { b.click(); done.add(t); } }
+              for (const t of clicks) if ((done[t] || 0) < 3) { const b = find(t); if (b) { b.click(); done[t] = (done[t] || 0) + 1; } }
               if (pass !== null) {
                 const p = [...document.querySelectorAll('input[type=password]')].find(visible);
                 if (p && !sessionStorage.getItem(page + ':pass')) {
