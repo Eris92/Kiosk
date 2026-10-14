@@ -208,7 +208,7 @@ internal sealed class BrowserView : UserControl
         await web.EnsureCoreWebView2Async(environment, options);
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
-        PageScripts.Attach(core, kiosk: singlePage);   // singlePage: the Szybka pomoc guest window (nobody signed in)
+        PageScripts.Attach(core, kiosk: singlePage, sharedFolder ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
         core.Settings.AreDevToolsEnabled = false;
         // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.

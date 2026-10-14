@@ -13,8 +13,22 @@ internal static class PageScripts
     /// <summary>Set by the Kiosk whenever the configuration is (re)loaded.</summary>
     internal static PageAction[] Actions { get; set; } = [];
 
+    /// <summary>
+    /// Punkt samoobsługowy: Microsoft's sign-in goes straight to the card (security key, FIDO2) instead of asking for
+    /// the login first: "Opcje logowania", then the security key. Pages without these buttons stay as they are.
+    /// </summary>
+    internal static readonly PageAction[] CardSignIn =
+    [
+        .. new[] { "login.microsoftonline.com", "login.microsoft.com", "login.live.com" }.Select(host => new PageAction
+        {
+            Url = host, Once = true,
+            Click = "Opcje logowania;Sign-in options;klucz zabezpieczen;security key"
+        })
+    ];
+
     /// <param name="kiosk">The Kiosk's own page while nobody works (screens, lock screen, Szybka pomoc), not a person's browser.</param>
-    internal static void Attach(CoreWebView2 core, bool kiosk)
+    /// <param name="extra">Built-in actions of this browser on top of the configured ones (<see cref="CardSignIn"/>).</param>
+    internal static void Attach(CoreWebView2 core, bool kiosk, PageAction[]? extra = null)
     {
         // Consent windows in a frame of another site (a CMP): only the clicks there, never a password.
         core.FrameCreated += (_, created) =>
@@ -25,7 +39,7 @@ internal static class PageScripts
                 if (!e.IsSuccess) return;
                 try
                 {
-                    foreach (var action in Applies(core.Source, kiosk).Where(a => a.Click.Trim().Length > 0))
+                    foreach (var action in Applies(core.Source, kiosk, extra).Where(a => a.Click.Trim().Length > 0))
                         await frame.ExecuteScriptAsync(Script(action with { Account = "" }, null));
                 }
                 catch (Exception ex) { Audit.Write("page_action_error", "frame: " + ex.Message); }
@@ -35,7 +49,7 @@ internal static class PageScripts
         {
             if (!e.IsSuccess) return;
             var url = core.Source;
-            foreach (var action in Applies(url, kiosk))
+            foreach (var action in Applies(url, kiosk, extra))
             {
                 try
                 {
@@ -52,15 +66,16 @@ internal static class PageScripts
         };
     }
 
-    private static IEnumerable<PageAction> Applies(string url, bool kiosk) =>
-        Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk));
+    private static IEnumerable<PageAction> Applies(string url, bool kiosk, PageAction[]? extra) =>
+        Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk))
+            .Concat((extra ?? []).Where(a => a.Matches(url)));
 
     private static string Script(PageAction action, SharedAccounts.Account? account)
     {
         var clicks = action.Click.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         string J(object? value) => JsonSerializer.Serialize(value);
         return "(() => {" +
-            "const clicks = " + J(clicks) + ", user = " + J(account?.User) + ", pass = " + J(account?.Password) + ", submit = " + J(action.Submit.Trim()) + ";" +
+            "const clicks = " + J(clicks) + ", most = " + (action.Once ? 1 : 3) + ", user = " + J(account?.User) + ", pass = " + J(account?.Password) + ", submit = " + J(action.Submit.Trim()) + ";" +
             """
             const page = 'kiosk:' + location.host + location.pathname;
             const visible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
@@ -93,7 +108,7 @@ internal static class PageScripts
             const done = {};
             let tries = 0;
             const step = () => {
-              for (const t of clicks) if ((done[t] || 0) < 3) { const b = find(t); if (b) { b.click(); done[t] = (done[t] || 0) + 1; } }
+              for (const t of clicks) if ((done[t] || 0) < most) { const b = find(t); if (b) { b.click(); done[t] = (done[t] || 0) + 1; } }
               if (pass !== null) {
                 const p = [...document.querySelectorAll('input[type=password]')].find(visible);
                 if (p && !sessionStorage.getItem(page + ':pass')) {

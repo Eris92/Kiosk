@@ -56,6 +56,8 @@ internal sealed record PageAction
     public PageScope Scope { get; init; }
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
+    /// <summary>Built-in actions only: each text is clicked once per page (a click that opens a Windows window).</summary>
+    internal bool Once { get; init; }
 
     internal bool Matches(string url)
     {
