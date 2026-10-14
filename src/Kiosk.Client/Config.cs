@@ -124,6 +124,8 @@ internal sealed record Config
     public int NewsSharePointCount { get; init; } = 6;
     public NewsOrdering NewsOrder { get; init; }
     public NewsBanner NewsSize { get; init; }
+    /// <summary>The bars (e.g. "Nie działa system XXX") also across the top of the screens' content and the lock screen.</summary>
+    public bool NewsBarsOnScreens { get; init; }
     /// <summary>Szybka pomoc on the desktop, also on the lock screen (MFA, password reset, card PIN). Empty = none.</summary>
     public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
     /// <summary>Off: no Szybka pomoc on the desktop at all; the buttons stay in the list for later.</summary>

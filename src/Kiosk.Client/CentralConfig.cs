@@ -131,16 +131,16 @@ internal static class CentralConfig
     /// Copies the server's folder into a new folder of the copy, checks its client.json, then points the copy at it.
     /// Earlier folders are removed when nothing uses them any more (an open logo in another session keeps its folder).
     /// </summary>
-    private static string Sync(string source, string cache)
+    private static string Sync(string source, string cache, string required = FileName)
     {
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("brak dostępu do " + source);
-        if (!File.Exists(Path.Combine(source, FileName))) throw new FileNotFoundException("w " + source + " nie ma " + FileName);
+        if (!File.Exists(Path.Combine(source, required))) throw new FileNotFoundException("w " + source + " nie ma " + required);
         Directory.CreateDirectory(cache);
         var folder = Path.Combine(cache, DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
             Copy(source, folder);
-            Configuration.Load(Path.Combine(folder, FileName));
+            if (required == FileName) Configuration.Load(Path.Combine(folder, FileName));
         }
         catch { TryDelete(folder); throw; }
         var pointer = Path.Combine(cache, Pointer);
@@ -148,8 +148,51 @@ internal static class CentralConfig
         File.Move(pointer + ".tmp", pointer, true);
         foreach (var old in Directory.GetDirectories(cache))
             if (!string.Equals(old, folder, StringComparison.OrdinalIgnoreCase)) TryDelete(old);
-        Audit.Write("central_config_synced", source);
+        Audit.Write(required == FileName ? "central_config_synced" : "news_synced", source);
         return folder;
+    }
+
+    // ------------------------------------------------------------------ Komunikaty on a share
+
+    private static string NewsCache => Path.Combine(KioskData, "News");
+
+    /// <summary>
+    /// Kiosk Card service, "syncnews": the messages folder named in this PC's configuration (often next to the server's
+    /// client.json) copied as the computer or with the share's saved account into C:\ProgramData\Kiosk\News, so the
+    /// Kiosk shows them also to people (and the kiosk account) who cannot open that share themselves.
+    /// No path comes from the caller: only the folder an administrator configured.
+    /// </summary>
+    internal static CardService.Response SyncNewsForMachine()
+    {
+        try
+        {
+            var configFolder = MachineConfigFolder();
+            var source = Configuration.Load(Path.Combine(configFolder, FileName)).NewsFolder;
+            // "NewsFolder": "komunikaty" next to the server's client.json: read from the server itself, not the copy made at start.
+            if (Under(source, MachineCache) && Configuration.Load(SharedConfig).ConfigSource is { Length: > 0 } server)
+                source = Path.Combine(server, Path.GetRelativePath(configFolder, source));
+            if (!source.StartsWith(@"\\", StringComparison.Ordinal)) return new CardService.Response { Code = -2, Message = "Komunikaty nie są na udziale sieciowym." };
+            using (Connect(source)) return new CardService.Response { Message = Sync(source, NewsCache, News.FileName) };
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("news_sync_failed", ex.Message);
+            return new CardService.Response { Code = -1, Message = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Where the Kiosk reads the messages: a share is fetched by the Kiosk Card service (its account); without the
+    /// service the person's own access is tried, then the last copy. A local folder is read as it is.
+    /// </summary>
+    internal static string NewsFolderFor(string folder)
+    {
+        if (!folder.StartsWith(@"\\", StringComparison.Ordinal) && !Under(folder, MachineCache)) return folder;
+        var answer = CardService.Call(new CardService.Request { Op = "syncnews" });
+        if (answer.Code == 0 && Current(NewsCache, News.FileName) is { } copy) return copy;
+        try { if (File.Exists(Path.Combine(folder, News.FileName))) return folder; }
+        catch (Exception) { }
+        return Current(NewsCache, News.FileName) ?? folder;
     }
 
     /// <summary>The folder whose client.json this PC uses: the server's copy (C:\ProgramData\Kiosk\Central\…) or C:\ProgramData\Kiosk.</summary>
@@ -160,12 +203,15 @@ internal static class CentralConfig
         return KioskData;
     }
 
-    private static string? Current(string cache)
+    private static bool Under(string path, string folder) =>
+        path.Length > 0 && Path.GetFullPath(path).StartsWith(Path.GetFullPath(folder).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
+
+    private static string? Current(string cache, string required = FileName)
     {
         try
         {
             var folder = Path.Combine(cache, File.ReadAllText(Path.Combine(cache, Pointer)).Trim());
-            return File.Exists(Path.Combine(folder, FileName)) ? folder : null;
+            return File.Exists(Path.Combine(folder, required)) ? folder : null;
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }

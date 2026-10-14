@@ -68,6 +68,8 @@ internal sealed class KioskForm : Form
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
     private bool loadingNews;
+    // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
+    private List<NewsItem> screenBars = [];
     private SharePointNews? sharePointNews;
     private readonly CardReader reader = new();
     private Func<CardIdentity?> identifyCard;
@@ -637,6 +639,7 @@ internal sealed class KioskForm : Form
             else window.TopMost = true;
             idleScreens.Add(window);
             idleByScreen[i + 1] = window;
+            window.SetBars(screenBars);
             if (!ordered[i].Primary || current is not { Locked: false }) window.Show();
         }
         Audit.Write("idle_screens", idleScreens.Count.ToString());
@@ -1225,13 +1228,16 @@ internal sealed class KioskForm : Form
             var show = config.NewsShow;
             List<NewsItem> mine = [];
             if (show != NewsDisplay.Off)
-                try { mine = await Task.Run(() => News.Load(folder)); }
+                try { mine = await Task.Run(() => News.Load(CentralConfig.NewsFolderFor(folder))); }   // A share: through the Kiosk Card service.
                 catch (Exception ex) { Audit.Write("news_failed", ex.Message); }
             if (show == NewsDisplay.BarsOnly) mine = mine.Where(n => n.IsBar).ToList();
             List<NewsItem> other = [];
             if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
                 other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount);
-            if (!IsDisposed) desktop.SetNews(News.Merge(mine, other, config.NewsOrder), config.NewsSeconds, config.NewsSize);
+            if (IsDisposed) return;
+            desktop.SetNews(News.Merge(mine, other, config.NewsOrder), config.NewsSeconds, config.NewsSize);
+            screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
+            foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
         }
         catch (Exception ex)
         {

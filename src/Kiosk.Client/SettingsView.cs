@@ -24,6 +24,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
     private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
     private readonly ComboBox newsSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Standardowy", "Duży", "Bardzo duży" } };
+    private readonly CheckBox newsOnScreens = new() { Text = "Paski komunikatów także na ekranach wygaszacza (ekrany, ekran blokady)", AutoSize = true };
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
@@ -399,6 +400,8 @@ internal sealed class SettingsView : UserControl
         AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
         AddField(newsFields, "Rozmiar banera", newsSize);
+        AddField(newsFields, "Ekrany wygaszacza", newsOnScreens);
+        newsOnScreens.Checked = config.NewsBarsOnScreens;
         newsSharePoint.Text = config.NewsSharePoint;
         newsSharePointCount.Value = Math.Clamp(config.NewsSharePointCount, 1, 20);
         newsOrder.SelectedIndex = (int)config.NewsOrder;
@@ -860,6 +863,7 @@ internal sealed class SettingsView : UserControl
             NewsSharePointCount = (int)newsSharePointCount.Value,
             NewsOrder = (NewsOrdering)Math.Max(0, newsOrder.SelectedIndex),
             NewsSize = (NewsBanner)Math.Max(0, newsSize.SelectedIndex),
+            NewsBarsOnScreens = newsOnScreens.Checked,
             LockAfterSeconds = (int)lockAfter.Value,
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,
