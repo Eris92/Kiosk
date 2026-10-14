@@ -67,7 +67,7 @@ internal static class CardVault
             {
                 var logon = UserLogon.TryLogon(entry.User, entry.Domain, password, length, out int code);
                 return logon != null ? new(logon, CardPin.Verified, "")
-                    : new(null, CardPin.Verified, "Hasło konta zmieniło się (kod " + code + "). Podaj nowe.");
+                    : new(null, CardPin.Verified, UserLogon.Explain(code));
             }
             finally { Array.Clear(password); }
         }

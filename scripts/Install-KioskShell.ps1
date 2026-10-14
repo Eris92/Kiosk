@@ -8,7 +8,9 @@ Run as administrator on a domain-joined or Intune (Entra ID) PC. For Intune-mana
 Shell Launcher profile in config/intune (this script does the same locally, e.g. for testing).
 
   * Copies the Kiosk build to -InstallPath and the configuration to -ConfigPath
-    (administrators: full control, users: read only). SessionMode is set to WindowsShell.
+    (administrators: full control, users: read only). SessionMode becomes WindowsShell, except that an
+    existing configuration keeps the mode it has; TestMode is turned off,
+    so only admin cards and Windows administrators see Konfiguracja; saving it asks for a Windows administrator.
   * Shell:
       ShellLauncher (Windows Enterprise / Education / IoT Enterprise): Kiosk is the shell for everyone
         except local Administrators, who keep Explorer.
@@ -17,6 +19,14 @@ Shell Launcher profile in config/intune (this script does the same locally, e.g.
   * Sign-in screen: no last user name, fast user switching on (disconnected sessions keep running),
     Windows' own card-removal action off (the Kiosk disconnects the session itself).
   * -RequireSmartCard additionally forbids password sign-in for everyone. Test card sign-in first.
+  * -ConfigSource \\serwer\kiosk: Konfiguracja z serwera. Kiosk downloads that folder (client.json, logo, ...) at every start
+    and Konfiguracja on the PC becomes a preview. -ConfigSource "" switches back to the PC's own configuration.
+    The Kiosk Card service reads the share as the computer account; -ConfigSourceCredential (Get-Credential) saves
+    an account for it instead (see Set-KioskConfigSource.ps1).
+  * -AccountsKey (Read-Host -AsSecureString): the key of the shared accounts (accounts.kiosk next to client.json,
+    Set-KioskSharedAccount.ps1) used to sign in to pages and to run programs from a file server.
+  * A new configuration without -ConfigSource shows a first-start screen: local configuration or a server.
+    -SkipSetup leaves it out (the PC keeps its own configuration).
 
 -Uninstall reverts the shell and sign-in settings (files are left in place).
 Supports -WhatIf. Nothing here bypasses execution policy; sign the script per your policy.
@@ -29,6 +39,11 @@ param(
     [string]$SourceConfig = (Join-Path $PSScriptRoot '..\config\client.json'),
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
+    [string]$ConfigSource,
+    [switch]$SkipSetup,
+    [pscredential]$ConfigSourceCredential,
+    # Konta wspólne: the key of accounts.kiosk (Set-KioskSharedAccount.ps1), the same on every PC.
+    [securestring]$AccountsKey,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -85,12 +100,19 @@ if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
 }
-if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode = WindowsShell)')) {
+if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode WindowsShell for a new configuration)')) {
     $directory = Split-Path $ConfigPath
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    if (-not (Test-Path $ConfigPath)) { Copy-Item $SourceConfig $ConfigPath }
+    $existing = Test-Path $ConfigPath
+    if (-not $existing) { Copy-Item $SourceConfig $ConfigPath }
     $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-    $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
+    # An installed configuration keeps its mode (e.g. Kiosk: one shared account, people switch by card).
+    if (-not $existing -or -not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force }
+    $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
+    if ($PSBoundParameters.ContainsKey('ConfigSource')) { $json | Add-Member -NotePropertyName ConfigSource -NotePropertyValue $ConfigSource.Trim() -Force }
+    # A new configuration without a server asks once at the first start: local configuration or a server (one package for every site).
+    if (-not $existing) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue (-not $SkipSetup -and -not $ConfigSource) -Force }
+    elseif ($SkipSetup -or $ConfigSource) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue $false -Force }
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
     # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
@@ -118,6 +140,10 @@ Set-Value $system 'HideFastUserSwitching' 0            # Disconnected sessions s
 Set-Value $winlogon 'ScRemoveOption' '0' 'String'      # Windows does nothing on card removal; the Kiosk disconnects.
 if ($RequireSmartCard) { Set-Value $system 'scforceoption' 1 }   # Card (or Windows Hello for Business) only.
 Set-Service -Name SCardSvr -StartupType Automatic -WhatIf:$WhatIfPreference
+
+# Konfiguracja z serwera: an account for the share (domain PCs read it as the computer account, without one).
+if ($ConfigSourceCredential) { & (Join-Path $PSScriptRoot 'Set-KioskConfigSource.ps1') -ConfigPath $ConfigPath -Credential $ConfigSourceCredential }
+if ($AccountsKey) { & (Join-Path $PSScriptRoot 'Set-KioskConfigSource.ps1') -ConfigPath $ConfigPath -AccountsKey $AccountsKey }
 
 Write-Output "Done. Kiosk shell: $shellCommand"
 Write-Output 'Sign out and sign in with a card as a non-administrator account to test.'

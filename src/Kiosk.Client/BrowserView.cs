@@ -30,6 +30,21 @@ internal sealed class BrowserView : UserControl
     /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
     /// account for SSO and keeps a normal profile in their own AppData instead of a throw-away InPrivate one.</summary>
     private readonly bool windowsAccount;
+    /// <summary>One page, no tabs (Szybka pomoc): links for a new window open in the same page.</summary>
+    private readonly bool singlePage;
+    /// <summary>Punkt samoobsługowy: the card's sign-in folder, shared by every help window while the card lies on the
+    /// reader (one FIDO2 sign-in for all); the card session deletes it, not this view.</summary>
+    private readonly bool sharedFolder;
+    /// <summary>Someone used the page (click, touch, key, scroll); only for <see cref="singlePage"/>.</summary>
+    internal event Action? Activity;
+    private const string ActivityScript = """
+        (() => {
+          let last = 0;
+          const seen = () => { const now = Date.now(); if (now - last > 400) { last = now; try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { } } };
+          for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'input', 'scroll'])
+            addEventListener(type, seen, { capture: true, passive: true });
+        })();
+        """;
 
     private readonly TextBox address = new()
     {
@@ -54,13 +69,15 @@ internal sealed class BrowserView : UserControl
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false, string? profileFolder = null)
     {
+        this.singlePage = singlePage;
+        sharedFolder = profileFolder != null;
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
-        userDataFolder = windowsAccount
+        userDataFolder = profileFolder ?? (windowsAccount
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
-            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N"));
+            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N")));
         this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
@@ -109,7 +126,8 @@ internal sealed class BrowserView : UserControl
         if (!this.policy.Restricted) favorites.Padding = new Padding(6, 0, 6, 6);
         Controls.Add(pages); Controls.Add(message);
         if (!this.policy.Restricted) Controls.Add(favorites);
-        Controls.Add(toolbar); Controls.Add(tabStrip);
+        Controls.Add(toolbar);
+        if (!singlePage) Controls.Add(tabStrip);
     }
 
     private new int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
@@ -186,10 +204,11 @@ internal sealed class BrowserView : UserControl
 
         var options = environment.CreateCoreWebView2ControllerOptions();
         options.ProfileName = ProfileName;
-        options.IsInPrivateModeEnabled = !windowsAccount;
+        options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
         await web.EnsureCoreWebView2Async(environment, options);
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
+        PageScripts.Attach(core, kiosk: singlePage, sharedFolder ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
         core.Settings.AreDevToolsEnabled = false;
         // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.
@@ -215,6 +234,7 @@ internal sealed class BrowserView : UserControl
         {
             // Links "in a new window" become a tab; window.opener keeps working (sign-in pop-ups).
             if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
+            if (singlePage) { e.Handled = true; if (IsWebAddress(e.Uri)) core.Navigate(e.Uri); return; }
             var deferral = e.GetDeferral();
             try
             {
@@ -236,10 +256,15 @@ internal sealed class BrowserView : UserControl
             e.Handled = true;
         };
         core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
+        if (singlePage)
+        {
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);
+            core.WebMessageReceived += (_, e) => { if (e.TryGetWebMessageAsString() == "kiosk-activity") Activity?.Invoke(); };
+        }
         core.NavigationStarting += (_, e) =>
         {
             // NavigateToString uses an internal data document (also used by the smoke test).
-            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)) e.Cancel = true;
+            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase) && !policy.Allows(e.Uri)) e.Cancel = true;
             else if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
             {
                 e.Cancel = true;
@@ -301,6 +326,8 @@ internal sealed class BrowserView : UserControl
 
     /// <summary>Opens a new tab with the start page (also used by the self-test).</summary>
     internal Task OpenTabAsync() => AddTabAsync(homeUrl);
+    /// <summary>A page of a company message, in a new tab (allowed even outside the bookmarks).</summary>
+    internal Task OpenTrustedTabAsync(string url) { policy.Trust(url); return AddTabAsync(url); }
     internal void CloseActiveTab() { if (active != null) CloseTab(active); }
 
     private static bool IsWebAddress(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
@@ -318,7 +345,7 @@ internal sealed class BrowserView : UserControl
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (!disposing || windowsAccount) return; // A Windows user's own profile stays, like a normal browser.
+        if (!disposing || windowsAccount || sharedFolder) return; // A Windows user's own profile stays, like a normal browser.
         // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
         var folder = userDataFolder;
         _ = Task.Run(async () =>
@@ -337,6 +364,9 @@ internal sealed class BrowserView : UserControl
 internal sealed class SitePolicy
 {
     private readonly string[]? hosts;
+    // Pages of company messages (Konfiguracja → Komunikaty): allowed even with "only bookmarks", their folder too.
+    private readonly HashSet<string> trustedHosts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> trustedFolders = new(StringComparer.OrdinalIgnoreCase);
 
     internal SitePolicy(bool onlyBookmarks, IEnumerable<Bookmark> bookmarks, IEnumerable<string> extraDomains)
     {
@@ -351,11 +381,22 @@ internal sealed class SitePolicy
 
     internal bool Restricted => hosts != null;
 
+    /// <summary>An address the administrator put in a company message: its site, or for a file its folder.</summary>
+    internal void Trust(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        if (uri.IsFile) trustedFolders.Add(uri.AbsoluteUri[..(uri.AbsoluteUri.LastIndexOf('/') + 1)]);
+        else if (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) trustedHosts.Add(uri.Host.TrimEnd('.'));
+    }
+
     internal bool Allows(string url)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        if (uri.IsFile) return trustedFolders.Any(f => uri.AbsoluteUri.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
         if (hosts == null) return true;
         var host = uri.Host.TrimEnd('.').ToLowerInvariant();
+        if (trustedHosts.Contains(host)) return true;
         return hosts.Any(h => host == h || host.EndsWith("." + h, StringComparison.Ordinal));
     }
 }

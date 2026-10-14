@@ -12,7 +12,7 @@ namespace Kiosk.Client;
 /// session at once; reinserting a card brings its session back. Sessions expire after
 /// ChangeUserAfterSeconds of inactivity. Nothing here touches the Windows lock screen.
 /// </summary>
-internal sealed class KioskForm : Form
+internal sealed partial class KioskForm : Form
 {
     private sealed class RdpSession
     {
@@ -32,6 +32,7 @@ internal sealed class KioskForm : Form
         internal Dictionary<string, ApplicationView> Applications { get; } = new(StringComparer.OrdinalIgnoreCase);
         internal BrowserView? Browser { get; set; }
         internal NotesView? Notes { get; set; }
+        internal FilesView? Files { get; set; }
         internal Control? LastView { get; set; }
         internal bool Locked { get; set; } = true;
         internal bool Verified { get; set; }
@@ -43,15 +44,17 @@ internal sealed class KioskForm : Form
         internal bool IsWindowsAdmin { get; set; }
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
         internal UserLogon? Logon { get; set; }
-        internal string Name => Logon?.DisplayName ?? Identity.Name;
+        internal string Name => Logon is { FriendlyName.Length: > 0 } logon ? logon.FriendlyName : People.FriendlyName("", Identity.Name, Identity.Upn);
         /// <summary>Which screen each window goes on (window key → 1 = main, 2… = others); remembered per card.</summary>
         internal Dictionary<string, int>? Layout { get; set; }
         /// <summary>The screens' content was opened as this person (editable) after their first unlock.</summary>
         internal bool ScreensOpened { get; set; }
     }
 
-    private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
-    private Config config;
+    private const string BrowserKey = "browser", NotesKey = "notes", FilesKey = "files", SettingsKey = "settings";
+    // As saved in Konfiguracja (unticked entries included) and what Kiosk works with (only the ticked ones).
+    private Config fullConfig = null!, activeConfig = null!;
+    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); PageScripts.Actions = activeConfig.PageActions; } }
     private readonly string? configPath;
     private readonly Panel surface = new() { Dock = DockStyle.Fill };
     private readonly DesktopView desktop = new();
@@ -62,6 +65,12 @@ internal sealed class KioskForm : Form
     private SettingsView? settingsView;
     private Control? visibleView;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
+    // The messages' folder is read again every minute, so a change on the share shows up without restarting.
+    private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
+    private bool loadingNews;
+    // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
+    private List<NewsItem> screenBars = [];
+    private SharePointNews? sharePointNews;
     private readonly CardReader reader = new();
     private Func<CardIdentity?> identifyCard;
     private Func<bool> cardPresent;
@@ -75,10 +84,15 @@ internal sealed class KioskForm : Form
 
     private bool CanUseApps => current is { Locked: false };
 
-    internal KioskForm(Config config, string? configPath = null)
+    /// <summary>The PC's own client.json when the configuration comes from a server (it keeps ConfigSource).</summary>
+    private Config? localConfig;
+
+    internal KioskForm(Config config, string? configPath = null, CentralConfig.Loaded? loaded = null)
     {
         this.config = config;
         this.configPath = configPath;
+        localConfig = loaded?.Local;
+        notice = loaded?.Problem;
         identifyCard = IdentifyPresentCard;
         cardPresent = () => reader.Snapshot(this.config.ReaderName) != null;
         Text = "Kiosk";
@@ -103,13 +117,16 @@ internal sealed class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); };
+        Shown += (_, _) => { if (SelfService) ClearCardFolders(); timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
+        desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
+        desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
+        FormClosed += (_, _) => { newsTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -127,6 +144,12 @@ internal sealed class KioskForm : Form
                 ShellTick();
                 MonitorRdp();
                 MonitorApplications();
+                return;
+            }
+            if (SelfService)
+            {
+                SelfServiceTick();
+                UpdateMainIdle();
                 return;
             }
             // While a PIN check runs the card is reset on purpose; presence changes are evaluated afterwards.
@@ -274,6 +297,7 @@ internal sealed class KioskForm : Form
             catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
             if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             Audit.Write("signed_in_as_user", session.Logon.DisplayName);
+            await PrepareProfileAsync(session);
             // Remember the account for this card: next time the card and its PIN are enough.
             var logon = session.Logon;
             var id = session.Identity.Id;
@@ -282,8 +306,10 @@ internal sealed class KioskForm : Form
             try
             {
                 string message = "Wpisz PIN karty, aby ją zapamiętać. Następnym razem wystarczy sam PIN.";
-                while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
+                var first = await EnsureCardPinAsync(readerName);
+                while ((first ?? await desktop.AskPinAsync(message, cardPresent)) is { } pin)
                 {
+                    first = null;
                     var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
                     Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code + " " + saved.Message);
                     if (saved.Code == CardPin.WrongPin) { message = saved.Message + " Spróbuj ponownie."; continue; }
@@ -297,12 +323,52 @@ internal sealed class KioskForm : Form
         Unlock(session);
     }
 
+    /// <summary>
+    /// A new card without a FIDO2 PIN: the person chooses one here (typed twice) and the card stores it.
+    /// Returns the new PIN to continue with, or null when the card already had one (or setting it was cancelled).
+    /// </summary>
+    private async Task<string?> EnsureCardPinAsync(string readerName, int idleSeconds = 0)
+    {
+        var state = await Task.Run(() => CardService.Call(new CardService.Request { Op = "haspin", Reader = readerName }));
+        if (state.Code != 0x35) return null;
+        string message = "Karta nie ma jeszcze PIN-u. Ustaw nowy PIN (od 4 znaków) – będziesz go podawać przy logowaniu.";
+        while (await desktop.AskPinAsync(message, cardPresent, idleSeconds) is { } pin)
+        {
+            if (pin.Length < 4) { message = "PIN musi mieć co najmniej 4 znaki. Ustaw nowy PIN."; continue; }
+            var again = await desktop.AskPinAsync("Wpisz nowy PIN jeszcze raz.", cardPresent, idleSeconds);
+            if (again == null) break;
+            if (again != pin) { message = "PIN-y się różnią. Ustaw nowy PIN."; continue; }
+            var set = await Task.Run(() => CardService.Call(new CardService.Request { Op = "setpin", Reader = readerName, Pin = pin }));
+            Audit.Write(set.Code == 0 ? "card_pin_set" : "card_pin_set_failed", set.Code + " " + set.Message);
+            if (set.Code == 0) return pin;
+            message = set.Message + " Spróbuj ponownie.";
+        }
+        return null;
+    }
+
+    /// <summary>Someone who never signed in to this PC: create their Windows profile before Edge and the apps start.</summary>
+    private async Task PrepareProfileAsync(UserSession session)
+    {
+        var logon = session.Logon!;
+        if (logon.ProfileDirectory != null) return;
+        session.Notice = "Pierwsze logowanie na tym komputerze: tworzę profil Windows…";
+        RefreshChrome();
+        bool ready;
+        try { ready = await Task.Run(logon.EnsureProfile); }
+        catch (Exception ex) { ready = false; Audit.Write("profile_failed", ex.Message); }
+        session.Notice = ready ? null
+            : "Windows nie utworzył profilu dla " + logon.DisplayName + ". Zaloguj się raz do Windows na tym komputerze kartą, potem wróć do Kiosku.";
+        RefreshChrome();
+    }
+
     private async Task<CardPin.Result> VerifyFidoPinAsync()
     {
         var readerName = reader.ActiveReader;
         string message = "Wpisz PIN karty.";
-        while (await desktop.AskPinAsync(message, cardPresent) is { } pin)
+        var first = await EnsureCardPinAsync(readerName);
+        while ((first ?? await desktop.AskPinAsync(message, cardPresent)) is { } pin)
         {
+            first = null;
             var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "verify", Reader = readerName, Pin = pin }));
             if (answer.Code == 0) return new(CardPin.Verified, answer.Message);
             if (answer.Code != 0x31) return new(CardPin.Failed, answer.Message);
@@ -325,7 +391,7 @@ internal sealed class KioskForm : Form
                 var pin = await desktop.AskPinAsync(message, cardPresent);
                 if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
                 var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
-                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); return true; }
+                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); await PrepareProfileAsync(session); return true; }
                 Audit.Write("card_vault_failed", opened.Code + " " + opened.Message);
                 if (opened.Code == CardPin.WrongPin) { message = opened.Message + " Spróbuj ponownie."; continue; }
                 if (opened.Code == CardPin.NoKey) { session.Notice = opened.Message; return true; } // Set the card up again below.
@@ -579,6 +645,7 @@ internal sealed class KioskForm : Form
             else window.TopMost = true;
             idleScreens.Add(window);
             idleByScreen[i + 1] = window;
+            window.SetBars(screenBars);
             if (!ordered[i].Primary || current is not { Locked: false }) window.Show();
         }
         Audit.Write("idle_screens", idleScreens.Count.ToString());
@@ -623,6 +690,7 @@ internal sealed class KioskForm : Form
             var title = "Ekran " + n;
             try
             {
+                if (NewsSlides.IsAddress(content.Url)) continue;   // Komunikaty stay the Kiosk's own slides.
                 if (content.Url.Length > 0 && session.Logon == null)
                 {
                     // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
@@ -667,7 +735,7 @@ internal sealed class KioskForm : Form
         foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
-        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin;
+        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || cardFolder != null;
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
@@ -712,7 +780,7 @@ internal sealed class KioskForm : Form
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
         if (reader.Snapshot(config.ReaderName) != null) shellCardSeen = true;
-        else if (shellCardSeen && config.DisconnectOnCardRemoval) { DisconnectWindows("card_removed"); return; }
+        else if (shellCardSeen && config.DisconnectOnCardRemoval && !verifying) { DisconnectWindows("card_removed"); return; }
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
@@ -745,6 +813,9 @@ internal sealed class KioskForm : Form
 
     private void RefreshChrome()
     {
+        taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
+        desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
+        desktop.SetHelp(config.HelpActions);
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -758,14 +829,16 @@ internal sealed class KioskForm : Form
         var retention = config.ChangeUserAfterSeconds > 0
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
             : "Sesja czeka na powrót karty aż do wylogowania.";
-        if (current is { Locked: true } locked)
+        taskbar.Visible = !SelfService;   // Punkt samoobsługowy: no Menu, only Szybka pomoc on the start screen.
+        if (SelfService) SelfServiceStatus();
+        else if (current is { Locked: true } locked)
         {
             var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
             var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
             desktop.UpdateStatus(title, detail, locked: true, locked.Verified ? "Wznów sesję" : "Zaloguj");
         }
         else if (current != null)
-            desktop.UpdateStatus("Witaj, " + current.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.");
+            desktop.UpdateStatus(current.Name, notice ?? current.Notice ?? "Otwórz Menu na dole, aby uruchomić pulpit zdalny, przeglądarkę lub aplikację.", person: current.Name);
         else if (requireRemoval)
             desktop.UpdateStatus("Wyjmij kartę", "Sesja została zamknięta. Wyjmij kartę i włóż ją ponownie, aby zacząć od nowa.");
         else
@@ -782,8 +855,8 @@ internal sealed class KioskForm : Form
         if (menu.Visible) { menu.HideMenu(); return; }
         if (!CanUseApps) return;
         if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
-        menu.Populate(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.", BuildMenu());
-        menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+        PopulateMenu(CanUseApps ? "" : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.");
+        menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle), taskbar.Centered);
     }
 
     private static string AuthenticationLabel(RdpAuthentication authentication) => authentication switch
@@ -802,30 +875,51 @@ internal sealed class KioskForm : Form
             () => OpenRdp(c), can, KioskIcons.Remote)).ToList();
         if (remote.Count == 0) remote.Add(new MenuItemSpec("Brak połączeń", "Dodaj je w Konfiguracji", () => { }, false));
         var apps = new List<MenuItemSpec>();
-        if (config.EnableBrowser) apps.Add(new("Przeglądarka", s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can,
-            KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null));
-        // The built-in Notatnik is an ordinary entry of the application list, so it can be removed there.
-        apps.AddRange(config.Applications.Select(a => a.IsBuiltInNotes
+        // The built-in browser and Notatnik are ordinary entries of the application list, so they can be removed there.
+        apps.AddRange(config.Applications.Select(a => a.IsBuiltInBrowser
+            ? new MenuItemSpec(a.Name, s?.Browser != null ? "Otwarta" : "Internet", () => _ = OpenBrowserAsync(), can,
+                KioskIcons.Browser, s?.Logon != null ? KioskIcons.ForProgram(EdgeAsUser.Path) : null)
+            : a.IsBuiltInNotes
             ? new MenuItemSpec(a.Name, s?.Notes != null ? "Otwarty" : "Notatki tekstowe", OpenNotes, can, KioskIcons.Notes)
+            : a.IsBuiltInFiles
+            ? new MenuItemSpec(a.Name, s?.Files != null ? "Otwarte" : "Foldery i pliki", OpenFiles, can, KioskIcons.Files)
             : new MenuItemSpec(a.Name, s?.Applications.ContainsKey(a.Name) == true ? "Otwarta" : "Aplikacja", () => _ = OpenApplicationAsync(a), can,
                 KioskIcons.App, KioskIcons.ForProgram(a.Path))));
         if (apps.Count == 0) apps.Add(new MenuItemSpec("Brak aplikacji", "Dodaj je w Konfiguracji", () => { }, false));
-        var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
-        if (config.IdleScreens.Length > 0)
-            system.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
+        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
+            KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
+        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems)];
+    }
+
+    /// <summary>The menu's footer, as in Windows 11: Pulpit and Konfiguracja on the left; the power button
+    /// (Zablokuj, Wyloguj, Uruchom ponownie, Wyłącz, Zamknij aplikację) on the right.</summary>
+    private (List<MenuItemSpec> Left, List<MenuItemSpec> Power) BuildMenuFooter()
+    {
+        bool can = CanUseApps;
+        var s = current;
+        var left = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
         if (configPath != null && s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
+            left.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
+        if (config.IdleScreens.Length > 0)
+            left.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
+        var power = new List<MenuItemSpec>();
         if (can)
         {
-            system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
-            system.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
+            power.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
+            power.Add(new MenuItemSpec("Wyloguj", "Zamknij swoją sesję", () => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); }, true, KioskIcons.Logout));
+            power.Add(new MenuItemSpec("Uruchom ponownie", "Uruchom ponownie komputer", () => PowerOffComputer(restart: true), true, KioskIcons.Restart));
+            power.Add(new MenuItemSpec("Wyłącz", "Wyłącz komputer", () => PowerOffComputer(restart: false), true, KioskIcons.Power));
         }
         // Closing the shell itself: in test mode, or for a Kiosk administrator.
         if (config.TestMode || s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
-        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
-            KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
-        return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems), new("System", system)];
+            power.Add(new MenuItemSpec("Zamknij aplikację", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, KioskIcons.CloseApp));
+        return (left, power);
+    }
+
+    private void PopulateMenu(string subtitle)
+    {
+        var (left, power) = BuildMenuFooter();
+        menu.Populate(subtitle, BuildMenu(), left, power);
     }
 
     /// <summary>Taskbar icon of a window: the program's own icon, or the icon of the Kiosk function.</summary>
@@ -834,6 +928,7 @@ internal sealed class KioskForm : Form
         if (w.Key.StartsWith("rdp:")) return (KioskIcons.Remote, null);
         if (w.Key == BrowserKey || w.Key.StartsWith("browser:") || w.Key.StartsWith("web:")) return (KioskIcons.Browser, null);
         if (w.Key == NotesKey) return (KioskIcons.Notes, null);
+        if (w.Key == FilesKey) return (KioskIcons.Files, null);
         if (w.Key == SettingsKey) return (KioskIcons.Settings, null);
         if (w.View is ApplicationView app && app.ProgramPath.Length > 0) return (KioskIcons.App, KioskIcons.ForProgram(app.ProgramPath));
         return (KioskIcons.App, null);
@@ -890,11 +985,36 @@ internal sealed class KioskForm : Form
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 
-    /// <summary>Menu → Zamknij: close the Kiosk or start it again (same program, same configuration).</summary>
+    /// <summary>Menu → Uruchom ponownie / Wyłącz: restarts or shuts down the computer (all sessions end).</summary>
+    private void PowerOffComputer(bool restart)
+    {
+        string action = restart ? "Uruchomić ponownie komputer?" : "Wyłączyć komputer?";
+        string text = sessions.Values.Any(x => x.HasWork)
+            ? "Wszystkie sesje zostaną zakończone: niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte."
+            : "Wszystkie sesje zostaną zakończone.";
+        if (MessageBox.Show(this, text, action, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        Audit.Write(restart ? "computer_restart_requested" : "computer_shutdown_requested", current?.Identity.Name ?? "");
+        if (config.TestMode) { notice = "Tryb testowy: komputer nie został " + (restart ? "uruchomiony ponownie." : "wyłączony."); RefreshChrome(); return; }
+        closeConfirmed = true;
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "shutdown.exe"),
+                (restart ? "/r" : "/s") + " /t 0") { UseShellExecute = false, CreateNoWindow = true });
+        }
+        catch (Exception ex)
+        {
+            closeConfirmed = false;
+            notice = "Nie udało się " + (restart ? "uruchomić ponownie" : "wyłączyć") + " komputera: " + ex.Message;
+            Audit.Write("computer_power_failed", ex.Message);
+            RefreshChrome();
+        }
+    }
+
+    /// <summary>Menu → Zamknij aplikację: close the Kiosk or start it again (same program, same configuration).</summary>
     private void AskCloseOrRestart()
     {
         var restart = new TaskDialogButton("Uruchom ponownie");
-        var close = new TaskDialogButton("Zamknij");
+        var close = new TaskDialogButton("Zamknij aplikację");
         var page = new TaskDialogPage
         {
             Caption = "Kiosk", Heading = "Zamknąć Kiosk?",
@@ -917,6 +1037,260 @@ internal sealed class KioskForm : Form
             });
             Close();
         }
+    }
+
+    /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
+    private async Task AutoUpdateAsync()
+    {
+        if (!config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
+        try
+        {
+            var release = await Updater.LatestAsync();
+            if (!Updater.IsNewer(release.Tag)) return;
+            var folder = await Updater.DownloadAsync(release);
+            // Only while nobody has work open; otherwise the update waits for the next start.
+            if (IsDisposed || sessions.Values.Any(x => x.HasWork) || !Updater.FirstAttempt(release.Tag)) return;
+            Audit.Write("auto_update", release.Tag);
+            closeConfirmed = true;
+            Updater.Launch(folder);
+            Close();
+        }
+        catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
+    }
+
+    private HelpBrowserForm? helpBrowser;
+
+    /// <summary>
+    /// Szybka pomoc, locked or not: a help page (the person's browser when signed in, else a guest window),
+    /// or the card itself: change its PIN, set it up again, reset it.
+    /// </summary>
+    private async Task RunHelpAsync(HelpAction item)
+    {
+        if (verifying || desktop.AskingPin) return;
+        Audit.Write("help_action", item.Name + " " + item.Action);
+        switch (item.Action.ToLowerInvariant())
+        {
+            case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
+            case HelpAction.Reenroll: ForgetCard(); break;
+            case HelpAction.ResetCard: await ResetCardAsync(); break;
+            case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
+            default:
+                // Always the help window (also when signed in), so it closes after the time set for Szybka pomoc.
+                ShowHelpPage(item.Name, item.Action);
+                break;
+        }
+        RefreshChrome();
+    }
+
+    /// <summary>A Szybka pomoc page; in Punkt samoobsługowy with the card's sign-in while the card lies on the reader.</summary>
+    private void ShowHelpPage(string title, string url)
+    {
+        helpBrowser?.Close();
+        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds, SelfService ? cardFolder : null) { Bounds = Screen.FromControl(this).Bounds };
+        window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };
+        helpBrowser = window;
+        window.Show(this);
+    }
+
+    private bool CardForHelp(out string readerName)
+    {
+        readerName = reader.ActiveReader;
+        if (cardPresent() && !string.IsNullOrEmpty(readerName)) return true;
+        notice = "Przyłóż kartę do czytnika i wybierz to jeszcze raz.";
+        if (current != null) current.Notice = notice;
+        return false;
+    }
+
+    private void ShowHelpResult(string text)
+    {
+        notice = text;
+        if (current != null) current.Notice = text;
+        RefreshChrome();
+    }
+
+    /// <summary>Szybka pomoc → Zmień PIN karty: current PIN, then the new one twice, all on the lock card.</summary>
+    private async Task ChangeCardPinAsync()
+    {
+        if (!CardForHelp(out var readerName)) return;
+        verifying = true;
+        try
+        {
+            string message = "Zmiana PIN-u karty: wpisz obecny PIN.";
+            while (await desktop.AskPinAsync(message, cardPresent, config.HelpCloseSeconds) is { } old)
+            {
+                var fresh = await desktop.AskPinAsync("Wpisz nowy PIN (od 4 znaków).", cardPresent, config.HelpCloseSeconds);
+                if (fresh == null) break;
+                if (fresh.Length < 4) { message = "Nowy PIN musi mieć co najmniej 4 znaki. Wpisz obecny PIN."; continue; }
+                var again = await desktop.AskPinAsync("Wpisz nowy PIN jeszcze raz.", cardPresent, config.HelpCloseSeconds);
+                if (again == null) break;
+                if (again != fresh) { message = "Nowe PIN-y się różnią. Wpisz obecny PIN."; continue; }
+                var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "changepin", Reader = readerName, Pin = old, NewPin = fresh }));
+                Audit.Write(answer.Code == 0 ? "card_pin_changed" : "card_pin_change_failed", answer.Code + " " + answer.Message);
+                if (answer.Code == 0x31) { message = "Obecny PIN jest nieprawidłowy. Spróbuj ponownie."; continue; }
+                ShowHelpResult(answer.Code == 0 ? "PIN karty został zmieniony. Od teraz używaj nowego PIN-u." : "Nie udało się zmienić PIN-u: " + answer.Message);
+                break;
+            }
+        }
+        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+    }
+
+    /// <summary>
+    /// Szybka pomoc → Pierwsze logowanie: the Windows sign-in screen for one sign-in (profile, SSO); the Kiosk Card
+    /// service brings this session back and signs the person out as soon as their desktop has started.
+    /// </summary>
+    private async Task FirstSignInAsync()
+    {
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Pierwsze logowanie", "Za chwilę pojawi się ekran logowania Windows. Zaloguj się swoim kontem (kartą, Windows Hello albo hasłem). " +
+                "Windows przygotuje Twój profil i logowanie jednokrotne, a potem sam wróci do Kiosku – to może potrwać kilka minut. Kontynuować?", config.HelpCloseSeconds);
+        }
+        finally { verifying = false; }
+        if (!confirmed) { ShowHelpResult("Anulowano."); return; }
+        var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "firstsignin" }));
+        Audit.Write(answer.Code == 0 ? "first_signin_started" : "first_signin_unavailable", answer.Message);
+        if (answer.Code != 0) { ShowHelpResult("Pierwsze logowanie nie jest dostępne: " + answer.Message); return; }
+        ShowHelpResult("Po zalogowaniu do Windows wrócisz tu automatycznie.");
+        if (current != null) Park(current, "first_signin");
+        try { WindowsSession.Disconnect(); }
+        catch (Exception ex) { ShowHelpResult("Nie udało się pokazać ekranu logowania Windows: " + ex.Message); }
+    }
+
+    /// <summary>Szybka pomoc → Skonfiguruj kartę od nowa: Kiosk forgets the account saved for this card.</summary>
+    private void ForgetCard()
+    {
+        if (!CardForHelp(out _)) return;
+        var id = (identifyCard() ?? UncertifiedCard()).Id;
+        if (id == null) { ShowHelpResult("Nie udało się odczytać karty."); return; }
+        // While the question is open the card and idle screens wait (taking the card away must not switch the desktop under it).
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
+                "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", config.HelpCloseSeconds);
+        }
+        finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
+        if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
+        CardVault.Forget(id);
+        Audit.Write("card_forgotten");
+        // The account stays signed in for an open session of this card: close it, so the next sign-in really asks again.
+        if (sessions.TryGetValue(id, out var session) && (!session.HasWork || ConfirmEnd([session])))
+        {
+            bool wasCurrent = session == current;
+            CloseSession(session, "card_forgotten");
+            if (wasCurrent) requireRemoval = cardKey != null;
+            RefreshChrome();
+        }
+        ShowHelpResult("Kiosk zapomniał konto tej karty. Wyjmij kartę i przyłóż ją ponownie: podasz login, hasło i PIN.");
+    }
+
+    /// <summary>
+    /// Szybka pomoc → Resetuj kartę: the card's own FIDO2 reset (no PIN, no keys), then a new PIN right away.
+    /// Cards allow it only just after they got power: Kiosk powers the card again, or asks to put it on the reader again.
+    /// </summary>
+    private async Task ResetCardAsync()
+    {
+        if (!CardForHelp(out var readerName)) return;
+        verifying = true;
+        bool confirmed;
+        try
+        {
+            confirmed = HelpConfirm.Ask(this, "Resetuj kartę", "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
+                "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).\n\nZresetować kartę?",
+                config.HelpCloseSeconds, warning: true) &&
+                HelpConfirm.Ask(this, "Resetuj kartę", "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", config.HelpCloseSeconds, warning: true);
+        }
+        finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
+        if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
+        var id = (identifyCard() ?? UncertifiedCard()).Id;
+        verifying = true;
+        try
+        {
+            var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
+            if (answer.Code is 0x30 or 0x27)
+            {
+                // Too late after power-up: the person takes the card off and puts it back; the reset follows at once.
+                ShowHelpResult("Zdejmij kartę z czytnika i przyłóż ją ponownie – Kiosk od razu ją zresetuje.");
+                RefreshChrome();
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
+                while (!cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
+                if (!cardPresent()) { ShowHelpResult("Reset karty anulowany: karta nie wróciła do czytnika."); return; }
+                readerName = reader.ActiveReader;
+                answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
+            }
+            Audit.Write(answer.Code == 0 ? "card_reset" : "card_reset_failed", answer.Code + " " + answer.Message);
+            if (answer.Code != 0) { ShowHelpResult("Nie udało się zresetować karty: " + answer.Message); return; }
+            if (id != null) CardVault.Forget(id);
+            var pin = await EnsureCardPinAsync(readerName, config.HelpCloseSeconds);
+            ShowHelpResult(pin != null
+                ? "Karta zresetowana i ma nowy PIN. Przy logowaniu podasz login, hasło i nowy PIN; klucz do logowania w Windows dodaj ponownie."
+                : "Karta zresetowana. Przy następnym logowaniu ustawisz nowy PIN.");
+        }
+        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+    }
+
+    /// <summary>Company messages from Konfiguracja → Komunikaty (kiosk-news.json in a folder or on a share).</summary>
+    private async Task LoadNewsAsync()
+    {
+        if (loadingNews) return;
+        loadingNews = true;
+        var folder = config.NewsFolder;
+        try
+        {
+            var show = config.NewsShow;
+            List<NewsItem> mine = [];
+            if (show != NewsDisplay.Off)
+                try { mine = await Task.Run(() => News.Load(CentralConfig.NewsFolderFor(folder))); }   // A share: through the Kiosk Card service.
+                catch (Exception ex) { Audit.Write("news_failed", ex.Message); }
+            if (show == NewsDisplay.BarsOnly) mine = mine.Where(n => n.IsBar).ToList();
+            List<NewsItem> other = [];
+            if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
+                other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount);
+            if (IsDisposed) return;
+            var all = News.Merge(mine, other, config.NewsOrder);
+            NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty
+            desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
+            screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
+            foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("news_failed", ex.Message);
+            NewsSlides.Publish([], config.NewsSeconds);
+            if (!IsDisposed) desktop.SetNews([], config.NewsSeconds);
+        }
+        finally { loadingNews = false; }
+    }
+
+    /// <summary>The button of a message: a page in the browser, or an application, remote desktop or command from the lists.</summary>
+    private async Task RunNewsActionAsync(NewsItem item)
+    {
+        Audit.Write("news_action", item.Title + " " + item.Action);
+        if (!CanUseApps) { notice = "Przyłóż kartę i zaloguj się, aby otworzyć „" + (item.Title.Length > 0 ? item.Title : item.Button) + "”."; return; }
+        var action = item.Action;
+        string Name(string prefix) => action[prefix.Length..].Trim();
+        if (action.StartsWith("app:", StringComparison.OrdinalIgnoreCase))
+        {
+            var app = config.Applications.FirstOrDefault(a => string.Equals(a.Name, Name("app:"), StringComparison.OrdinalIgnoreCase));
+            if (app != null) await OpenApplicationAsync(app); else notice = "Nie ma aplikacji „" + Name("app:") + "” w Konfiguracji.";
+        }
+        else if (action.StartsWith("rdp:", StringComparison.OrdinalIgnoreCase))
+        {
+            var rdp = config.RdpConnections.FirstOrDefault(r => string.Equals(r.Name, Name("rdp:"), StringComparison.OrdinalIgnoreCase));
+            if (rdp != null) OpenRdp(rdp); else notice = "Nie ma pulpitu zdalnego „" + Name("rdp:") + "” w Konfiguracji.";
+        }
+        else if (action.StartsWith("cmd:", StringComparison.OrdinalIgnoreCase))
+        {
+            var command = config.Commands.FirstOrDefault(c => string.Equals(c.Name, Name("cmd:"), StringComparison.OrdinalIgnoreCase));
+            if (command != null) RunCommand(command); else notice = "Nie ma polecenia „" + Name("cmd:") + "” w Konfiguracji.";
+        }
+        else if (Uri.TryCreate(action, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" or "file")
+            await OpenBrowserAsync(uri.AbsoluteUri);
+        else notice = "Nieznana akcja komunikatu: " + action;
     }
 
     /// <summary>Menu → Odśwież ekrany: the screens' content starts again (pages reload, programs restart).</summary>
@@ -1014,6 +1388,7 @@ internal sealed class KioskForm : Form
         else if (window.Key.StartsWith("app:")) session.Applications.Remove(window.Key[4..]);
         else if (window.Key == BrowserKey) session.Browser = null;
         else if (window.Key == NotesKey) { session.Notes?.Editor.Clear(); session.Notes = null; }
+        else if (window.Key == FilesKey) session.Files = null;
         else if (window.Key == SettingsKey) settingsView = null;
         if (session.LastView == window.View) session.LastView = null;
         HostOf(window.View)?.Release();
@@ -1171,6 +1546,37 @@ internal sealed class KioskForm : Form
         session.Notes.Editor.Focus();
     }
 
+    /// <summary>Menu → Pliki: the Kiosk's file manager; after "Zaloguj" it works as that person, in their folders.</summary>
+    private void OpenFiles()
+    {
+        if (current?.Files != null) { ActivateExisting(FilesKey); return; }
+        if (!CheckCard()) return;
+        var session = current!;
+        var logon = session.Logon;
+        Func<Func<object?>, object?> runAs = logon != null ? logon.RunAs : work => work();
+        try { session.Files = new FilesView(runAs, logon?.ProfileDirectory); }
+        catch (Exception ex) { notice = "Nie można otworzyć Plików: " + ex.Message; Audit.Write("files_error", ex.Message); RefreshChrome(); return; }
+        session.Files.OpenRequested += path => _ = OpenFileAsync(session, path);
+        AddWindow(session, FilesKey, config.Applications.FirstOrDefault(a => a.IsBuiltInFiles)?.Name ?? "Pliki", session.Files);
+        Audit.Write("files_opened");
+    }
+
+    /// <summary>Pliki: a file opens in the program Windows associates with it, hosted like any application.</summary>
+    private async Task OpenFileAsync(UserSession session, string path)
+    {
+        if (current != session) return;
+        var command = FileAssociation.Command(path);
+        if (command == null)
+        {
+            notice = "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.";
+            Audit.Write("file_open_failed", Path.GetExtension(path));
+            RefreshChrome();
+            return;
+        }
+        Audit.Write("file_opened", Path.GetExtension(path));
+        await OpenApplicationAsync(new ApplicationEntry { Name = Path.GetFileName(path), Path = command.Value.Program, Arguments = command.Value.Arguments });
+    }
+
     private ApplicationEntry EdgeAsUser => new()
     {
         Name = "Przeglądarka",
@@ -1178,10 +1584,17 @@ internal sealed class KioskForm : Form
         Arguments = "--new-window " + config.BrowserUrl
     };
 
-    private async Task OpenBrowserAsync()
+    /// <param name="url">A page to open (company message); null = the start page.</param>
+    private async Task OpenBrowserAsync(string? url = null)
     {
-        if (!config.EnableBrowser) return;
-        if (current?.Browser != null)
+        if (!config.Applications.Any(a => a.IsBuiltInBrowser)) { if (url != null) notice = "Przeglądarka jest wyłączona w Konfiguracji."; return; }
+        if (current?.Browser != null && url != null && current.Logon == null)
+        {
+            ActivateExisting(BrowserKey);
+            await current.Browser.OpenTrustedTabAsync(url);
+            return;
+        }
+        if (current?.Browser != null && url == null)
         {
             // Already on another screen: a new browser window for this one.
             if (HostOf(current.Browser) != null && current.Logon == null) await OpenAnotherAsync(BrowserKey); else ActivateExisting(BrowserKey);
@@ -1192,17 +1605,33 @@ internal sealed class KioskForm : Form
         if (session.Logon != null)
         {
             // Signed in as the person: their own Edge, with their profile, bookmarks and SSO (like runas).
-            await OpenApplicationAsync(EdgeAsUser);
+            if (url == null) { await OpenApplicationAsync(EdgeAsUser); return; }
+            if (session.Applications.ContainsKey(EdgeAsUser.Name))
+            {
+                // Edge is already open as the person: the page opens as a new tab of its window (a second Edge process only hands it over).
+                try
+                {
+                    var edge = EdgeAsUser.Path;
+                    var (process, thread) = session.Logon.Start(edge, "\"" + edge + "\" \"" + url + "\"", Path.GetDirectoryName(edge), show: 1);
+                    AppNative.ResumeThread(thread);
+                    AppNative.CloseHandle(thread);
+                    AppNative.CloseHandle(process);
+                    ActivateExisting("app:" + EdgeAsUser.Name);
+                }
+                catch (Exception ex) { notice = "Nie udało się otworzyć strony: " + ex.Message; Audit.Write("news_open_failed", ex.Message); }
+            }
+            else await OpenApplicationAsync(EdgeAsUser with { Arguments = "--new-window \"" + url + "\"" });
             return;
         }
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
+        if (url != null) policy.Trust(url);
         var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
         session.Browser = requested;
-        AddWindow(session, BrowserKey, "Przeglądarka", requested);
+        AddWindow(session, BrowserKey, config.Applications.FirstOrDefault(a => a.IsBuiltInBrowser)?.Name ?? "Przeglądarka", requested);
         try
         {
             // With "only bookmarks" a start page outside the list opens the first bookmark instead.
-            await requested.InitializeAsync(policy.Allows(config.BrowserUrl) ? config.BrowserUrl : config.Bookmarks[0].Url);
+            await requested.InitializeAsync(url ?? (policy.Allows(config.BrowserUrl) ? config.BrowserUrl : config.Bookmarks[0].Url));
             if (session.Browser == requested && !requested.IsDisposed) Audit.Write("browser_opened");
         }
         catch (Exception ex)
@@ -1218,6 +1647,8 @@ internal sealed class KioskForm : Form
     private async Task OpenApplicationAsync(ApplicationEntry entry, bool another = false)
     {
         if (entry.IsBuiltInNotes) { OpenNotes(); return; }
+        if (entry.IsBuiltInFiles) { OpenFiles(); return; }
+        if (entry.IsBuiltInBrowser) { await OpenBrowserAsync(); return; }
         var key = "app:" + entry.Name;
         if (current?.Applications.TryGetValue(entry.Name, out var existing) == true)
         {
@@ -1240,7 +1671,11 @@ internal sealed class KioskForm : Form
         AddWindow(session, key, entry.Name, requested);
         try
         {
-            await requested.StartAsync(entry, session.Logon);
+            // Konto wspólne: this PC's account runs it, the shared one signs in to the file server (runas /netonly).
+            IProgramStarter? starter = string.IsNullOrWhiteSpace(entry.RunAs) ? session.Logon
+                : new NetworkAccountStarter(await Task.Run(() => SharedAccounts.Get(entry.RunAs.Trim())));
+            if (requested.IsDisposed) return;
+            await requested.StartAsync(entry, starter);
             if (!requested.IsDisposed) Audit.Write("application_opened", entry.Name);
         }
         catch (Exception ex)
@@ -1255,14 +1690,23 @@ internal sealed class KioskForm : Form
 
     /// <summary>
     /// Who may open Konfiguracja: a card on the AdminCards list, or (when allowed) a member of this PC's local
-    /// Administrators group. While the list is empty in test mode everyone may, so the first admin can add a card.
+    /// Administrators group: the card's account, the account signed in with Zaloguj, or the Windows account running Kiosk (an administrator starting it
+    /// to set it up). Test mode no longer opens it for everyone: configuration is decided by administrators.
     /// </summary>
     private bool IsAdmin(UserSession session, Config? settings = null)
     {
         settings ??= config;
         if (settings.AdminCards.Any(a => a.Id == session.Identity.Id)) return true;
-        if (settings.AllowWindowsAdministrators && session.IsWindowsAdmin) return true;
-        return settings.TestMode && settings.AdminCards.Length == 0;
+        // The account signed in with "Zaloguj" counts too: FIDO2 cards carry no certificate naming it.
+        return settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || session.Logon?.IsAdministrator == true || RunningAsWindowsAdmin);
+    }
+
+    // Includes the deny-only Administrators SID of a UAC-filtered admin token.
+    private static bool RunningAsWindowsAdmin = IsWindowsAdminToken();
+    private static bool IsWindowsAdminToken()
+    {
+        using var token = System.Security.Principal.WindowsIdentity.GetCurrent();
+        return token.Groups?.Any(g => g.Value == "S-1-5-32-544") == true;
     }
 
     private async Task CheckWindowsAdministratorAsync(UserSession session)
@@ -1274,30 +1718,259 @@ internal sealed class KioskForm : Form
         RefreshChrome();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        AdminSettings.RegisterHotkey(Handle);
+        windowsKey ??= new WindowsKey(() => { if (IsHandleCreated) BeginInvoke(new Action(ToggleMenu)); });
+    }
+
+    private WindowsKey? windowsKey;
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        AdminSettings.UnregisterHotkey(Handle);
+        windowsKey?.Dispose();
+        windowsKey = null;
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (AdminSettings.IsHotkey(m)) { OpenSettingsAsAdministrator(); return; }
+        if (AdminSettings.IsUpdateHotkey(m)) { _ = UpdateByHotkeyAsync(); return; }
+        base.WndProc(ref m);
+    }
+
+    /// <summary>Ctrl+Alt+K: an admin card opens Konfiguracja as usual; anyone else is asked for a Windows administrator.</summary>
+    private void OpenSettingsAsAdministrator()
+    {
+        if (configPath == null) return;
+        if (current != null && CanUseApps && IsAdmin(current)) { OpenSettings(); return; }
+        AdminSettings.Open(this, configPath, () =>
+        {
+            if (!ReloadConfig()) return;
+            Invalidate(true);
+            StartIdleScreens();
+            RefreshChrome();
+        }, () => _ = UpdateFromSettingsAsync());
+    }
+
+    /// <summary>Reads the saved configuration again (and the server's, when it has a ConfigSource).</summary>
+    private bool ReloadConfig()
+    {
+        try
+        {
+            var loaded = CentralConfig.Load(configPath!);
+            config = loaded.Effective;
+            localConfig = loaded.Local;
+            notice = loaded.Problem;
+        }
+        catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return false; }
+        KioskTheme.SetAccent(config.AccentColor);
+        return true;
+    }
+
+    /// <summary>From a server's configuration only its address (ConfigSource) is saved into the PC's own file.</summary>
+    private Config ToSave(Config edited) => localConfig is { ConfigSource.Length: > 0 } local ? local with { ConfigSource = edited.ConfigSource } : edited;
+
+    private bool updating;
+
+    /// <summary>Ctrl+Alt+U, for anyone: the latest official release when it is newer (installed by the Kiosk Card service).</summary>
+    private async Task UpdateByHotkeyAsync()
+    {
+        if (updating) return;
+        updating = true;
+        try
+        {
+            Audit.Write("update_hotkey");
+            notice = "Sprawdzam najnowszą wersję…";
+            RefreshChrome();
+            var release = await Updater.LatestAsync();
+            if (release.Tag == Updater.CurrentVersion)
+            {
+                notice = "Masz najnowszą wersję (" + release.Tag + ").";
+                RefreshChrome();
+                return;
+            }
+            await UpdateFromSettingsAsync();
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+        finally { updating = false; }
+    }
+
+    /// <summary>"Sprawdź i zaktualizuj" in the administrator's settings window: this Kiosk downloads the release and installs it.</summary>
+    private async Task UpdateFromSettingsAsync()
+    {
+        try
+        {
+            var release = await Updater.LatestAsync();
+            notice = "Pobieram " + release.Tag + "…";
+            RefreshChrome();
+            var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
+            {
+                notice = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
+                RefreshChrome();
+            }));
+            InstallUpdate(folder);
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+    }
+
+    private void InstallUpdate(string folder)
+    {
+        Audit.Write("update_requested", folder);
+        closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
+        if (!closeConfirmed) return;
+        // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
+        Updater.Launch(folder);
+        Close();
+    }
+
     private void OpenSettings()
     {
         if (settingsView != null) { ActivateExisting(SettingsKey); return; }
         // Open windows stay as they are; saved settings apply to what is opened next.
         if (configPath == null || !CanUseApps || !IsAdmin(current!)) return;
         var session = current!;
-        var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
+        var view = new SettingsView(fullConfig, session.Identity, updated => IsAdmin(session, updated.Active()));
         view.IdentifyScreensRequested += ShowScreenNumbers;
+        view.UpdateRequested += InstallUpdate;
         settingsView = view;
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, updated);
-            config = updated;
-            KioskTheme.SetAccent(updated.AccentColor);
+            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
+            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Invalidate(true);
             Audit.Write("settings_saved");
             StartIdleScreens();
+            _ = LoadNewsAsync();
             CloseWindow(SettingsKey, "settings_closed", session);
         };
         AddWindow(session, SettingsKey, "Konfiguracja", view);
     }
 
     // ---------------------------------------------------------------- self-test
+
+    /// <summary>Pictures of every Konfiguracja tab at 1280×720 and 1024×576 (= 1280×720 at 125 %), for checking the layout from CI.</summary>
+    private static void SaveSettingsScreenshots(Config settings)
+    {
+        var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));   // out\screenshots, outside the package
+        Directory.CreateDirectory(folder);
+        foreach (var (size, scale) in new[] { (new Size(1280, 720), 1f), (new Size(1920, 1080), 1.5f) })
+        {
+            SettingsView.ScaleOverride = scale;
+            using var form = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, Location = new Point(0, 0), ClientSize = size, ShowInTaskbar = false };
+            var view = new SettingsView(settings);
+            form.Controls.Add(view);
+            form.Show();
+            var tabs = view.Controls.Cast<Control>().SelectMany(c => c.Controls.OfType<TabControl>()).Single();
+            for (var i = 0; i < tabs.TabCount; i++)
+            {
+                tabs.SelectedIndex = i;
+                Application.DoEvents();
+                using var picture = new Bitmap(size.Width, size.Height);
+                form.DrawToBitmap(picture, new Rectangle(Point.Empty, size));
+                picture.Save(Path.Combine(folder, size.Width + "-" + i + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            form.Close();
+        }
+        SettingsView.ScaleOverride = null;
+    }
+
+    /// <summary>Self-test: a picture of the taskbar with the Start menu open (out\screenshots\shell.png), to check the look in CI.</summary>
+    /// <summary>kiosk-news.json is read with its pictures, dates and actions; a picture of the desktop with the messages.</summary>
+    private void NewsSmokeTest()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "kiosk-news-test-" + Environment.ProcessId);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            using (var picture = new Bitmap(320, 180))
+            {
+                using (var g = Graphics.FromImage(picture))
+                using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(new Rectangle(0, 0, 320, 180), Color.FromArgb(0, 120, 212), Color.FromArgb(61, 220, 132), 30f))
+                    g.FillRectangle(brush, 0, 0, 320, 180);
+                picture.Save(Path.Combine(folder, "a.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            File.WriteAllText(Path.Combine(folder, "pomoc.html"), "<h1>Zgłoś problem</h1>");
+            File.WriteAllText(Path.Combine(folder, News.FileName), """
+                [
+                  // comments and trailing commas are allowed
+                  { "Title": "Aktualizacja A", "Text": "W piątek po 18:00 aktualizujemy system kadrowy.", "Image": "a.png", "Button": "Szczegóły", "Action": "https://example.com/aktualizacja" },
+                  { "Title": "Zgłoś problem", "Text": "Coś nie działa? Wyślij zgłoszenie do IT.", "Button": "Zgłoś", "Action": "pomoc.html" },
+                  { "Title": "Stary", "Until": "2020-01-01" },
+                  { "Kind": "Pasek", "Title": "Wyłączony", "Color": "orange", "Enabled": false },
+                  { "Kind": "Pasek", "Title": "Nie działa system XXX", "Text": "Trwa naprawa.", "Color": "red", "TextColor": "white" },
+                ]
+                """);
+            var all = News.Load(folder);
+            var items = all.Where(i => !i.IsBar).ToList();
+            if (all.Count(i => i.IsBar) != 1 || News.ParseColor("red", Color.Empty).ToArgb() != Color.Red.ToArgb() ||
+                News.ParseColor("#00FF00", Color.Empty).ToArgb() != Color.Lime.ToArgb() || News.ParseColor("nic", Color.Blue) != Color.Blue)
+                throw new InvalidOperationException("The bar message was not read.");
+            var at = new DateTime(2026, 10, 20, 16, 30, 0);
+            if (!News.Shown(new NewsItem { From = "2026-10-20 16:00", Until = "2026-10-20 17:00" }, at) ||
+                News.Shown(new NewsItem { From = "2026-10-20 16:45" }, at) || News.Shown(new NewsItem { Until = "2026-10-20 16:15" }, at) ||
+                !News.Shown(new NewsItem { From = "2026-10-20", Until = "2026-10-20" }, at) || !News.Shown(new NewsItem { Until = "2026-10-20T16:30" }, at))
+                throw new InvalidOperationException("From / Until with hours were not applied.");
+            if (items.Count != 2 || items[0].Picture == null || !items[1].Action.StartsWith("file:///", StringComparison.Ordinal) || News.Load("").Count != 0)
+                throw new InvalidOperationException("Company messages were not read correctly.");
+            if (News.ResolveAction("https:// wp.pl", folder) != "https://wp.pl" || News.ResolveAction("wp.pl", folder) != "https://wp.pl" ||
+                News.ResolveAction("app:Excel", folder) != "app:Excel")
+                throw new InvalidOperationException("Company message addresses were not normalised.");
+            var trusted = new SitePolicy(true, [new Bookmark { Name = "G", Url = "https://www.google.com" }], []);
+            trusted.Trust(items[1].Action);
+            trusted.Trust("https://wp.pl");
+            if (!trusted.Allows(items[1].Action) || !trusted.Allows("https://wp.pl/news") || trusted.Allows("https://example.org") ||
+                trusted.Allows(new Uri(Path.Combine(Path.GetTempPath(), "other.html")).AbsoluteUri))
+                throw new InvalidOperationException("Company message pages are not allowed in the browser.");
+            var spItems = SharePointNews.Parse("""{"ok":true,"items":[{"title":"Nowa strona","text":"Opis","url":"https://firma.sharepoint.com/sites/i/SitePages/a.aspx","image":""}]}""");
+            var merged = News.Merge(items, spItems, NewsOrdering.Alternate);
+            if (spItems.Count != 1 || spItems[0].Action != "https://firma.sharepoint.com/sites/i/SitePages/a.aspx" || merged.Count != 3 ||
+                merged[0] != spItems[0] || merged[1] != items[0] || News.Merge(items, spItems, NewsOrdering.MineFirst)[0] != items[0])
+                throw new InvalidOperationException("SharePoint news were not merged with the folder's messages.");
+            if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Szybka pomoc is not on the desktop.");
+            desktop.SetNews(all, 8);
+            if (desktop.News.Count != 2 || desktop.BarCount != 1) throw new InvalidOperationException("Company messages are not on the desktop.");
+            var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
+            Directory.CreateDirectory(screenshots);
+            if (desktop.Width > 0 && desktop.Height > 0)
+            {
+                using var shot = new Bitmap(desktop.Width, desktop.Height);
+                desktop.DrawToBitmap(shot, new Rectangle(Point.Empty, desktop.Size));
+                shot.Save(Path.Combine(screenshots, "desktop.png"), System.Drawing.Imaging.ImageFormat.Png);
+                int standard = desktop.News.Height;
+                desktop.SetNews(merged, 8, NewsBanner.Large);
+                using var large = new Bitmap(desktop.Width, desktop.Height);
+                desktop.DrawToBitmap(large, new Rectangle(Point.Empty, desktop.Size));
+                large.Save(Path.Combine(screenshots, "desktop-large.png"), System.Drawing.Imaging.ImageFormat.Png);
+                if (desktop.News.Visible && desktop.News.Height < standard) throw new InvalidOperationException("The large banner is smaller.");
+            }
+            desktop.SetNews([], 8);
+        }
+        finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
+    }
+
+    private void SaveShellScreenshot()
+    {
+        try
+        {
+            var folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
+            Directory.CreateDirectory(folder);
+            PopulateMenu("");
+            menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+            menu.OpenPowerList();
+            for (int i = 0; i < 10; i++) { Application.DoEvents(); Thread.Sleep(30); }
+            var bounds = Screen.FromControl(this).Bounds;
+            using var picture = new Bitmap(bounds.Width, bounds.Height);
+            using (var g = Graphics.FromImage(picture)) g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+            picture.Save(Path.Combine(folder, "shell.png"), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        catch (Exception ex) { Audit.Write("self_test_screenshot_failed", ex.Message); }
+        finally { menu.HideMenu(); }
+    }
 
     internal void SmokeTest()
     {
@@ -1316,7 +1989,7 @@ internal sealed class KioskForm : Form
             new Native.ReaderState { Reader = "Windows Hello", EventState = 0x422, Atr = new byte[36] }
         };
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Count(s => CardReader.IsUsableCard(s.EventState)) != 1 ||
-            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 3 ||
+            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 2 ||
             CardReader.MonitoredReaders(physicalAndVirtual, "Missing").Length != 0)
             throw new InvalidOperationException("PCSC reader-selection regression test failed.");
         physicalAndVirtual[0].EventState = 0x12;
@@ -1328,7 +2001,8 @@ internal sealed class KioskForm : Form
         legacy.Validate();
         if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
-            !legacy.Applications.Single().IsBuiltInNotes || legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 1)
+            legacy.Applications.Length != 3 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.Applications[2].IsBuiltInFiles || !legacy.EnableBrowser ||
+            legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 3)
             throw new InvalidOperationException("Legacy configuration migration failed.");
         foreach (var invalid in new[]
         {
@@ -1436,21 +2110,28 @@ internal sealed class KioskForm : Form
         if (await bookmarkNavigation.Task.WaitAsync(TimeSpan.FromSeconds(5)) != "https://bookmark.invalid/")
             throw new InvalidOperationException("Bookmark navigation failed.");
 
-        // Konfiguracja is for admins: a listed card, a Windows administrator, or anyone while the list is empty in test mode.
+        // Konfiguracja is for admins: a listed card or a Windows administrator; test mode alone does not open it.
         var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
+        var runningAsAdmin = RunningAsWindowsAdmin;   // CI runs as an administrator
+        RunningAsWindowsAdmin = false;
         var bobSession = new UserSession { Identity = bob };
         if (!IsAdmin(aliceSession, adminTest) || IsAdmin(bobSession, adminTest) ||
-            !IsAdmin(bobSession, config with { TestMode = true, AdminCards = [] }) || IsAdmin(bobSession, config with { TestMode = false, AdminCards = [] }))
+            IsAdmin(bobSession, config with { TestMode = true, AdminCards = [], AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Admin card check failed.");
         bobSession.IsWindowsAdmin = true;
         if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Windows administrator check failed.");
+        bobSession.IsWindowsAdmin = false;
+        RunningAsWindowsAdmin = true;   // an administrator started Kiosk to set it up
+        if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
+            throw new InvalidOperationException("Administrator running Kiosk check failed.");
+        RunningAsWindowsAdmin = runningAsAdmin;
         if (!LocalAdministrators.Matches(@"INVESTA\k.lechmyc", "k.lechmyc", "investa.pl") || !LocalAdministrators.Matches(@"AzureAD\JanKowalski", "JanKowalski", "AzureAD") ||
             LocalAdministrators.Matches(@"OTHER\k.lechmyc", "k.lechmyc", "investa.pl") || LocalAdministrators.Matches("Kris", "Kris", "x.pl"))
             throw new InvalidOperationException("Administrators group matching failed.");
         _ = LocalAdministrators.Contains("nobody@example.invalid"); // Reads the real group without failing.
 
-        menu.Populate("test", BuildMenu());
+        PopulateMenu("test");
         if (menu.ItemCount < config.RdpConnections.Length + 3) throw new InvalidOperationException("Menu is incomplete.");
 
         // In-app lock hides every window; resume with the same card restores the last one.
@@ -1459,6 +2140,21 @@ internal sealed class KioskForm : Form
             throw new InvalidOperationException("Lock did not hide the session.");
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
+        NewsSmokeTest();
+        if (People.FriendlyName("", @"INVESTA\KrzysztofLechmyc") != "Krzysztof Lechmyc" || People.FriendlyName("", "jan.kowalski@firma.pl") != "Jan Kowalski" ||
+            People.FriendlyName("Anna Nowak", @"AzureAD\x") != "Anna Nowak" || People.FriendlyName("", "Alicja Test") != "Alicja Test" || People.Initials("Krzysztof Lechmyc") != "KL")
+            throw new InvalidOperationException("People's names are not shown nicely.");
+        // "Włączony": unticked entries stay in the configuration but are not used.
+        var switched = config with
+        {
+            HelpActions = [.. HelpAction.Defaults.Select((h, i) => h with { Enabled = i != 0 })],
+            Commands = [new CommandEntry { Name = "Off", Path = @"C:\Windows\System32\cmd.exe", Enabled = false }]
+        };
+        var active = switched.Active();
+        if (active.HelpActions.Length != HelpAction.Defaults.Length - 1 || active.Commands.Length != 0 || switched.HelpActions.Length != HelpAction.Defaults.Length
+            || (switched with { ShowHelp = false }).Active().HelpActions.Length != 0)
+            throw new InvalidOperationException("Disabled entries were not filtered.");
+        SaveShellScreenshot();
 
         // Shared PC: removing the card keeps the session; another card gets its own empty session.
         CardRemoved();
@@ -1534,6 +2230,7 @@ internal sealed class KioskForm : Form
                 edited.ChangeUserAfterSeconds != 30 || edited.AccentColor != "#3DDC84" || edited.AdminCards.Single() != restored.AdminCards.Single() || edited.AllowWindowsAdministrators || !edited.BrowserOnlyBookmarks || edited.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || edited.EnableBrowser || edited.ReaderName != restored.ReaderName || !edited.Applications.SequenceEqual(restored.Applications))
                 throw new InvalidOperationException("Settings view does not round-trip the configuration.");
         }
+        SaveSettingsScreenshots(restored);
 
         // An existing same-executable window must never be adopted or terminated.
         using var unrelated = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(entry.Path, entry.Arguments)

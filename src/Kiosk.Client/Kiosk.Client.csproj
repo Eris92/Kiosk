@@ -12,6 +12,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
   </ItemGroup>
+  <!-- Example company messages (Konfiguracja → Komunikaty → "Użyj przykładu"), installed and updated with the program. -->
+  <ItemGroup>
+    <None Include="..\..\config\news\**\*" LinkBase="news-example" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   <!-- WebView2 adds its WPF assembly too; this application only uses WinForms. -->
   <Target Name="RemoveUnusedWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>

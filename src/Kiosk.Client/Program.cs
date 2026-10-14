@@ -20,6 +20,11 @@ internal static class Program
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
+        if (args.Length >= 3 && args[0] == Updater.Argument) return Updater.Apply(args);
+        if (Updater.IsCopy(args)) return Updater.CopyElevated(args[1]);
+        if (args.Length == 1 && args[0] == Updater.ServiceRefreshArgument) return Updater.RefreshService();
+        if (args.Length == 2 && args[0] == AdminSettings.Argument) return AdminSettings.Run(args[1]);
+        if (args.Length is 3 or 4 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2], args.Length == 4 ? args[3] : null);
         if (args.Length == 3 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort)) return RdpUserHost.Run(args[1], rdpPort);
         if (args.Length == 2 && args[0] == "--card-info")
         {
@@ -73,8 +78,13 @@ internal static class Program
                 Application.Run(form);
                 return result;
             }
-            var path = args.Length == 0 ? Path.Combine(AppContext.BaseDirectory, "client.json") : Path.GetFullPath(args[0]);
-            var config = Configuration.Load(path);
+            // Without a path: the PC's shared configuration (Install-KioskShell.ps1) wins over the example next to the exe,
+            // so every account and every copy of the Kiosk on this PC shows the same Konfiguracja.
+            var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "client.json");
+            var path = args.Length > 0 ? Path.GetFullPath(args[0]) : File.Exists(shared) ? shared : Path.Combine(AppContext.BaseDirectory, "client.json");
+            // Konfiguracja z serwera: the server's client.json and files are fetched first (CentralConfig).
+            var loaded = CentralConfig.Load(path);
+            var config = loaded.Effective;
             KioskTheme.SetAccent(config.AccentColor);
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
             // "Uruchom ponownie": the previous copy may still be closing — wait for it a moment.
@@ -84,7 +94,14 @@ internal static class Program
                 catch (AbandonedMutexException) { first = true; }
             }
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
-            Application.Run(new KioskForm(config, path));
+            // A new installation asks once: this PC's own configuration, or a server's (FirstRunSetup).
+            if (FirstRunSetup.RunIfNeeded(path, loaded.Local))
+            {
+                loaded = CentralConfig.Load(path);
+                config = loaded.Effective;
+                KioskTheme.SetAccent(config.AccentColor);
+            }
+            Application.Run(new KioskForm(config, path, loaded));
             return 0;
         }
         catch (Exception ex)
@@ -137,11 +154,27 @@ internal sealed class CardReader : IDisposable
     /// <summary>Reader holding the last detected card; used to check that card's PIN.</summary>
     internal string ActiveReader { get; private set; } = "";
     internal string ActiveAtr { get; private set; } = "";
+    /// <summary>Names of the readers connected now (Konfiguracja offers them in a list); empty when none or no service.</summary>
+    internal static string[] ListReaders()
+    {
+        if (Native.SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out var context) != 0) return [];
+        try
+        {
+            uint size = 0;
+            if (Native.SCardListReaders(context, null, null, ref size) != 0) return [];
+            var names = new char[size];
+            if (Native.SCardListReaders(context, null, names, ref size) != 0) return [];
+            return new string(names).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        }
+        finally { Native.SCardReleaseContext(context); }
+    }
     internal static bool IsUsableCard(uint state) =>
         (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
 
+    // "Any reader" skips the laptop's SIM slot (LTE modem: "Microsoft UICC ISO Reader …"): it always holds a card,
+    // which would sign someone in with no card on the reader.
     internal static Native.ReaderState[] MonitoredReaders(Native.ReaderState[] states, string selected) =>
-        selected.Length == 0 ? states :
+        selected.Length == 0 ? states.Where(s => s.Reader?.Contains("UICC", StringComparison.OrdinalIgnoreCase) != true).ToArray() :
         states.Where(s => string.Equals(s.Reader, selected, StringComparison.Ordinal)).ToArray();
 
     private static string Describe(Native.ReaderState state)

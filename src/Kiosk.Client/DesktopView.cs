@@ -11,6 +11,14 @@ internal static class KioskTheme
     internal static readonly Color Muted = Color.FromArgb(157, 174, 195);
     internal static readonly Color Taskbar = Color.FromArgb(17, 26, 42);
     internal const string DefaultAccent = "#5AB5FF";
+    // Windows 11 (26H2) dark shell: neutral taskbar and Start menu, light hover, accent only for the indicators.
+    internal static readonly Color ShellBar = Color.FromArgb(32, 32, 32);
+    internal static readonly Color ShellHover = Color.FromArgb(52, 52, 52);
+    internal static readonly Color ShellActive = Color.FromArgb(44, 44, 44);
+    internal static readonly Color ShellBorder = Color.FromArgb(56, 56, 56);
+    internal static readonly Color MenuBack = Color.FromArgb(38, 38, 38);
+    internal static readonly Color MenuFooter = Color.FromArgb(30, 30, 30);
+    internal static readonly Color MenuHover = Color.FromArgb(54, 54, 54);
 
     /// <summary>Accent presets offered in Konfiguracja (any #RRGGBB also works).</summary>
     internal static readonly (string Name, string Hex)[] Presets =
@@ -79,10 +87,16 @@ internal sealed class DesktopView : UserControl
 {
     private readonly Label brand = new() { Text = "Kiosk", AutoSize = false };
     private readonly Label subtitle = new() { Text = "Twój pulpit pracy", AutoSize = false };
+    private readonly PictureBox logo = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent, Visible = false };
+    private string logoPath = "";
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly StatusCard card = new();
-    private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
+    /// <summary>Company messages at the bottom (Konfiguracja → Komunikaty).</summary>
+    internal NewsCarousel News { get; } = new();
+    /// <summary>Szybka pomoc (Konfiguracja → Szybka pomoc), shown locked and unlocked.</summary>
+    internal HelpBar Help { get; } = new();
+    private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, AutoEllipsis = true };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
     private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Button resume = new() { Text = "Wznów sesję", Visible = false };
@@ -95,6 +109,8 @@ internal sealed class DesktopView : UserControl
     private readonly System.Windows.Forms.Timer pinWatch = new() { Interval = 250 };
     private TaskCompletionSource<string?>? pinRequest;
     private Func<bool>? pinCardPresent;
+    // Szybka pomoc: the PIN field gives up when nobody types for the help time, with the same countdown as everywhere.
+    private readonly HelpCountdown pinCountdown = new() { Visible = false };
     private bool locked;
     internal bool AskingPin => pinRequest != null;
 
@@ -139,11 +155,18 @@ internal sealed class DesktopView : UserControl
             if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; FinishPin(true); }
             if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; FinishPin(false); }
         };
-        pinWatch.Tick += (_, _) => { if (pinCardPresent?.Invoke() == false) FinishPin(false); }; // Card taken away.
+        pinWatch.Tick += (_, _) =>
+        {
+            if (pinCardPresent?.Invoke() == false) FinishPin(false); // Card taken away.
+        };
+        pinBox.TextChanged += (_, _) => pinCountdown.Restart();
+        pinCountdown.Expired += () => FinishPin(false);
+        // Like the other help windows: a real mouse move, click or key anywhere on the desktop gives more time.
+        HelpCountdown.Watch(this, () => { if (pinCountdown.Visible) pinCountdown.Restart(); });
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel });
-        Controls.AddRange(new Control[] { card, brand, subtitle, clock, date });
+        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown });
+        Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -158,10 +181,15 @@ internal sealed class DesktopView : UserControl
         Invalidate(true);
     }
 
-    internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję")
+    private string? person;
+
+    /// <summary><paramref name="person"/>: a signed-in person's name, shown with their initials in a circle instead of a greeting.</summary>
+    internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję", string? person = null)
     {
         // Called on every shell tick; repaint only when something changed.
-        if (heading.Text == title && detail.Text == description && this.locked == locked && resume.Text == buttonText) return;
+        if (heading.Text == title && detail.Text == description && this.locked == locked && resume.Text == buttonText && this.person == person) return;
+        this.person = person;
+        card.Initials = person == null ? "" : People.Initials(person);
         resume.Text = buttonText;
         this.locked = locked;
         heading.Text = title;
@@ -172,6 +200,62 @@ internal sealed class DesktopView : UserControl
         card.Locked = locked;
         ArrangeControls();
         card.Invalidate();
+    }
+
+    /// <summary>The desktop corner from Konfiguracja: name, line under it and logo; empty ones are hidden.</summary>
+    internal void SetBranding(string title, string line, string logoFile)
+    {
+        brand.Text = title;
+        subtitle.Text = line;
+        if (logoFile != logoPath)
+        {
+            logoPath = logoFile;
+            var old = logo.Image;
+            logo.Image = null;
+            old?.Dispose();
+            // Read into memory, so the file is not kept locked; a missing or broken file simply shows no logo.
+            try { if (logoFile.Length > 0 && File.Exists(logoFile)) logo.Image = Image.FromStream(new MemoryStream(File.ReadAllBytes(logoFile))); }
+            catch (Exception) { logo.Image = null; }
+        }
+        logo.Visible = logo.Image != null;
+        brand.Visible = title.Length > 0;
+        subtitle.Visible = line.Length > 0;
+        ArrangeControls();
+    }
+
+    internal void SetHelp(HelpAction[] actions)
+    {
+        if (ReferenceEquals(Help.Items, actions)) return;
+        Help.SetItems(actions);
+        ArrangeControls();
+    }
+
+    private NewsBanner banner;
+    private readonly List<AlertBar> bars = [];
+    internal int BarCount => bars.Count;
+
+    internal void SetNews(List<NewsItem> items, int seconds, NewsBanner size = NewsBanner.Standard)
+    {
+        News.Seconds = seconds;
+        banner = size;
+        // Bars ("Kind": "Pasek") go across the top, at most three; the rest scroll at the bottom.
+        var wanted = items.Where(i => i.IsBar).Take(3).ToList();
+        if (!wanted.SequenceEqual(bars.Select(b => b.Item)))
+        {
+            foreach (var old in bars) { Controls.Remove(old); old.Dispose(); }
+            bars.Clear();
+            foreach (var item in wanted)
+            {
+                var bar = new AlertBar(item);
+                bar.ActionRequested += News.RequestAction;
+                bars.Add(bar);
+                Controls.Add(bar);
+                bar.BringToFront();
+                if (IsHandleCreated) _ = bar.Handle; // Also while the desktop is hidden (an app in front), so it is ready when it shows.
+            }
+        }
+        News.SetItems(items.Where(i => !i.IsBar).ToList());
+        ArrangeControls();
     }
 
     private void UpdateClock()
@@ -193,21 +277,83 @@ internal sealed class DesktopView : UserControl
     {
         if (card == null) return;
         int margin = Scale(36);
+        // Bars across the top (Komunikaty, "Kind": "Pasek"); everything else moves down under them.
+        int bar = 0;
+        foreach (var alert in bars) { alert.SetBounds(0, bar, Width, Scale(44)); bar += Scale(44); }
         int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
-        brand.SetBounds(margin, Scale(24), Math.Max(0, Width - clockWidth - margin * 2), Scale(47));
-        subtitle.SetBounds(margin + Scale(2), Scale(75), Math.Max(0, Width - clockWidth - margin * 2), Scale(25));
-        clock.SetBounds(Width - clockWidth - margin, Scale(25), clockWidth, Scale(47));
-        date.SetBounds(Width - clockWidth - margin, Scale(77), clockWidth, Scale(25));
+        int logoSize = Scale(76), textLeft = margin;
+        // Visible reads false while the desktop itself is hidden, so the layout looks at the content.
+        if (logo.Image != null)
+        {
+            // Wide logos keep their proportions up to three times their height.
+            var image = logo.Image!;
+            int logoWidth = Math.Min(logoSize * 3, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
+            logo.SetBounds(margin, bar + Scale(24), logoWidth, logoSize);
+            textLeft = margin + logoWidth + Scale(16);
+        }
+        int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
+        // Only a line under it: the line moves up to where the name would be.
+        brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
+        subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
+        clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
+        date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
-        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : 324);
-        int top = Math.Max(Scale(125), (Height - cardHeight) / 2 + Scale(12));
+        bool personRow = person != null && !locked && !AskingPin;
+        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
+        // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
+        bool help = Help.Count > 0 && !AskingPin;
+        var column = Help.Needed(true);
+        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
+        int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
+        Help.Vertical = helpColumn;
+        // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
+        // The size set in Konfiguracja, or the largest smaller one that fits.
+        int[] heights = [132, 220, 320], widths = [980, 1200, 1400];
+        int size = (int)banner, newsGap = Scale(20), bottom = Height;
+        while (size > 0 && Height - (bar + Scale(125)) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
+        int newsHeight = Scale(heights[size]);
+        bool news = News.Count > 0 && !AskingPin && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
+        News.Visible = news;
+        if (news)
+        {
+            int newsWidth = Math.Min(Scale(widths[size]), Math.Max(Scale(240), Width - margin * 2));
+            News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
+            bottom = News.Top - newsGap;
+        }
+        int top = Math.Max((bar + Scale(125)), (bottom - cardHeight - helpRow) / 2 + Scale(12));
+        if (news) top = Math.Min(top, bottom - cardHeight - helpRow);
         card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
+        Help.Visible = help;
+        if (helpColumn) Help.SetBounds(margin, (bar + Scale(125)), column.Width, column.Height);
+        else if (help)
+        {
+            var row = Help.Needed(false);
+            int rowWidth = Math.Min(row.Width, Width - margin * 2);
+            Help.SetBounds((Width - rowWidth) / 2, card.Bottom + Scale(16), rowWidth, row.Height);
+        }
         int innerMargin = Scale(30);
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
-        heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
-        detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
-        hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
+        if (personRow)
+        {
+            // The person: initials in a circle and the name beside it, the rest under them.
+            int diameter = Scale(62), gap = Scale(18);
+            int nameWidth = Math.Max(0, Math.Min(textWidth - diameter - gap, TextRenderer.MeasureText(heading.Text, heading.Font).Width + Scale(8)));
+            int left = (cardWidth - diameter - gap - nameWidth) / 2;
+            card.Avatar = new Rectangle(left, Scale(36), diameter, diameter);
+            heading.TextAlign = ContentAlignment.MiddleLeft;
+            heading.SetBounds(left + diameter + gap, Scale(32), nameWidth, diameter + Scale(8));
+            detail.SetBounds(innerMargin, Scale(124), textWidth, Scale(64));
+            hint.SetBounds(innerMargin, Scale(214), textWidth, Scale(35));
+        }
+        else
+        {
+            card.Avatar = Rectangle.Empty;
+            heading.TextAlign = ContentAlignment.MiddleCenter;
+            heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
+            detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
+            hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
+        }
         int buttonWidth = Math.Min(Scale(220), textWidth);
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
         int pinWidth = Math.Min(Scale(360), textWidth);
@@ -217,14 +363,17 @@ internal sealed class DesktopView : UserControl
         int half = (pinWidth - Scale(12)) / 2;
         pinOk.SetBounds(pinLeft, Scale(385), half, Scale(46));
         pinCancel.SetBounds(pinLeft + half + Scale(12), Scale(385), half, Scale(46));
+        pinCountdown.SetBounds(pinLeft, Scale(436), pinWidth, Scale(30));
     }
 
     /// <summary>
     /// Shows the PIN field on the lock card and waits for it; null when cancelled or the card is taken away.
     /// The typed text is handed over once and the field is cleared.
     /// </summary>
-    internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent)
+    internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent, int idleSeconds = 0)
     {
+        pinCountdown.Visible = idleSeconds > 0;
+        if (idleSeconds > 0) pinCountdown.Start(idleSeconds); else pinCountdown.Stop();
         pinRequest?.TrySetResult(null);
         pinRequest = new TaskCompletionSource<string?>();
         pinCardPresent = cardPresent;
@@ -247,7 +396,8 @@ internal sealed class DesktopView : UserControl
         pinBox.Clear();
         pinWatch.Stop();
         pinRequest = null;
-        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = false;
+        foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel, pinCountdown }) c.Visible = false;
+        pinCountdown.Stop();
         resume.Visible = locked;
         hint.Visible = true;
         ArrangeControls();
@@ -276,6 +426,8 @@ internal sealed class DesktopView : UserControl
     private sealed class StatusCard : Panel
     {
         internal bool Locked { get; set; }
+        internal string Initials { get; set; } = "";
+        internal Rectangle Avatar { get; set; }
 
         internal StatusCard()
         {
@@ -295,6 +447,17 @@ internal sealed class DesktopView : UserControl
             using var border = new Pen(KioskTheme.Border);
             g.DrawPath(border, cardPath);
 
+            if (Initials.Length > 0 && !Avatar.IsEmpty)
+            {
+                using var fill = new SolidBrush(KioskTheme.AccentSoft);
+                g.FillEllipse(fill, Avatar);
+                using var ring = new Pen(KioskTheme.AccentLine, S(2));
+                g.DrawEllipse(ring, Avatar);
+                using var letters = new Font("Segoe UI", 18, FontStyle.Bold);
+                TextRenderer.DrawText(g, Initials, letters, Avatar, KioskTheme.AccentLine,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+                return;
+            }
             int diameter = S(62);
             var iconBounds = new Rectangle((Width - diameter) / 2, S(32), diameter, diameter);
             using var circle = new SolidBrush(KioskTheme.AccentSoft);

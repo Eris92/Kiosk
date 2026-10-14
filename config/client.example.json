@@ -21,9 +21,28 @@
     }
   ],
   "EnableBrowser": true,
+  "AutoUpdate": true,
+  "ShowHelp": true,
+  "HelpCloseSeconds": 60,
+  "BrandTitle": "Kiosk",
+  "BrandSubtitle": "Twój pulpit pracy",
+  "BrandLogo": "",
+  "NewsShow": "All",
+  "NewsFolder": "",
+  "NewsSeconds": 8,
+  "NewsSharePoint": "",
+  "NewsSharePointCount": 6,
+  "NewsOrder": "Alternate",
+  "NewsSize": "Standard",
   "BrowserOnlyBookmarks": false,
   "BrowserAllowedDomains": [],
   "Applications": [
+    {
+      "Name": "Przeglądarka",
+      "Path": "kiosk:przegladarka",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    },
     {
       "Name": "Notatnik",
       "Path": "kiosk:notatnik",
@@ -61,5 +80,5 @@
   "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
   "TestMode": true,
-  "ConfigVersion": 2
+  "ConfigVersion": 4
 }

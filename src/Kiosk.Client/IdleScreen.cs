@@ -50,16 +50,40 @@ internal sealed class IdleScreen : Form
         watch.Tick += async (_, _) => { if (app != null && app.Started && !app.Refresh()) await RestartAppAsync(); };
     }
 
+    private readonly List<AlertBar> bars = [];
+
+    /// <summary>Komunikaty → "Ekrany wygaszacza": the bars across the top of this screen too (empty = none).</summary>
+    internal void SetBars(IReadOnlyList<NewsItem> items)
+    {
+        if (items.SequenceEqual(bars.Select(b => b.Item).Reverse())) return;
+        foreach (var old in bars) { Controls.Remove(old); old.Dispose(); }
+        bars.Clear();
+        foreach (var item in items.Reverse())   // Added last = docked first: the first message ends up on top.
+        {
+            var bar = new AlertBar(item) { Dock = DockStyle.Top, Height = (int)Math.Round(44 * DeviceDpi / 96d) };
+            bars.Add(bar);
+            Controls.Add(bar);
+        }
+        foreach (var fill in Controls.Cast<Control>().Where(c => c.Dock == DockStyle.Fill).ToList()) fill.BringToFront();   // The page under the bars.
+    }
+
     private async Task StartAsync()
     {
         if (starting) return;
         starting = true;
         try
         {
-            if (content.Url.Length > 0)
+            if (NewsSlides.IsAddress(content.Url))
+            {
+                var slides = new NewsSlides { Dock = DockStyle.Fill };
+                Controls.Add(slides);
+                slides.BringToFront();   // Below any message bars docked at the top.
+            }
+            else if (content.Url.Length > 0)
             {
                 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KioskTheme.Background };
                 Controls.Add(web);
+                web.BringToFront();   // Below any message bars docked at the top.
                 // A lasting profile per screen: the read-only account signed in once stays signed in.
                 var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Screens", "Ekran" + number);
                 var environment = await CoreWebView2Environment.CreateAsync(null, folder);
@@ -67,6 +91,7 @@ internal sealed class IdleScreen : Form
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.
+                PageScripts.Attach(web.CoreWebView2, kiosk: true);
                 web.CoreWebView2.Navigate(content.Url);
             }
             else await RestartAppAsync();
@@ -88,6 +113,7 @@ internal sealed class IdleScreen : Form
         if (app != null) { Controls.Remove(app); app.Dispose(); }
         app = new ApplicationView();
         Controls.Add(app);
+        app.BringToFront();   // Below any message bars docked at the top.
         await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
     }
 
