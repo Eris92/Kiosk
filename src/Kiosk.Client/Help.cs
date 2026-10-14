@@ -126,7 +126,8 @@ internal sealed class HelpBrowserForm : Form
     private readonly int idleSeconds;
     private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
 
-    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60)
+    /// <param name="cardFolder">Punkt samoobsługowy: the card session's browser folder (signed in once while the card lies on the reader).</param>
+    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60, string? cardFolder = null)
     {
         this.idleSeconds = idleSeconds;
         this.url = url;
@@ -140,11 +141,11 @@ internal sealed class HelpBrowserForm : Form
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         var policy = new SitePolicy(true, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
-        browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true) { Dock = DockStyle.Fill };
+        browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true, profileFolder: cardFolder) { Dock = DockStyle.Fill };
         var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
         var heading = new Label
         {
-            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane", AutoSize = false, Dock = DockStyle.Fill,
+            Text = title + (cardFolder == null ? "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane" : "  ·  logowanie trwa, dopóki karta leży na czytniku"), AutoSize = false, Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
         };
         var close = new Button { Text = "Zamknij", Dock = DockStyle.Right, Width = 140 };

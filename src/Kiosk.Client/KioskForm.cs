@@ -12,7 +12,7 @@ namespace Kiosk.Client;
 /// session at once; reinserting a card brings its session back. Sessions expire after
 /// ChangeUserAfterSeconds of inactivity. Nothing here touches the Windows lock screen.
 /// </summary>
-internal sealed class KioskForm : Form
+internal sealed partial class KioskForm : Form
 {
     private sealed class RdpSession
     {
@@ -117,7 +117,7 @@ internal sealed class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) => { if (SelfService) ClearCardFolders(); timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
@@ -144,6 +144,12 @@ internal sealed class KioskForm : Form
                 ShellTick();
                 MonitorRdp();
                 MonitorApplications();
+                return;
+            }
+            if (SelfService)
+            {
+                SelfServiceTick();
+                UpdateMainIdle();
                 return;
             }
             // While a PIN check runs the card is reset on purpose; presence changes are evaluated afterwards.
@@ -684,6 +690,7 @@ internal sealed class KioskForm : Form
             var title = "Ekran " + n;
             try
             {
+                if (NewsSlides.IsAddress(content.Url)) continue;   // Komunikaty stay the Kiosk's own slides.
                 if (content.Url.Length > 0 && session.Logon == null)
                 {
                     // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
@@ -728,7 +735,7 @@ internal sealed class KioskForm : Form
         foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
-        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin;
+        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || cardFolder != null;
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
@@ -822,7 +829,9 @@ internal sealed class KioskForm : Form
         var retention = config.ChangeUserAfterSeconds > 0
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
             : "Sesja czeka na powrót karty aż do wylogowania.";
-        if (current is { Locked: true } locked)
+        taskbar.Visible = !SelfService;   // Punkt samoobsługowy: no Menu, only Szybka pomoc on the start screen.
+        if (SelfService) SelfServiceStatus();
+        else if (current is { Locked: true } locked)
         {
             var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
             var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
@@ -1067,13 +1076,20 @@ internal sealed class KioskForm : Form
             case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
             default:
                 // Always the help window (also when signed in), so it closes after the time set for Szybka pomoc.
-                helpBrowser?.Close();
-                helpBrowser = new HelpBrowserForm(item.Name, item.Action, config.BrowserAllowedDomains, config.HelpCloseSeconds) { Bounds = Screen.FromControl(this).Bounds };
-                helpBrowser.FormClosed += (_, _) => helpBrowser = null;
-                helpBrowser.Show(this);
+                ShowHelpPage(item.Name, item.Action);
                 break;
         }
         RefreshChrome();
+    }
+
+    /// <summary>A Szybka pomoc page; in Punkt samoobsługowy with the card's sign-in while the card lies on the reader.</summary>
+    private void ShowHelpPage(string title, string url)
+    {
+        helpBrowser?.Close();
+        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds, SelfService ? cardFolder : null) { Bounds = Screen.FromControl(this).Bounds };
+        window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };
+        helpBrowser = window;
+        window.Show(this);
     }
 
     private bool CardForHelp(out string readerName)
@@ -1235,13 +1251,16 @@ internal sealed class KioskForm : Form
             if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
                 other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount);
             if (IsDisposed) return;
-            desktop.SetNews(News.Merge(mine, other, config.NewsOrder), config.NewsSeconds, config.NewsSize);
+            var all = News.Merge(mine, other, config.NewsOrder);
+            NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty
+            desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
             screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
             foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
         }
         catch (Exception ex)
         {
             Audit.Write("news_failed", ex.Message);
+            NewsSlides.Publish([], config.NewsSeconds);
             if (!IsDisposed) desktop.SetNews([], config.NewsSeconds);
         }
         finally { loadingNews = false; }

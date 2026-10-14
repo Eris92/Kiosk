@@ -73,7 +73,13 @@ internal sealed class IdleScreen : Form
         starting = true;
         try
         {
-            if (content.Url.Length > 0)
+            if (NewsSlides.IsAddress(content.Url))
+            {
+                var slides = new NewsSlides { Dock = DockStyle.Fill };
+                Controls.Add(slides);
+                slides.BringToFront();   // Below any message bars docked at the top.
+            }
+            else if (content.Url.Length > 0)
             {
                 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KioskTheme.Background };
                 Controls.Add(web);

@@ -32,6 +32,9 @@ internal sealed class BrowserView : UserControl
     private readonly bool windowsAccount;
     /// <summary>One page, no tabs (Szybka pomoc): links for a new window open in the same page.</summary>
     private readonly bool singlePage;
+    /// <summary>Punkt samoobsługowy: the card's sign-in folder, shared by every help window while the card lies on the
+    /// reader (one FIDO2 sign-in for all); the card session deletes it, not this view.</summary>
+    private readonly bool sharedFolder;
     /// <summary>Someone used the page (click, touch, key, scroll); only for <see cref="singlePage"/>.</summary>
     internal event Action? Activity;
     private const string ActivityScript = """
@@ -66,14 +69,15 @@ internal sealed class BrowserView : UserControl
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false, string? profileFolder = null)
     {
         this.singlePage = singlePage;
+        sharedFolder = profileFolder != null;
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
-        userDataFolder = windowsAccount
+        userDataFolder = profileFolder ?? (windowsAccount
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
-            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N"));
+            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N")));
         this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
@@ -200,7 +204,7 @@ internal sealed class BrowserView : UserControl
 
         var options = environment.CreateCoreWebView2ControllerOptions();
         options.ProfileName = ProfileName;
-        options.IsInPrivateModeEnabled = !windowsAccount;
+        options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
         await web.EnsureCoreWebView2Async(environment, options);
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
@@ -341,7 +345,7 @@ internal sealed class BrowserView : UserControl
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (!disposing || windowsAccount) return; // A Windows user's own profile stays, like a normal browser.
+        if (!disposing || windowsAccount || sharedFolder) return; // A Windows user's own profile stays, like a normal browser.
         // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
         var folder = userDataFolder;
         _ = Task.Run(async () =>

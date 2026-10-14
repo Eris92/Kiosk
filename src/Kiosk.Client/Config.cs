@@ -24,7 +24,7 @@ internal enum NewsDisplay { All, BarsOnly, Off }
 internal enum NewsBanner { Standard, Large, ExtraLarge }
 
 [JsonConverter(typeof(JsonStringEnumConverter<SessionMode>))]
-internal enum SessionMode { Kiosk, WindowsShell }
+internal enum SessionMode { Kiosk, WindowsShell, SelfService }
 
 /// <summary>Where Start and the window icons sit on the taskbar: in the middle (Windows 11) or on the left.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<TaskbarAlignment>))]
@@ -105,8 +105,14 @@ internal sealed record Config
     /// Edge and "current user" remote desktops then run as them. Kiosk mode only.</summary>
     public bool SignInAsUser { get; init; }
     /// <summary>Kiosk: one Windows account, the Kiosk switches people by card. WindowsShell: every person signs in to
-    /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.</summary>
+    /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.
+    /// SelfService (Punkt samoobsługowy): only the start screen with Szybka pomoc and Komunikaty, no Menu or sessions;
+    /// a card on the reader signs in once (FIDO2 on the web) for every Szybka pomoc page until it is taken away.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
+    /// <summary>Punkt samoobsługowy: the page opened when a card is put on the reader, to sign in with it (FIDO2). Empty = none.</summary>
+    public string SelfServiceSignInUrl { get; init; } = "https://myaccount.microsoft.com";
+    /// <summary>Punkt samoobsługowy: after a new PIN was set on the card, this page links the card to the person's account.</summary>
+    public string SelfServiceLinkUrl { get; init; } = "https://mysignins.microsoft.com/security-info";
     public bool DisconnectOnCardRemoval { get; init; } = true;
     public string AccentColor { get; init; } = KioskTheme.DefaultAccent;
     public TaskbarAlignment TaskbarAlignment { get; init; } = TaskbarAlignment.Center;
@@ -216,6 +222,7 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy połączeń RDP muszą być unikalne.");
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
+        if (SelfServiceSignInUrl == null || SelfServiceLinkUrl == null) throw new InvalidDataException("Adresy punktu samoobsługowego nie mogą być null.");
         if (ScreenRefreshSeconds is < 0 or > 86400) throw new InvalidDataException("Odświeżanie ekranów: 0–86400 s.");
         foreach (var c in Commands ?? [])
             if (c.Name.Length == 0 || c.Path.Length == 0) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");
@@ -223,7 +230,7 @@ internal sealed record Config
         foreach (var s in IdleScreens ?? [])
         {
             if (s.Screen < 0) throw new InvalidDataException("Numer ekranu nie może być ujemny.");
-            if (s.Url.Length > 0 && !(Uri.TryCreate(s.Url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp)))
+            if (s.Url.Length > 0 && !NewsSlides.IsAddress(s.Url) && !(Uri.TryCreate(s.Url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp)))
                 throw new InvalidDataException("Strona dla ekranu " + s.Screen + " musi być adresem HTTP/HTTPS.");
             if (s.Url.Length == 0 && s.Path.Length == 0) throw new InvalidDataException("Ekran " + s.Screen + " potrzebuje strony albo aplikacji.");
         }
