@@ -14,15 +14,51 @@ internal sealed partial class KioskForm
     private string? cardFolder;
     private static string CardFolders => Path.Combine(Path.GetTempPath(), "KioskCard");
 
+    /// <summary>The card of the current sign-in (its UID): the same card coming back continues it.</summary>
+    private string? cardId;
+    /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
+    private DateTime? cardAwaySince;
+    // Signing in with a security key on the web, Windows may ask to lift the card and tap it again, and resets it:
+    // that must not end the sign-in it belongs to.
+    private const int CardReturnSeconds = 20;
+
+    /// <summary>The card on the reader: its certificate, or the UID of a FIDO2 card; null when it cannot be read.</summary>
+    private string? PresentCardId()
+    {
+        try { return (identifyCard() ?? UncertifiedCard()).Id; }
+        catch (Exception ex) { Audit.Write("card_identity_error", ex.Message); return null; }
+    }
+
     private void SelfServiceTick()
     {
         // While a PIN is asked or checked the card is reset on purpose; presence changes are evaluated afterwards.
         if (verifying || desktop.AskingPin) return;
         var key = reader.Snapshot(config.ReaderName);
+        if (key == null && cardAwaySince is { } away && DateTime.UtcNow - away >= TimeSpan.FromSeconds(CardReturnSeconds))
+        {
+            cardAwaySince = null;
+            EndCardSession("selfservice_card_removed");
+            return;
+        }
         if (key == cardKey) return;
         cardKey = key;
-        if (key == null) EndCardSession("selfservice_card_removed");
-        else _ = StartCardSessionAsync();
+        if (key == null)
+        {
+            if (cardFolder == null) return;
+            cardAwaySince = DateTime.UtcNow;
+            notice = "Karta zdjęta. Jeśli Windows o to prosi, przyłóż ją ponownie – logowanie czeka " + CardReturnSeconds + " s.";
+            Audit.Write("selfservice_card_away");
+            RefreshChrome();
+            return;
+        }
+        // Back on the reader (or reset by Windows during the sign-in): the same card simply continues.
+        if (cardFolder != null && cardId != null && PresentCardId() == cardId)
+        {
+            if (cardAwaySince != null) { cardAwaySince = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
+            return;
+        }
+        cardAwaySince = null;
+        _ = StartCardSessionAsync();
     }
 
     private async Task StartCardSessionAsync()
@@ -30,6 +66,7 @@ internal sealed partial class KioskForm
         EndCardSession(null);
         var folder = Path.Combine(CardFolders, Guid.NewGuid().ToString("N"));
         cardFolder = folder;
+        cardId = PresentCardId();
         notice = null;
         Audit.Write("selfservice_card");
         RefreshChrome();
@@ -53,6 +90,8 @@ internal sealed partial class KioskForm
     {
         if (cardFolder is not { } folder) return;
         cardFolder = null;
+        cardId = null;
+        cardAwaySince = null;
         helpBrowser?.Close();
         notice = null;
         if (reason != null) Audit.Write(reason);
