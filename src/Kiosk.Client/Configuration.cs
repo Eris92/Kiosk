@@ -52,6 +52,8 @@ internal sealed record PageAction
     public string Account { get; init; } = "";
     /// <summary>Text of the sign-in button; empty = the form's own submit button.</summary>
     public string Submit { get; init; } = "";
+    /// <summary>Wszyscy, Kiosk (screens, lock screen, Szybka pomoc: nobody signed in) or Użytkownicy (a person's browser).</summary>
+    public PageScope Scope { get; init; }
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
 

@@ -13,13 +13,14 @@ internal static class PageScripts
     /// <summary>Set by the Kiosk whenever the configuration is (re)loaded.</summary>
     internal static PageAction[] Actions { get; set; } = [];
 
-    internal static void Attach(CoreWebView2 core)
+    /// <param name="kiosk">The Kiosk's own page while nobody works (screens, lock screen, Szybka pomoc), not a person's browser.</param>
+    internal static void Attach(CoreWebView2 core, bool kiosk)
     {
         core.NavigationCompleted += async (_, e) =>
         {
             if (!e.IsSuccess) return;
             var url = core.Source;
-            foreach (var action in Actions.Where(a => a.Matches(url)))
+            foreach (var action in Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk)))
             {
                 try
                 {
@@ -29,6 +30,7 @@ internal static class PageScripts
                         account = await Task.Run(() => SharedAccounts.TryGetCached(action.Account.Trim()));
                     if (core.Source != url) return;   // Navigated on in the meantime: the next page gets its own turn.
                     await core.ExecuteScriptAsync(Script(action, account));
+                    Audit.Write("page_action", (kiosk ? "kiosk " : "user ") + action.Url + (account != null ? " +konto" : ""));
                 }
                 catch (Exception ex) { Audit.Write("page_action_error", action.Url + ": " + ex.Message); }
             }

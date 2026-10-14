@@ -12,6 +12,11 @@ internal enum UnlockMethod { Card, CardAndWindowsHello, CardAndPin }
 [JsonConverter(typeof(JsonStringEnumConverter<NewsOrdering>))]
 internal enum NewsOrdering { Alternate, MineFirst, SharePointFirst }
 
+/// <summary>Where a page action works: everywhere, only on the Kiosk's own pages while nobody works (screens, lock
+/// screen, Szybka pomoc), or only in the browser of a signed-in person.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<PageScope>))]
+internal enum PageScope { All, Kiosk, Users }
+
 [JsonConverter(typeof(JsonStringEnumConverter<NewsDisplay>))]
 internal enum NewsDisplay { All, BarsOnly, Off }
 

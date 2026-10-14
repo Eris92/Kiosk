@@ -263,11 +263,15 @@ internal sealed class SettingsView : UserControl
         pageActions.Columns.Add("Click", "Kliknij przyciski (napisy, oddziel ;)");
         pageActions.Columns.Add("Account", "Zaloguj kontem wspólnym");
         pageActions.Columns.Add("Submit", "Napis przycisku logowania (opcjonalny)");
+        var scope = new DataGridViewComboBoxColumn { Name = "Scope", HeaderText = "Dla", FlatStyle = FlatStyle.Flat, FillWeight = 60 };
+        scope.Items.AddRange(ScopeOptions.Select(o => (object)o.Label).ToArray());
+        pageActions.Columns.Add(scope);
         AddEnabledColumn(pageActions);
-        foreach (var a in config.PageActions) SetEnabled(pageActions, pageActions.Rows.Add(a.Url, a.Click, a.Account, a.Submit), a.Enabled);
+        foreach (var a in config.PageActions) SetEnabled(pageActions, pageActions.Rows.Add(a.Url, a.Click, a.Account, a.Submit, ScopeLabel(a.Scope)), a.Enabled);
         SetupGridTab(pagesTab, pageActions, "Kiosk sam klika na stronach (strona startowa, ekrany, przeglądarka Kiosku). Adres: portal.firma.pl (z subdomenami) " +
             "albo https://portal.firma.pl/login (początek adresu). „Kliknij”: np. Akceptuj wszystkie;Accept all – przycisk z tym napisem jest klikany, gdy się pojawi. " +
-            "„Zaloguj kontem wspólnym”: nazwa konta z " + SharedAccounts.FileName + " (obok client.json, skrypt Set-KioskSharedAccount.ps1) – Kiosk wpisuje login i hasło i klika przycisk logowania.", helpHeight: 80);
+            "„Zaloguj kontem wspólnym”: nazwa konta z " + SharedAccounts.FileName + " (obok client.json, skrypt Set-KioskSharedAccount.ps1) – Kiosk wpisuje login i hasło i klika przycisk logowania. " +
+            "„Dla”: Wszyscy, Kiosk (ekrany i ekran blokady, Szybka pomoc – gdy nikt nie pracuje) albo Użytkownicy (przeglądarka zalogowanej osoby).", helpHeight:  96);
         var choose = new Button { Text = "Wybierz plik EXE…", AutoSize = true, Dock = DockStyle.Bottom };
         choose.Click += (_, _) => ChooseExecutable();
         applications.Controls.Add(choose);
@@ -710,6 +714,11 @@ internal sealed class SettingsView : UserControl
     }
     private static string AuthLabel(RdpAuthentication value) => AuthenticationOptions.First(o => o.Value == value).Label;
 
+    /// <summary>Akcje stron → "Dla": everywhere, the Kiosk's own pages (screens, lock screen, Szybka pomoc) or a person's browser.</summary>
+    private static readonly (PageScope Value, string Label)[] ScopeOptions =
+        [(PageScope.All, "Wszyscy"), (PageScope.Kiosk, "Kiosk (ekrany, blokada)"), (PageScope.Users, "Użytkownicy")];
+    private static string ScopeLabel(PageScope value) => ScopeOptions.First(o => o.Value == value).Label;
+
     /// <summary>
     /// The layout is written for 100 % (96 DPI). On a screen with another scale everything is enlarged once, so
     /// columns, rows and grids fit the bigger text (fonts are in points and follow the scale by themselves).
@@ -877,7 +886,8 @@ internal sealed class SettingsView : UserControl
             }).ToArray(),
             PageActions = pageActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Cell(r, "Url").Length > 0).Select(r => new PageAction
             {
-                Url = Cell(r, "Url"), Click = Cell(r, "Click"), Account = Cell(r, "Account"), Submit = Cell(r, "Submit"), Enabled = IsEnabled(r)
+                Url = Cell(r, "Url"), Click = Cell(r, "Click"), Account = Cell(r, "Account"), Submit = Cell(r, "Submit"), Enabled = IsEnabled(r),
+                Scope = ScopeOptions.FirstOrDefault(o => o.Label == Cell(r, "Scope")).Value
             }).ToArray(),
             Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url"), Enabled = IsEnabled(r) }).ToArray(),
             IdleAfterSeconds = (int)idleAfter.Value,
