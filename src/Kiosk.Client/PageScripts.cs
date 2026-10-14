@@ -16,11 +16,26 @@ internal static class PageScripts
     /// <param name="kiosk">The Kiosk's own page while nobody works (screens, lock screen, Szybka pomoc), not a person's browser.</param>
     internal static void Attach(CoreWebView2 core, bool kiosk)
     {
+        // Consent windows in a frame of another site (a CMP): only the clicks there, never a password.
+        core.FrameCreated += (_, created) =>
+        {
+            var frame = created.Frame;
+            frame.NavigationCompleted += async (_, e) =>
+            {
+                if (!e.IsSuccess) return;
+                try
+                {
+                    foreach (var action in Applies(core.Source, kiosk).Where(a => a.Click.Trim().Length > 0))
+                        await frame.ExecuteScriptAsync(Script(action with { Account = "" }, null));
+                }
+                catch (Exception ex) { Audit.Write("page_action_error", "frame: " + ex.Message); }
+            };
+        };
         core.NavigationCompleted += async (_, e) =>
         {
             if (!e.IsSuccess) return;
             var url = core.Source;
-            foreach (var action in Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk)))
+            foreach (var action in Applies(url, kiosk))
             {
                 try
                 {
@@ -37,6 +52,9 @@ internal static class PageScripts
         };
     }
 
+    private static IEnumerable<PageAction> Applies(string url, bool kiosk) =>
+        Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk));
+
     private static string Script(PageAction action, SharedAccounts.Account? account)
     {
         var clicks = action.Click.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -46,10 +64,18 @@ internal static class PageScripts
             """
             const page = 'kiosk:' + location.host + location.pathname;
             const visible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-            const label = el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase();
+            // "przejdz do serwisu" finds "PRZEJDŹ DO SERWISU": no case, no Polish letters, single spaces.
+            const norm = v => (v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/\s+/g, ' ').trim();
+            const label = el => norm(el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title'));
+            // Consent windows often live in a shadow root (web components): search those too.
+            const deep = (root, selector, out) => {
+              root.querySelectorAll(selector).forEach(e => out.push(e));
+              root.querySelectorAll('*').forEach(e => { if (e.shadowRoot) deep(e.shadowRoot, selector, out); });
+              return out;
+            };
             const find = t => {
-              t = t.toLowerCase();
-              const all = [...document.querySelectorAll('button, a, [role=button], input[type=submit], input[type=button]')].filter(visible);
+              t = norm(t);
+              const all = deep(document, 'button, a, [role=button], input[type=submit], input[type=button]', []).filter(visible);
               return all.find(b => label(b) === t) || all.find(b => label(b).includes(t));
             };
             const set = (el, v) => {
@@ -83,7 +109,7 @@ internal static class PageScripts
                   if (u && !u.value) { sessionStorage.setItem(page + ':user', '1'); set(u, user); send(u.form); }
                 }
               }
-              if (++tries < 40) setTimeout(step, 500);
+              if (++tries < 40) setTimeout(step, 750);   // about 30 s: banners that come late
             };
             step();
             })();
