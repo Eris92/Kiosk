@@ -30,68 +30,95 @@ internal sealed class FidoSignIn : IDisposable
 
     internal sealed record Outcome(FidoSignIn? SignIn, string Message);
 
+    private int brokerPid;
+    private IntPtr window;
+
     /// <summary>
-    /// Asks for the PIN with <paramref name="askPin"/> (null = cancelled), then signs in with the card: Windows' sign-in
-    /// starts invisibly, <paramref name="wakeCard"/> presents the card lying on the reader to it, and the PIN is handed
-    /// over (asked again after a wrong PIN). Null when the person cancelled.
+    /// Starts Windows' card sign-in (invisible) and waits until it listens for a card, like the Edge-FIDO2 PIN screen
+    /// before anyone taps: Windows reads only a card that arrives while it listens, never one already lying on the
+    /// reader. Null (with the reason in the Kiosk's log) when it could not start.
     /// </summary>
-    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin, Action wakeCard)
+    internal static async Task<FidoSignIn?> PrepareAsync()
     {
-        string answer, message = "Wpisz PIN karty.";
-        var pin = await AskAsync(askPin, message);
-        if (pin == null) return null;
         var started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin" }));
-        if (started.Code != 0) return new(null, started.Message);
-        // Windows finishes the card sign-in only for the foreground window: let the sign-in program take it.
-        int.TryParse(started.Message, out var brokerPid);
+        if (started.Code != 0) { Audit.Write("fido_prepare_failed", started.Message); return null; }
         var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
+        int.TryParse(started.Message, out signIn.brokerPid);
         try
         {
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
-            if (listening.StartsWith("ERROR ", StringComparison.Ordinal)) { signIn.Dispose(); return new(null, listening[6..]); }
-            // Windows reads an NFC card only for the window in the foreground: hand it over (the Kiosk has it now).
-            if (listening.StartsWith("OK ", StringComparison.Ordinal) && long.TryParse(listening[3..], out var window) && window != 0)
+            if (!listening.StartsWith("OK", StringComparison.Ordinal))
             {
-                if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
-                SetForegroundWindow(new IntPtr(window));
+                Audit.Write("fido_prepare_failed", listening);
+                signIn.Dispose();
+                return null;
             }
+            if (listening.Length > 3 && long.TryParse(listening[3..], out var handle)) signIn.window = new IntPtr(handle);
+            signIn.TakeForeground();
+            Audit.Write("fido_listening");
+            return signIn;
         }
-        catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
-        // Windows normally finds a card lying on the reader by itself; switching the card off and on while it talks to
-        // the card breaks the sign-in. Only when it has not found the card after a while is the card woken once.
-        _ = Task.Run(async () =>
+        catch (Exception ex)
         {
-            await Task.Delay(25000);
-            try { if (signIn.Send("entered", 2000, 5000) == "OK 0") wakeCard(); }
-            catch { /* finished meanwhile */ }
-        });
+            Audit.Write("fido_prepare_failed", ex.Message);
+            signIn.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>Windows reads an NFC card only for the window in the foreground: the Kiosk hands it over.</summary>
+    private void TakeForeground()
+    {
+        if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
+        if (window != IntPtr.Zero) SetForegroundWindow(window);
+    }
+
+    /// <summary>
+    /// Card + PIN on the Kiosk's own PIN screen: <paramref name="askPin"/> (null = cancelled) until Windows signed the
+    /// person in (OK), refused (Message) or the PIN is asked again after a wrong one. Null when the person cancelled.
+    /// </summary>
+    internal async Task<Outcome?> CompleteAsync(Func<string, Task<string?>> askPin, string message = "Wpisz PIN karty.")
+    {
+        string answer;
+        var pin = await AskAsync(askPin, message);
+        if (pin == null) { Dispose(); return null; }
         while (true)
         {
-            if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
+            TakeForeground();
             var entered = pin;
-            try { answer = await Task.Run(() => signIn.Send("pin\t" + entered, 30000, 180000)); }
-            catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
+            try { answer = await Task.Run(() => Send("pin\t" + entered, 30000, 180000)); }
+            catch (Exception ex) { Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
             if (answer.StartsWith("RETRY ", StringComparison.Ordinal))
             {
                 var reason = answer[6..].Trim();
                 message = (reason.Length > 0 ? reason + " " : "Nieprawidłowy PIN. ") + "Wpisz PIN jeszcze raz.";
                 pin = await AskAsync(askPin, message);
-                if (pin == null) { signIn.Dispose(); return null; }
+                if (pin == null) { Dispose(); return null; }
                 continue;
             }
             break;
         }
         if (!answer.StartsWith("OK ", StringComparison.Ordinal))
         {
-            signIn.Dispose();
+            Dispose();
             return new(null, answer.StartsWith("ERROR ", StringComparison.Ordinal) ? answer[6..] : answer);
         }
         var parts = answer[3..].Split('\t');
-        signIn.Sid = parts[0];
-        signIn.WindowsName = parts.Length > 1 ? parts[1] : "";
-        signIn.Account = parts.Length > 2 && parts[2].Length > 0 ? parts[2] : signIn.WindowsName;
-        signIn.IsAdministrator = parts.Length > 3 && parts[3] == "1";
-        return new(signIn, "");
+        Sid = parts[0];
+        WindowsName = parts.Length > 1 ? parts[1] : "";
+        Account = parts.Length > 2 && parts[2].Length > 0 ? parts[2] : WindowsName;
+        IsAdministrator = parts.Length > 3 && parts[3] == "1";
+        return new(this, "");
+    }
+
+    /// <summary>
+    /// Sign-in started when the card already lies on the reader ("Zaloguj"): Windows needs it tapped again.
+    /// </summary>
+    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin)
+    {
+        var signIn = await PrepareAsync();
+        if (signIn == null) return new(null, "Logowanie kartą nie wystartowało.");
+        return await signIn.CompleteAsync(askPin, "Zabierz kartę i przyłóż ją ponownie, potem wpisz PIN karty.");
     }
 
     private static async Task<string?> AskAsync(Func<string, Task<string?>> askPin, string message)

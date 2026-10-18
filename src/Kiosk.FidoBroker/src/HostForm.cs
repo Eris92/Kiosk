@@ -132,7 +132,7 @@ namespace FidoRun
             {
                 return (bool)Invoke(new Func<bool>(delegate
                 {
-                    if (working || host == null || autoRetries >= 3 || (DateTime.UtcNow - lastAutoRetry).TotalSeconds < 4) return false;
+                    if (working || host == null || autoRetries >= 10 || (DateTime.UtcNow - lastAutoRetry).TotalSeconds < 4) return false;
                     // Only after Windows reported the failed exchange, never for other links of the tile.
                     string shown = (state.Text ?? "") + " " + (providerFeedback == null ? "" : providerFeedback.Text);
                     if (shown.IndexOf("ponownie", StringComparison.OrdinalIgnoreCase) < 0 && shown.IndexOf("again", StringComparison.OrdinalIgnoreCase) < 0) return false;

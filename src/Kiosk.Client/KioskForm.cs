@@ -352,25 +352,19 @@ internal sealed partial class KioskForm : Form
     /// null when cancelled, or when the card has no PIN and none was set.
     /// Windows' sign-in waits for a card to arrive, so a card already lying on the reader is switched off and on once it listens.
     /// </summary>
-    private async Task<FidoSignIn.Outcome?> SignInWithCardAsync()
+    private async Task<FidoSignIn.Outcome?> SignInWithCardAsync(FidoSignIn? listening = null)
     {
-        var readerName = reader.ActiveReader;
         verifying = true;
         try
         {
-            // A new card first gets its PIN (Windows asks for one it can check).
-            var state = await Task.Run(() => CardService.Call(new CardService.Request { Op = "haspin", Reader = readerName }));
-            if (state.Code == 0x35 && await EnsureCardPinAsync(readerName) == null) return null;
-            // The PIN is typed on the Kiosk's own screen; Windows' card sign-in runs invisibly behind it.
-            return await FidoSignIn.SignInAsync(message =>
+            // The PIN is typed on the Kiosk's own screen; Windows' card sign-in runs invisibly behind it. The Kiosk
+            // itself never talks to the card meanwhile: that would break Windows' exchange with it.
+            Func<string, Task<string?>> askPin = message =>
             {
                 Activate();
-                return desktop.AskPinAsync(message, cardPresent);
-            }, () =>
-            {
-                try { CtapCard.PowerCycle(readerName); }
-                catch (Exception ex) { Audit.Write("card_signin_wake_error", ex.Message); }
-            });
+                return desktop.AskPinAsync(message, null, SelfService ? config.HelpCloseSeconds : 0);
+            };
+            return listening != null ? await listening.CompleteAsync(askPin) : await FidoSignIn.SignInAsync(askPin);
         }
         finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
     }

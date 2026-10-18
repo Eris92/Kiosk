@@ -66,11 +66,29 @@ internal sealed partial class KioskForm
         });
     }
 
+    /// <summary>
+    /// Windows' card sign-in, already listening while nobody is at the Kiosk: like the Edge-FIDO2 PIN screen, the card
+    /// tap itself is what Windows reads (a card already lying on the reader is never read).
+    /// </summary>
+    private Task<FidoSignIn?>? listeningSignIn;
+    private DateTime listeningSince;
+
+    private void PrepareCardSignIn()
+    {
+        if (!config.SignInAsUser || cardFolder != null) return;
+        if (listeningSignIn is { IsCompleted: true } done && done.Result == null && DateTime.UtcNow - listeningSince > TimeSpan.FromSeconds(20))
+            listeningSignIn = null;   // It could not start: try again.
+        if (listeningSignIn != null) return;
+        listeningSince = DateTime.UtcNow;
+        listeningSignIn = FidoSignIn.PrepareAsync();
+    }
+
     private void SelfServiceTick()
     {
         // While a PIN is asked or checked the card is reset on purpose; presence changes are evaluated afterwards.
         if (verifying || desktop.AskingPin) return;
         var key = reader.Snapshot(config.ReaderName);
+        if (key == null) PrepareCardSignIn();
         if (key == null && cardAwaySince is { } away && DateTime.UtcNow - away >= TimeSpan.FromSeconds(CardReturnSeconds))
         {
             cardAwaySince = null;
@@ -94,7 +112,7 @@ internal sealed partial class KioskForm
             return;
         }
         // Back on the reader (or reset by Windows during the sign-in): the same card simply continues.
-        if (cardFolder != null && cardId != null && PresentCardId() == cardId)
+        if (cardFolder != null && cardId != null && (config.SignInAsUser ? SameCardInPlace(cardId, key) : PresentCardId() == cardId))
         {
             if (cardAwaySince != null) { cardAwaySince = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
             // Not signed in yet (the PIN screen closed when the card slipped away): sign in again.
@@ -110,16 +128,23 @@ internal sealed partial class KioskForm
         EndCardSession(null);
         var folder = Path.Combine(CardFolders, Guid.NewGuid().ToString("N"));
         cardFolder = folder;
-        cardId = PresentCardId();
+        // Signing in to Windows with the card: the Kiosk does not talk to the card at all (reading its number or PIN
+        // state would break Windows' own exchange with it); the reader and card type tell it apart.
+        cardId = config.SignInAsUser ? cardKey : PresentCardId();
         cardKeeper = new CardBrowserKeeper(folder);
         notice = null;
         Audit.Write("selfservice_card");
         RefreshChrome();
         string? newPin = null;
-        verifying = true;
-        try { newPin = await EnsureCardPinAsync(reader.ActiveReader, config.HelpCloseSeconds); }
-        catch (Exception ex) { notice = "Nie udało się sprawdzić karty: " + ex.Message; Audit.Write("selfservice_pin_error", ex.Message); }
-        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+        var listening = listeningSignIn;
+        listeningSignIn = null;
+        if (!config.SignInAsUser)
+        {
+            verifying = true;
+            try { newPin = await EnsureCardPinAsync(reader.ActiveReader, config.HelpCloseSeconds); }
+            catch (Exception ex) { notice = "Nie udało się sprawdzić karty: " + ex.Message; Audit.Write("selfservice_pin_error", ex.Message); }
+            finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+        }
         if (cardFolder != folder || cardKey == null) { RefreshChrome(); return; } // Taken away meanwhile.
         if (newPin != null && config.SelfServiceLinkUrl.Length > 0)
         {
@@ -129,8 +154,9 @@ internal sealed partial class KioskForm
             return;
         }
         // The card and its PIN sign the person in to Windows: no login or password on any page.
-        var signedIn = await SignInWithCardAsync();
-        if (cardFolder != folder || cardKey == null) { signedIn?.SignIn?.Dispose(); RefreshChrome(); return; } // Taken away meanwhile.
+        var waiting = listening == null ? null : await listening;
+        var signedIn = await SignInWithCardAsync(waiting);
+        if (cardFolder != folder) { signedIn?.SignIn?.Dispose(); RefreshChrome(); return; } // Taken away meanwhile.
         if (signedIn?.SignIn is { } signIn)
         {
             var logon = UserLogon.FromCard(signIn);
