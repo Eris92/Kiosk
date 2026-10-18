@@ -39,6 +39,8 @@ jobs:
           Get-Content ./out/client/self-test.txt
           if ($process.ExitCode -ne 0) { throw 'Windows embedded UI smoke test failed.' }
       - uses: actions/upload-artifact@v4
+        # The account's artifact storage can be full; the release below carries the package anyway.
+        continue-on-error: true
         with:
           name: settings-screenshots
           path: out/screenshots/
@@ -57,6 +59,8 @@ jobs:
           Get-ChildItem package -Recurse -Filter '*.local.json' | Remove-Item
           Compress-Archive -Path "$package/*" -DestinationPath package/Kiosk-win-x64.zip
       - uses: actions/upload-artifact@v4
+        # The account's artifact storage can be full; the release below carries the package anyway.
+        continue-on-error: true
         with:
           name: Kiosk-win-x64
           path: package/Kiosk/
