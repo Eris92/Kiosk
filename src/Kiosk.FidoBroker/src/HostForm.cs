@@ -57,6 +57,7 @@ namespace FidoRun
         // Inside the Kiosk: its scale and colours (surface, text, muted, accent).
         private float scale = 1f;
         private Color statusColor = SystemColors.ControlText;
+        private Color kioskSurface, kioskText, kioskMuted, kioskAccent;
         private Timer fitTimer;
         private TableLayoutPanel pinCard;
         protected override CreateParams CreateParams
@@ -432,7 +433,8 @@ namespace FidoRun
             {
                 surface = Rgb(options.EmbedColors[0]); text = Rgb(options.EmbedColors[1]);
                 muted = Rgb(options.EmbedColors[2]); accent = Rgb(options.EmbedColors[3]);
-                statusColor = text;
+                statusColor = muted;
+                kioskSurface = surface; kioskText = text; kioskMuted = muted; kioskAccent = accent;
             }
             Text = "Logowanie kartą";
             Font = new Font("Segoe UI", 14f * scale);
@@ -518,8 +520,61 @@ namespace FidoRun
             card.Controls.Add(state, 0, 5);
 
             pinCard = card;
+            if (Embedded) ApplyKioskLook(card, title, buttons, restart);
             outer.Controls.Add(card, 1, 1);
             Controls.Add(outer);
+        }
+
+        // Inside the Kiosk: centred like the Kiosk's own cards, its colours, its buttons.
+        private void ApplyKioskLook(TableLayoutPanel card, Label title, FlowLayoutPanel buttons, Button restart)
+        {
+            foreach (Control control in new Control[] { title, providerStatus, providerFeedback, fields, buttons, state })
+                control.Anchor = AnchorStyles.Top;
+            foreach (Label label in new[] { title, providerStatus, (Label)providerFeedback, state }) label.TextAlign = ContentAlignment.MiddleCenter;
+            providerStatus.Text = "Przygotowuję logowanie kartą...";
+            title.Margin = new Padding(0, 0, 0, (int)(12 * scale));
+            submit.ForeColor = OnAccent(kioskAccent);
+            restart.BackColor = kioskSurface;
+            restart.ForeColor = kioskText;
+            restart.FlatAppearance.BorderColor = kioskMuted;
+            restart.Padding = submit.Padding;
+            foreach (Button button in new[] { submit, restart })
+            {
+                button.Font = new Font("Segoe UI Semibold", Font.Size);
+                button.Cursor = Cursors.Hand;
+            }
+        }
+
+        private static Color OnAccent(Color accent)
+        {
+            double luminance = (0.2126 * accent.R + 0.7152 * accent.G + 0.0722 * accent.B) / 255;
+            return luminance > 0.45 ? Color.FromArgb(16, 24, 39) : Color.White;
+        }
+
+        // A native field drawn like the Kiosk: dark PIN box, muted captions, accent links.
+        private void StyleField(Control input, int type)
+        {
+            if (!Embedded) return;
+            TextBox box = input as TextBox;
+            if (box != null)
+            {
+                box.BackColor = Color.FromArgb((kioskSurface.R * 2) / 3, (kioskSurface.G * 2) / 3, (kioskSurface.B * 2) / 3);
+                box.ForeColor = kioskText;
+                box.BorderStyle = BorderStyle.FixedSingle;
+                if (box.UseSystemPasswordChar) box.TextAlign = HorizontalAlignment.Center;
+                return;
+            }
+            Button button = input as Button;
+            if (button != null)
+            {
+                button.FlatStyle = FlatStyle.Flat;
+                button.BackColor = kioskSurface;
+                button.ForeColor = kioskAccent;
+                button.FlatAppearance.BorderColor = kioskAccent;
+                button.Padding = new Padding(12, 4, 12, 4);
+                return;
+            }
+            input.ForeColor = type == 1 ? kioskText : kioskMuted;
         }
 
         private static void StylePrimary(Button button, Color accent)
@@ -618,7 +673,7 @@ namespace FidoRun
                     // picker is replaced by a status line. Zero means it could not load.
                     providerStatus.Text = count == 0
                         ? "Nie znaleziono dostawcy FIDO. Uruchom aplikację jako administrator."
-                        : "Dostawca FIDO gotowy. Włóż klucz i podaj PIN.";
+                        : Embedded ? "Przyłóż kartę do czytnika, potem wpisz PIN." : "Dostawca FIDO gotowy. Włóż klucz i podaj PIN.";
                     providerStatus.ForeColor = count == 0 ? Color.Firebrick : statusColor;
                     // Enumeration does not establish successful Advise/SetSelected.
                     canSubmit = false;
@@ -801,11 +856,16 @@ namespace FidoRun
                                 input = nativeSubmit; break;
                             default: continue;
                         }
+                        StyleField(input, field.Type);
                         input.Enabled = field.Interactive != 2 && options.Mode != "inspect";
                         if (field.Type == 1 || field.Type == 2 || field.Type == 6) input.Enabled = true;
                         FlowLayoutPanel container = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Width = FieldWidth + 20, Margin = new Padding(3, 8, 3, 8) };
                         if ((field.Type == 4 || field.Type == 5 || field.Type == 8) && !String.IsNullOrEmpty(field.Label))
-                            container.Controls.Add(new Label { Text = field.Label, AutoSize = true });
+                        {
+                            Label caption2 = new Label { Text = field.Label, AutoSize = true };
+                            if (Embedded) caption2.ForeColor = kioskMuted;
+                            container.Controls.Add(caption2);
+                        }
                         container.Controls.Add(input);
                         container.Visible = FieldData.IsVisible(field.State);
                         fieldData[field.Id] = field;
