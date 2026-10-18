@@ -287,14 +287,14 @@ namespace FidoRun
             if (SetParent(Handle, options.EmbedParent) == IntPtr.Zero)
                 log.Write("Embed=Failed; Error=" + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
             else log.Write("Embed=Ok; Parent=" + options.EmbedParent.ToInt64() + "; Dpi=" + options.EmbedDpi);
-            FitToParent();
+            FitToParent(false);
             fitTimer = new Timer { Interval = 300 };
-            fitTimer.Tick += delegate { FitToParent(); };
+            fitTimer.Tick += delegate { FitToParent(true); };
             fitTimer.Start();
         }
 
         // Fills the Kiosk's sign-in place; the Kiosk gone means nobody can sign in here any more.
-        private void FitToParent()
+        private void FitToParent(bool repair)
         {
             if (!IsWindow(options.EmbedParent))
             {
@@ -303,12 +303,12 @@ namespace FidoRun
                 Close();
                 return;
             }
-            if (GetParent(Handle) != options.EmbedParent)
+            if (repair && GetParent(Handle) != options.EmbedParent)
             {
                 log.Write("Embed=Reattached; Was=" + GetParent(Handle).ToInt64());
                 SetParent(Handle, options.EmbedParent);
             }
-            if (!Visible && signedInAccount == null && !closing) Show();   // Hidden only once signed in.
+            if (repair && !Visible && signedInAccount == null && !closing) Show();   // Hidden only once signed in.
             Rect area;
             if (!GetClientRect(options.EmbedParent, out area)) return;
             if (Left != 0 || Top != 0 || Width != area.Right || Height != area.Bottom)
