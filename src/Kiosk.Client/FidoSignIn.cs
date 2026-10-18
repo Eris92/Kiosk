@@ -9,7 +9,8 @@ namespace Kiosk.Client;
 /// "Zaloguj" with the card alone: card + PIN signs the person in to Windows (Entra ID / domain, the same FIDO2 sign-in
 /// as the Windows sign-in screen), no login and no password. Windows lets only LocalSystem host that sign-in for
 /// another account, so the Kiosk Card service starts the sign-in program (fido\FidoRun.exe, from Program Files) in
-/// this Windows session. It shows the PIN screen over the Kiosk, keeps the person's Windows token in its own memory
+/// this Windows session. The Kiosk asks for the PIN on its own screen and hands it to that program, which types it into
+/// Windows' own card sign-in (an invisible window), keeps the person's Windows token in its own memory
 /// and starts their programs (Edge, apps, remote desktops) when the Kiosk asks; the token never reaches the Kiosk.
 /// Closing the sign-in ends that program, and every program of the person in this session with it.
 /// </summary>
@@ -29,19 +30,38 @@ internal sealed class FidoSignIn : IDisposable
 
     internal sealed record Outcome(FidoSignIn? SignIn, string Message);
 
-    /// <summary>Starts the PIN screen and waits until the person has signed in, cancelled, or the sign-in failed.</summary>
-    internal static async Task<Outcome> SignInAsync()
+    /// <summary>
+    /// Starts the card sign-in, asks for the PIN with <paramref name="askPin"/> (null = cancelled) until the person has
+    /// signed in or the sign-in failed. Null when the person cancelled.
+    /// </summary>
+    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin)
     {
         var started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin" }));
         if (started.Code != 0) return new(null, started.Message);
         // The service started it for this process; let its PIN screen take the foreground over the Kiosk.
         if (int.TryParse(started.Message, out var brokerPid)) AllowSetForegroundWindow(brokerPid);
         var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
-        string answer;
-        try { answer = await Task.Run(() => signIn.Send("wait", 30000, Timeout.Infinite)); }
-        catch (Exception ex) { return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
+        string answer, message = "Wpisz PIN karty.";
+        while (true)
+        {
+            var pin = await askPin(message);
+            if (pin == null) { signIn.Dispose(); return null; }
+            if (pin.Length == 0 || pin.Contains('\t') || pin.Contains('\n') || pin.Contains('\r')) { message = "Wpisz PIN karty."; continue; }
+            try { answer = await Task.Run(() => signIn.Send("pin\t" + pin, 30000, 180000)); }
+            catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
+            if (answer.StartsWith("RETRY ", StringComparison.Ordinal))
+            {
+                var reason = answer[6..].Trim();
+                message = (reason.Length > 0 ? reason + " " : "Nieprawidłowy PIN. ") + "Wpisz PIN jeszcze raz.";
+                continue;
+            }
+            break;
+        }
         if (!answer.StartsWith("OK ", StringComparison.Ordinal))
+        {
+            signIn.Dispose();
             return new(null, answer.StartsWith("ERROR ", StringComparison.Ordinal) ? answer[6..] : answer);
+        }
         var parts = answer[3..].Split('\t');
         signIn.Sid = parts[0];
         signIn.WindowsName = parts.Length > 1 ? parts[1] : "";
@@ -105,7 +125,7 @@ internal sealed class FidoSignIn : IDisposable
                 {
                     if (!SetTokenInformation(token, 12, ref session, sizeof(int))) throw new Win32Exception(); // TokenSessionId
                     var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Desktop = @"winsta0\default" };
-                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid;
+                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --pin-from-client --client-pid " + clientPid;
                     if (!CreateProcessAsUser(token, program, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, false, 0x400, IntPtr.Zero,
                             Path.GetDirectoryName(program), ref startup, out var process))
                         throw new Win32Exception();
@@ -127,7 +147,7 @@ internal sealed class FidoSignIn : IDisposable
             var program = Path.Combine(AppContext.BaseDirectory, Folder, Program);
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + ")." };
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
-                "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId) { UseShellExecute = false })!;
+                "--mode kiosk-broker --target authenticated --pin-from-client --client-pid " + Environment.ProcessId) { UseShellExecute = false })!;
             return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = "Nie udało się uruchomić logowania kartą: " + ex.Message }; }

@@ -52,12 +52,80 @@ namespace FidoRun
         private bool kioskRestarting;
         private AccountCredentialFilter accountFilter;
 
+        private bool Hidden { get { return options.Broker && options.PinFromClient; } }
+        protected override bool ShowWithoutActivation { get { return options.Broker && options.PinFromClient; } }
+
+        // ---- Kiosk broker with the PIN from the Kiosk (any thread) ----
+
+        // The PIN box of the current tile, when it takes input and a submission is possible.
+        private TextBox ReadyPinBox()
+        {
+            if (closing || working || !canSubmit || preparingFields || fieldUpdatesFailed || !fields.Enabled) return null;
+            foreach (KeyValuePair<uint, Control> pair in inputs)
+            {
+                TextBox box = pair.Value as TextBox;
+                Control container;
+                if (box == null || !box.UseSystemPasswordChar || box.ReadOnly || !box.Enabled) continue;
+                if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
+                return box;
+            }
+            return null;
+        }
+
+        // Types the PIN into the native field and submits it, like the person would on the PIN screen.
+        internal bool TryEnterPin(string pin)
+        {
+            if (closing || IsDisposed || !IsHandleCreated || host == null) return false;
+            try
+            {
+                return (bool)Invoke(new Func<bool>(delegate
+                {
+                    TextBox box = ReadyPinBox();
+                    if (box == null || host == null) return false;
+                    box.Text = pin;   // TextChanged hands the value to the provider.
+                    host.Submit();
+                    log.Write("PinFromClient=Submitted");
+                    return true;
+                }));
+            }
+            catch (InvalidOperationException) { return false; }
+        }
+
+        // After a submission: the reason when the tile is waiting for a PIN again (wrong PIN, card removed), else null.
+        internal string WaitingForPinAgain()
+        {
+            if (closing || IsDisposed || !IsHandleCreated) return null;
+            try
+            {
+                return (string)Invoke(new Func<string>(delegate
+                {
+                    TextBox box = ReadyPinBox();
+                    if (box == null || box.TextLength > 0) return null;
+                    string feedback = providerFeedback == null ? "" : providerFeedback.Text;
+                    return feedback.Length > 0 ? feedback : state.Text;
+                }));
+            }
+            catch (InvalidOperationException) { return null; }
+        }
+
         public HostForm(Options options, TraceLog log)
         {
             this.options = options; this.log = log;
             pinScreen = options.PinScreen;
             bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
             if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
+            if (Hidden)
+            {
+                // The Kiosk shows its own PIN screen; this window only hosts the native provider, off screen and
+                // fully transparent (it must stay "visible" for the provider to accept a submission).
+                TopMost = false;
+                ShowInTaskbar = false;
+                WindowState = FormWindowState.Normal;
+                StartPosition = FormStartPosition.Manual;
+                Bounds = new Rectangle(-32000, -32000, 900, 700);
+                Opacity = 0;
+                KioskBroker.View = this;
+            }
 
             // Wrap the two status labels to the window width instead of clipping/overflowing.
             Resize += delegate
@@ -253,8 +321,8 @@ namespace FidoRun
             if (options.Broker)
             {
                 // Over the Kiosk's own full-screen window until the person has signed in.
-                TopMost = true;
-                Shown += delegate { Activate(); };
+                TopMost = !options.PinFromClient;
+                if (!options.PinFromClient) Shown += delegate { Activate(); };
             }
             buttons.Controls.Add(submit);
             if (edgeCapable) buttons.Controls.Add(openEdge);
@@ -292,8 +360,8 @@ namespace FidoRun
         {
             if(closing||IsDisposed)return -1;
             if(InvokeRequired)return (int)Invoke(new Func<int>(delegate{return ChooseKeyAccount(accounts);}));
-            using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,
-                StartPosition=FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
+            using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,TopMost=Hidden,
+                StartPosition=Hidden?FormStartPosition.CenterScreen:FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
             {
                 var list=new ListBox {Dock=DockStyle.Fill,Font=new Font(Font.FontFamily,12),IntegralHeight=false};
                 foreach(var account in accounts)list.Items.Add(account);

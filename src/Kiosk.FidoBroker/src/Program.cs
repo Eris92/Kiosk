@@ -28,6 +28,8 @@ namespace FidoRun
         // Started by the Kiosk Card service for the Kiosk process ClientPid (see KioskBroker).
         public bool Broker { get { return Mode == "kiosk-broker"; } }
         public int ClientPid;
+        // The Kiosk asks for the PIN on its own screen and hands it over the pipe; this window stays invisible.
+        public bool PinFromClient;
         public string ResolveTargetSid(string authenticatedSid)
         {
             string sid = new SecurityIdentifier(authenticatedSid).Value;
@@ -50,6 +52,7 @@ namespace FidoRun
                 if (key == "--no-account-picker") { result.NativeAccount = true; continue; }
                 if (key == "--kiosk") { result.WatchCard = true; continue; }
                 if (key == "--diagnostic-ui") { result.DiagnosticUi = true; continue; }
+                if (key == "--pin-from-client") { result.PinFromClient = true; continue; }
                 if (!seen.Add(key)) throw new ArgumentException("Duplicate argument: " + key);
                 if (index + 1 >= args.Length) throw new ArgumentException("Missing value for " + key);
                 string value = args[++index];

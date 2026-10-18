@@ -19,6 +19,9 @@ namespace FidoRun
     //
     // Pipe "KioskFido-<client pid>", one JSON-free line per request, one line back:
     //   wait                    -> "OK <sid>\t<windows name>\t<card account>\t<admin 0|1>" once signed in, or "ERROR <text>"
+    //   pin\t<PIN>              -> (with --pin-from-client) types the PIN the Kiosk asked for into the native field and
+    //                              submits it: "OK ..." as for wait, "RETRY <reason>" when the PIN is asked again
+    //                              (wrong PIN), or "ERROR <text>"
     //   start\t<app>\t<command line>\t<directory>\t<show>
     //                           -> "OK <process handle>\t<thread handle>" (suspended, handles valid in the Kiosk process)
     //   close                   -> closes the person's programs started here and ends this process
@@ -36,6 +39,7 @@ namespace FidoRun
         // this job; closing it ends them all, whoever can or cannot open their tokens.
         private static IntPtr job;
         private static string clientSid;
+        internal static HostForm View;
         private static volatile bool stopping;
 
         internal static string PipeName(int client) { return "KioskFido-" + client; }
@@ -183,6 +187,9 @@ namespace FidoRun
                 case "wait":
                     finished.WaitOne();
                     lock (gate) return result;
+                case "pin":
+                    if (parts.Length != 2 || parts[1].Length == 0) return "ERROR Bad pin request";
+                    return EnterPin(parts[1]);
                 case "start":
                     if (parts.Length != 5) return "ERROR Bad start request";
                     return StartProgram(parts[1], parts[2], parts[3].Length == 0 ? null : parts[3], (ushort)Int32.Parse(parts[4]));
@@ -191,6 +198,36 @@ namespace FidoRun
                 default:
                     return "ERROR Unknown command";
             }
+        }
+
+        private static string EnterPin(string pin)
+        {
+            HostForm view = View;
+            if (view == null) return "ERROR Logowanie kartą nie przyjmuje PIN-u z Kiosku.";
+            // The native tile shows its PIN field once it has found the card.
+            DateTime until = DateTime.UtcNow.AddSeconds(45);
+            while (!view.TryEnterPin(pin))
+            {
+                if (finished.WaitOne(250)) lock (gate) return result;
+                if (DateTime.UtcNow > until) return "ERROR Karta nie odpowiada. Przyłóż ją jeszcze raz.";
+            }
+            pin = null;
+            // Signed in, failed, or the tile asks for the PIN again (steadily, not just between two native steps).
+            DateTime submitted = DateTime.UtcNow, limit = submitted.AddSeconds(120);
+            DateTime? waitingSince = null;
+            while (!finished.WaitOne(250))
+            {
+                string again = view.WaitingForPinAgain();
+                if (again == null) waitingSince = null;
+                else if (waitingSince == null) waitingSince = DateTime.UtcNow;
+                else if ((DateTime.UtcNow - waitingSince.Value).TotalSeconds >= 2.5 && (DateTime.UtcNow - submitted).TotalSeconds >= 3)
+                {
+                    logger("KioskBroker=PinAskedAgain");
+                    return "RETRY " + Clean(again);
+                }
+                if (DateTime.UtcNow > limit) return "ERROR Logowanie kartą nie odpowiada.";
+            }
+            lock (gate) return result;
         }
 
         private static string StartProgram(string application, string commandLine, string directory, ushort show)
