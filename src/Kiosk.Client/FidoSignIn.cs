@@ -9,8 +9,8 @@ namespace Kiosk.Client;
 /// "Zaloguj" with the card alone: card + PIN signs the person in to Windows (Entra ID / domain, the same FIDO2 sign-in
 /// as the Windows sign-in screen), no login and no password. Windows lets only LocalSystem host that sign-in for
 /// another account, so the Kiosk Card service starts the sign-in program (fido\FidoRun.exe, from Program Files) in
-/// this Windows session. The Kiosk asks for the PIN on its own screen and hands it to that program, which types it into
-/// Windows' own card sign-in (an invisible window), keeps the person's Windows token in its own memory
+/// this Windows session. It shows the Edge-FIDO2 PIN screen over the Kiosk (card, then the PIN in Windows' own field),
+/// keeps the person's Windows token in its own memory
 /// and starts their programs (Edge, apps, remote desktops) when the Kiosk asks; the token never reaches the Kiosk.
 /// Closing the sign-in ends that program, and every program of the person in this session with it.
 /// </summary>
@@ -74,30 +74,14 @@ internal sealed class FidoSignIn : IDisposable
     }
 
     /// <summary>
-    /// Card + PIN on the Kiosk's own PIN screen: <paramref name="askPin"/> (null = cancelled) until Windows signed the
-    /// person in (OK), refused (Message) or the PIN is asked again after a wrong one. Null when the person cancelled.
+    /// The Edge-FIDO2 sign-in as it is: its full-screen PIN screen over the Kiosk waits for the card, the person taps
+    /// it and types the PIN in Windows' own PIN field there. Returns once signed in, failed or cancelled.
     /// </summary>
-    internal async Task<Outcome?> CompleteAsync(Func<string, Task<string?>> askPin, string message = "Wpisz PIN karty.")
+    internal async Task<Outcome> WaitAsync()
     {
         string answer;
-        var pin = await AskAsync(askPin, message);
-        if (pin == null) { Dispose(); return null; }
-        while (true)
-        {
-            TakeForeground();
-            var entered = pin;
-            try { answer = await Task.Run(() => Send("pin\t" + entered, 30000, 180000)); }
-            catch (Exception ex) { Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
-            if (answer.StartsWith("RETRY ", StringComparison.Ordinal))
-            {
-                var reason = answer[6..].Trim();
-                message = (reason.Length > 0 ? reason + " " : "Nieprawidłowy PIN. ") + "Wpisz PIN jeszcze raz.";
-                pin = await AskAsync(askPin, message);
-                if (pin == null) { Dispose(); return null; }
-                continue;
-            }
-            break;
-        }
+        try { answer = await Task.Run(() => Send("wait", 30000, Timeout.Infinite)); }
+        catch (Exception ex) { Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
         if (!answer.StartsWith("OK ", StringComparison.Ordinal))
         {
             Dispose();
@@ -111,24 +95,12 @@ internal sealed class FidoSignIn : IDisposable
         return new(this, "");
     }
 
-    /// <summary>
-    /// Sign-in started when the card already lies on the reader ("Zaloguj"): Windows needs it tapped again.
-    /// </summary>
-    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin)
+    /// <summary>"Zaloguj": the Edge-FIDO2 PIN screen; a card already lying on the reader must be tapped again.</summary>
+    internal static async Task<Outcome?> SignInAsync()
     {
         var signIn = await PrepareAsync();
         if (signIn == null) return new(null, "Logowanie kartą nie wystartowało.");
-        return await signIn.CompleteAsync(askPin, "Zabierz kartę i przyłóż ją ponownie, potem wpisz PIN karty.");
-    }
-
-    private static async Task<string?> AskAsync(Func<string, Task<string?>> askPin, string message)
-    {
-        while (await askPin(message) is { } pin)
-        {
-            if (pin.Length > 0 && !pin.Contains('\t') && !pin.Contains('\n') && !pin.Contains('\r')) return pin;
-            message = "Wpisz PIN karty.";
-        }
-        return null;
+        return await signIn.WaitAsync();
     }
 
     /// <summary>A program as the signed-in person, suspended; the handles belong to this process.</summary>
@@ -186,7 +158,7 @@ internal sealed class FidoSignIn : IDisposable
                 {
                     if (!SetTokenInformation(token, 12, ref session, sizeof(int))) throw new Win32Exception(); // TokenSessionId
                     var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Desktop = @"winsta0\default" };
-                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --pin-from-client --client-pid " + clientPid;
+                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid;
                     if (!CreateProcessAsUser(token, program, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, false, 0x400, IntPtr.Zero,
                             Path.GetDirectoryName(program), ref startup, out var process))
                         throw new Win32Exception();
@@ -208,7 +180,7 @@ internal sealed class FidoSignIn : IDisposable
             var program = Path.Combine(AppContext.BaseDirectory, Folder, Program);
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + ")." };
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
-                "--mode kiosk-broker --target authenticated --pin-from-client --client-pid " + Environment.ProcessId) { UseShellExecute = false })!;
+                "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId) { UseShellExecute = false })!;
             return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = "Nie udało się uruchomić logowania kartą: " + ex.Message }; }

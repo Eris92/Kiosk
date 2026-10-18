@@ -88,7 +88,7 @@ internal sealed partial class KioskForm
         // While a PIN is asked or checked the card is reset on purpose; presence changes are evaluated afterwards.
         if (verifying || desktop.AskingPin) return;
         var key = reader.Snapshot(config.ReaderName);
-        if (key == null) PrepareCardSignIn();
+        PrepareCardSignIn();
         if (key == null && cardAwaySince is { } away && DateTime.UtcNow - away >= TimeSpan.FromSeconds(CardReturnSeconds))
         {
             cardAwaySince = null;
@@ -173,16 +173,11 @@ internal sealed partial class KioskForm
         else
         {
             // Everything stays on the Kiosk's screen: no web sign-in page (with Windows' own security key window) instead.
-            if (signedIn != null)
-            {
-                notice = "Nie udało się zalogować kartą: " + signedIn.Message + " Zabierz kartę i przyłóż ją jeszcze raz.";
-                Audit.Write("selfservice_card_signin_failed", signedIn.Message);
-            }
-            else
-            {
-                notice = "Logowanie anulowane. Zabierz kartę i przyłóż ją jeszcze raz.";
-                Audit.Write("selfservice_card_signin_cancelled");
-            }
+            Audit.Write(signedIn != null ? "selfservice_card_signin_failed" : "selfservice_card_signin_cancelled", signedIn?.Message ?? "");
+            // A fresh sign-in screen waits for the next tap (the card on the reader is not read again by itself).
+            EndCardSession(null);
+            notice = signedIn != null ? "Nie udało się zalogować kartą: " + signedIn.Message + " Zabierz kartę i przyłóż ją jeszcze raz."
+                : "Logowanie anulowane. Zabierz kartę i przyłóż ją jeszcze raz.";
             RefreshChrome();
             return;
         }

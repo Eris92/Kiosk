@@ -357,14 +357,9 @@ internal sealed partial class KioskForm : Form
         verifying = true;
         try
         {
-            // The PIN is typed on the Kiosk's own screen; Windows' card sign-in runs invisibly behind it. The Kiosk
-            // itself never talks to the card meanwhile: that would break Windows' exchange with it.
-            Func<string, Task<string?>> askPin = message =>
-            {
-                Activate();
-                return desktop.AskPinAsync(message, null, SelfService ? config.HelpCloseSeconds : 0);
-            };
-            return listening != null ? await listening.CompleteAsync(askPin) : await FidoSignIn.SignInAsync(askPin);
+            // The Edge-FIDO2 sign-in screen (card + PIN in Windows' own field) over the Kiosk. The Kiosk itself never
+            // talks to the card meanwhile: that would break Windows' exchange with it.
+            return listening != null ? await listening.WaitAsync() : await FidoSignIn.SignInAsync();
         }
         finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
     }
