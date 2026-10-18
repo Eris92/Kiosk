@@ -31,28 +31,40 @@ internal sealed class FidoSignIn : IDisposable
     internal sealed record Outcome(FidoSignIn? SignIn, string Message);
 
     /// <summary>
-    /// Starts the card sign-in, asks for the PIN with <paramref name="askPin"/> (null = cancelled) until the person has
-    /// signed in or the sign-in failed. Null when the person cancelled.
+    /// Asks for the PIN with <paramref name="askPin"/> (null = cancelled), then signs in with the card: Windows' sign-in
+    /// starts invisibly, <paramref name="wakeCard"/> presents the card lying on the reader to it, and the PIN is handed
+    /// over (asked again after a wrong PIN). Null when the person cancelled.
     /// </summary>
-    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin)
+    internal static async Task<Outcome?> SignInAsync(Func<string, Task<string?>> askPin, Action wakeCard)
     {
+        string answer, message = "Wpisz PIN karty.";
+        var pin = await AskAsync(askPin, message);
+        if (pin == null) return null;
         var started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin" }));
         if (started.Code != 0) return new(null, started.Message);
-        // The service started it for this process; let its PIN screen take the foreground over the Kiosk.
-        if (int.TryParse(started.Message, out var brokerPid)) AllowSetForegroundWindow(brokerPid);
+        // Windows finishes the card sign-in only for the foreground window: let the sign-in program take it.
+        int.TryParse(started.Message, out var brokerPid);
         var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
-        string answer, message = "Wpisz PIN karty.";
+        try
+        {
+            // Windows' sign-in notices only a card that arrives: once it listens, the card is switched off and on.
+            var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
+            if (listening.StartsWith("ERROR ", StringComparison.Ordinal)) { signIn.Dispose(); return new(null, listening[6..]); }
+            if (listening == "OK") { await Task.Delay(800); await Task.Run(wakeCard); }
+        }
+        catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
         while (true)
         {
-            var pin = await askPin(message);
-            if (pin == null) { signIn.Dispose(); return null; }
-            if (pin.Length == 0 || pin.Contains('\t') || pin.Contains('\n') || pin.Contains('\r')) { message = "Wpisz PIN karty."; continue; }
-            try { answer = await Task.Run(() => signIn.Send("pin\t" + pin, 30000, 180000)); }
+            if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
+            var entered = pin;
+            try { answer = await Task.Run(() => signIn.Send("pin\t" + entered, 30000, 180000)); }
             catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
             if (answer.StartsWith("RETRY ", StringComparison.Ordinal))
             {
                 var reason = answer[6..].Trim();
                 message = (reason.Length > 0 ? reason + " " : "Nieprawidłowy PIN. ") + "Wpisz PIN jeszcze raz.";
+                pin = await AskAsync(askPin, message);
+                if (pin == null) { signIn.Dispose(); return null; }
                 continue;
             }
             break;
@@ -68,6 +80,16 @@ internal sealed class FidoSignIn : IDisposable
         signIn.Account = parts.Length > 2 && parts[2].Length > 0 ? parts[2] : signIn.WindowsName;
         signIn.IsAdministrator = parts.Length > 3 && parts[3] == "1";
         return new(signIn, "");
+    }
+
+    private static async Task<string?> AskAsync(Func<string, Task<string?>> askPin, string message)
+    {
+        while (await askPin(message) is { } pin)
+        {
+            if (pin.Length > 0 && !pin.Contains('\t') && !pin.Contains('\n') && !pin.Contains('\r')) return pin;
+            message = "Wpisz PIN karty.";
+        }
+        return null;
     }
 
     /// <summary>A program as the signed-in person, suspended; the handles belong to this process.</summary>

@@ -53,7 +53,15 @@ namespace FidoRun
         private AccountCredentialFilter accountFilter;
 
         private bool Hidden { get { return options.Broker && options.PinFromClient; } }
-        protected override bool ShowWithoutActivation { get { return options.Broker && options.PinFromClient; } }
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams parameters = base.CreateParams;
+                if (options != null && options.Broker && options.PinFromClient) parameters.ExStyle |= 0x20 | 0x80; // WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
+                return parameters;
+            }
+        }
 
         // ---- Kiosk broker with the PIN from the Kiosk (any thread) ----
 
@@ -82,6 +90,7 @@ namespace FidoRun
                 {
                     TextBox box = ReadyPinBox();
                     if (box == null || host == null) return false;
+                    Activate();   // The Kiosk allowed it; Windows finishes the card sign-in for the foreground window.
                     box.Text = pin;   // TextChanged hands the value to the provider.
                     host.Submit();
                     log.Write("PinFromClient=Submitted");
@@ -116,15 +125,17 @@ namespace FidoRun
             if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
             if (Hidden)
             {
-                // The Kiosk shows its own PIN screen; this window only hosts the native provider, off screen and
-                // fully transparent (it must stay "visible" for the provider to accept a submission).
-                TopMost = false;
+                // The Kiosk shows its own PIN screen; this window only hosts the native provider. It is fully
+                // transparent and lets clicks through, but stays visible and in the foreground while Windows talks to
+                // the card (Windows' security key sign-in refuses a window in the background).
+                TopMost = true;
                 ShowInTaskbar = false;
                 WindowState = FormWindowState.Normal;
                 StartPosition = FormStartPosition.Manual;
-                Bounds = new Rectangle(-32000, -32000, 900, 700);
+                Bounds = Screen.PrimaryScreen.Bounds;
                 Opacity = 0;
                 KioskBroker.View = this;
+                Shown += delegate { BringToFront(); Activate(); };
             }
 
             // Wrap the two status labels to the window width instead of clipping/overflowing.

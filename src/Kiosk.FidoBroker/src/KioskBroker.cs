@@ -19,6 +19,8 @@ namespace FidoRun
     //
     // Pipe "KioskFido-<client pid>", one JSON-free line per request, one line back:
     //   wait                    -> "OK <sid>\t<windows name>\t<card account>\t<admin 0|1>" once signed in, or "ERROR <text>"
+    //   listening               -> "OK" once Windows' sign-in waits for the card (the Kiosk then wakes a card lying on the
+    //                              reader), "ERROR <text>" after 40 s
     //   pin\t<PIN>              -> (with --pin-from-client) types the PIN the Kiosk asked for into the native field and
     //                              submits it: "OK ..." as for wait, "RETRY <reason>" when the PIN is asked again
     //                              (wrong PIN), or "ERROR <text>"
@@ -30,6 +32,7 @@ namespace FidoRun
     {
         private static readonly object gate = new object();
         private static readonly ManualResetEvent finished = new ManualResetEvent(false);
+        private static readonly ManualResetEvent listening = new ManualResetEvent(false);
         private static LogonOutcome retained;
         private static string result = "ERROR Logowanie kartą nie zostało zakończone.";
         private static Action<string> logger;
@@ -101,6 +104,9 @@ namespace FidoRun
             lock (gate) { if (retained == null && !finished.WaitOne(0)) result = "ERROR " + Clean(message); }
             finished.Set();
         }
+
+        // The native tile asked for the card or its PIN, or is ready for input.
+        internal static void ProviderListening() { listening.Set(); }
 
         internal static bool Completed { get { return finished.WaitOne(0); } }
 
@@ -187,6 +193,10 @@ namespace FidoRun
                 case "wait":
                     finished.WaitOne();
                     lock (gate) return result;
+                case "listening":
+                    if (WaitHandle.WaitAny(new WaitHandle[] { listening, finished }, 40000) == WaitHandle.WaitTimeout)
+                        return "ERROR Logowanie kartą nie wystartowało.";
+                    lock (gate) return finished.WaitOne(0) ? result : "OK";
                 case "pin":
                     if (parts.Length != 2 || parts[1].Length == 0) return "ERROR Bad pin request";
                     return EnterPin(parts[1]);
@@ -223,6 +233,7 @@ namespace FidoRun
                 else if ((DateTime.UtcNow - waitingSince.Value).TotalSeconds >= 2.5 && (DateTime.UtcNow - submitted).TotalSeconds >= 3)
                 {
                     logger("KioskBroker=PinAskedAgain");
+                    AllowSetForegroundWindow(clientId);   // The Kiosk asks for the PIN again on its own screen.
                     return "RETRY " + Clean(again);
                 }
                 if (DateTime.UtcNow > limit) return "ERROR Logowanie kartą nie odpowiada.";
@@ -316,6 +327,7 @@ namespace FidoRun
         private static extern bool SetInformationJobObject(IntPtr job, int informationClass, ref JobExtendedLimits information, uint length);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(IntPtr job, uint code);
+        [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int process);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint id);
         [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);

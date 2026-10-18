@@ -142,10 +142,17 @@ internal sealed partial class KioskForm
             if (cardLogon != logon) return;
             if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
         }
-        else if (signedIn != null)
+        else
         {
-            notice = "Nie udało się zalogować kartą do Windows (" + signedIn.Message + "). Zaloguj się kartą na stronie.";
-            Audit.Write("selfservice_card_signin_failed", signedIn.Message);
+            // Everything stays on the Kiosk's screen: no web sign-in page (with Windows' own security key window) instead.
+            if (signedIn != null)
+            {
+                notice = "Nie udało się zalogować kartą: " + signedIn.Message + " Zabierz kartę i przyłóż ją jeszcze raz.";
+                Audit.Write("selfservice_card_signin_failed", signedIn.Message);
+            }
+            else notice = "Logowanie anulowane. Zabierz kartę i przyłóż ją jeszcze raz.";
+            RefreshChrome();
+            return;
         }
         if (config.SelfServiceSignInUrl.Length > 0) ShowHelpPage("Logowanie kartą", config.SelfServiceSignInUrl);
         RefreshChrome();

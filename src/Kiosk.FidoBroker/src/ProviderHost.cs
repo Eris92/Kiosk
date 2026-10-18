@@ -375,6 +375,7 @@ namespace FidoRun
         {
             if (generation != 0 && !IsCurrentCredential(generation)) return;
             log.Write("NativeStatusMessage: " + TraceLog.DisplayText(message));
+            if (options.Broker) KioskBroker.ProviderListening();
             view.StatusText(message);
         }
 
@@ -393,6 +394,7 @@ namespace FidoRun
             }
             string display = TraceLog.DisplayText(String.IsNullOrEmpty(label) ? accessibility : label);
             log.Write("NativeBioFeedback: VisualState=" + visualState + "; Priority=" + priority + "; Text=" + display);
+            if (options.Broker) KioskBroker.ProviderListening();
             if (!String.IsNullOrEmpty(accessibility) && !String.Equals(label, accessibility, StringComparison.Ordinal))
                 log.Write("NativeBioFeedbackAccessibility: " + TraceLog.DisplayText(accessibility));
             view.ProviderFeedback(display);
