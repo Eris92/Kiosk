@@ -207,8 +207,9 @@ namespace FidoRun
             }
             if (Embedded)
             {
-                // The Kiosk's sign-in place: a child window of the Kiosk, filling the place it was given.
-                ShowInTaskbar = false;
+                // The Kiosk's sign-in place: a child window of the Kiosk, filling the place it was given. ShowInTaskbar
+                // stays on: off, WinForms makes a hidden helper window this window's owner, which for a child window
+                // means its parent, and the sign-in disappears from the Kiosk.
                 TopMost = false;
                 WindowState = FormWindowState.Normal;
                 StartPosition = FormStartPosition.Manual;
@@ -302,6 +303,12 @@ namespace FidoRun
                 Close();
                 return;
             }
+            if (GetParent(Handle) != options.EmbedParent)
+            {
+                log.Write("Embed=Reattached; Was=" + GetParent(Handle).ToInt64());
+                SetParent(Handle, options.EmbedParent);
+            }
+            if (!Visible && signedInAccount == null && !closing) Show();   // Hidden only once signed in.
             Rect area;
             if (!GetClientRect(options.EmbedParent, out area)) return;
             if (Left != 0 || Top != 0 || Width != area.Right || Height != area.Bottom)
@@ -314,6 +321,7 @@ namespace FidoRun
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr window, int index);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr window, int index, int value);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr window);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr window, out Rect area);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
