@@ -117,7 +117,7 @@ internal sealed partial class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { if (SelfService) ClearCardFolders(); timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
@@ -348,20 +348,16 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>
-    /// Card + PIN (asked on the Kiosk's own PIN screen) sign the person in to Windows (see <see cref="FidoSignIn"/>);
-    /// null when cancelled, or when the card has no PIN and none was set.
-    /// Windows' sign-in waits for a card to arrive, so a card already lying on the reader is switched off and on once it listens.
+    /// Card + PIN sign the person in to Windows (see <see cref="FidoSignIn"/>): the Edge-FIDO2 sign-in screen inside the
+    /// Kiosk's card; null when cancelled. The Kiosk itself never talks to the card meanwhile: that would break
+    /// Windows' exchange with it.
     /// </summary>
-    private async Task<FidoSignIn.Outcome?> SignInWithCardAsync(FidoSignIn? listening = null)
+    private async Task<FidoSignIn.Outcome?> SignInWithCardAsync()
     {
         verifying = true;
-        try
-        {
-            // The Edge-FIDO2 sign-in screen (card + PIN in Windows' own field) over the Kiosk. The Kiosk itself never
-            // talks to the card meanwhile: that would break Windows' exchange with it.
-            return listening != null ? await listening.WaitAsync() : await FidoSignIn.SignInAsync();
-        }
-        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+        desktop.ShowSignIn(true);
+        try { return await FidoSignIn.SignInAsync(desktop.SignInPlace, desktop.DeviceDpi); }
+        finally { verifying = false; desktop.ShowSignIn(false); cardKey = reader.Snapshot(config.ReaderName); }
     }
 
     private async Task<CardPin.Result> VerifyFidoPinAsync()
@@ -717,7 +713,7 @@ internal sealed partial class KioskForm : Form
         foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
-        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || cardFolder != null;
+        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || SelfService && (cardLogon != null || cardKey != null);
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
@@ -1069,7 +1065,7 @@ internal sealed partial class KioskForm : Form
     {
         if (SelfService && OpenPageAsCardPerson(url)) return;
         helpBrowser?.Close();
-        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds, SelfService ? cardFolder : null) { Bounds = Screen.FromControl(this).Bounds };
+        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { Bounds = Screen.FromControl(this).Bounds };
         window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };
         helpBrowser = window;
         window.Show(this);

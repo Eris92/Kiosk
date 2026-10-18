@@ -30,6 +30,12 @@ namespace FidoRun
         public int ClientPid;
         // The Kiosk asks for the PIN on its own screen and hands it over the pipe; this window stays invisible.
         public bool PinFromClient;
+        // The Kiosk's own sign-in place: this PIN screen is drawn inside that Kiosk window instead of over it
+        // ("--embed <window>;<dpi>;<surface>;<text>;<muted>;<accent>", colours as RRGGBB).
+        public IntPtr EmbedParent;
+        public int EmbedDpi = 96;
+        public int[] EmbedColors;
+        public bool Embedded { get { return Broker && EmbedParent != IntPtr.Zero; } }
         public string ResolveTargetSid(string authenticatedSid)
         {
             string sid = new SecurityIdentifier(authenticatedSid).Value;
@@ -64,6 +70,9 @@ namespace FidoRun
                     case "--display-state": result.DisplayMode = value.ToLowerInvariant(); break;
                     case "--expected-sid": result.ExpectedSid = value; break;
                     case "--url": result.StartUrl = ParseStartUrl(value); break;
+                    case "--embed":
+                        ParseEmbed(value, result);
+                        break;
                     case "--client-pid":
                         if (!Int32.TryParse(value, out result.ClientPid) || result.ClientPid <= 0) throw new ArgumentException("Bad --client-pid.");
                         break;
@@ -123,6 +132,20 @@ namespace FidoRun
             if ((result.Mode == "launch-edge" || result.Mode == "session") && String.IsNullOrWhiteSpace(result.ExpectedSid) && !result.UseAuthenticatedAccount)
                 throw new ArgumentException("launch-edge and session require --target authenticated or --expected-sid.");
             return result;
+        }
+
+        private static void ParseEmbed(string value, Options result)
+        {
+            string[] parts = value.Split(';');
+            long window;
+            if (parts.Length != 6 || !Int64.TryParse(parts[0], out window) || window <= 0 || !Int32.TryParse(parts[1], out result.EmbedDpi)
+                || result.EmbedDpi < 48 || result.EmbedDpi > 960)
+                throw new ArgumentException("Bad --embed.");
+            result.EmbedParent = new IntPtr(window);
+            result.EmbedColors = new int[4];
+            for (int i = 0; i < 4; i++)
+                if (parts[i + 2].Length != 6 || !Int32.TryParse(parts[i + 2], System.Globalization.NumberStyles.HexNumber, null, out result.EmbedColors[i]))
+                    throw new ArgumentException("Bad --embed colour.");
         }
 
         // Edge receives the address as one command-line argument, so only plain https URLs pass.
@@ -216,6 +239,7 @@ namespace FidoRun
     internal static class Program
     {
         public static int Result = 2;
+        [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         private static long operationStarted;
         [ThreadStatic] private static int operationDepth;
         public static void BeginOperation()
@@ -281,6 +305,8 @@ namespace FidoRun
                         else
                         {
                             if (options.Broker) KioskBroker.Start(options.ClientPid, log.Write);
+                            // Inside the Kiosk window: real pixels like the Kiosk (this program is DPI-unaware otherwise).
+                            if (options.Embedded) { try { SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { } }
                             Application.EnableVisualStyles();
                             Application.SetCompatibleTextRenderingDefault(false);
                             using (HostForm form = new HostForm(options, log)) Application.Run(form);

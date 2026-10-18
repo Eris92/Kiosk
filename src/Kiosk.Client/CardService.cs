@@ -31,6 +31,7 @@ internal static class CardService
         public string? CredentialId { get; set; }
         public string? Salt { get; set; }
         public string Source { get; set; } = "";      // testconfig: the folder or share to check
+        public string Embed { get; set; } = "";       // fidosignin: the Kiosk window the sign-in screen is drawn in (FidoSignIn.ValidEmbed)
     }
 
     internal sealed class Response
@@ -73,7 +74,7 @@ internal static class CardService
         try
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
-            if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(); // Kiosk itself runs as administrator (no service).
+            if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
             if (request.Op == "syncnews") return CentralConfig.SyncNewsForMachine();   // Only the messages folder an administrator configured.
@@ -191,7 +192,7 @@ internal static class CardService
                     : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
                     // Card + PIN sign-in: the PIN screen for the Kiosk process and session Windows names, nobody else.
                     : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
-                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe))
+                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe), request.Embed)
                     : Handle(request);
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');

@@ -113,6 +113,11 @@ internal sealed class DesktopView : UserControl
     private readonly HelpCountdown pinCountdown = new() { Visible = false };
     private bool locked;
     internal bool AskingPin => pinRequest != null;
+    /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
+    private readonly Panel signInPlace = new() { Visible = false };
+    private bool signingIn;
+    /// <summary>The window the card sign-in screen becomes part of (created on first use, on the UI thread).</summary>
+    internal IntPtr SignInPlace => signInPlace.Handle;
 
     internal event Action? ResumeRequested;
 
@@ -139,6 +144,7 @@ internal sealed class DesktopView : UserControl
 
         foreach (var label in new[] { brand, subtitle, clock, date }) label.BackColor = Color.Transparent;
         foreach (var label in new[] { heading, detail, hint, pinPrompt }) label.BackColor = KioskTheme.Surface;
+        signInPlace.BackColor = KioskTheme.Surface;
         pinPrompt.Font = new Font("Segoe UI", 11);
         pinPrompt.ForeColor = KioskTheme.Muted;
         pinPrompt.Visible = false;
@@ -165,7 +171,7 @@ internal sealed class DesktopView : UserControl
         HelpCountdown.Watch(this, () => { if (pinCountdown.Visible) pinCountdown.Restart(); });
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown });
+        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, signInPlace });
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
@@ -195,9 +201,23 @@ internal sealed class DesktopView : UserControl
         heading.Text = title;
         detail.Text = description;
         hint.Text = locked ? "Twoje aplikacje czekają na wznowienie sesji." : "Aplikacje i połączenia znajdziesz w menu na dole.";
-        resume.Visible = locked && !AskingPin;
-        hint.Visible = !AskingPin;
+        resume.Visible = locked && !AskingPin && !signingIn;
+        hint.Visible = !AskingPin && !signingIn;
         card.Locked = locked;
+        ArrangeControls();
+        card.Invalidate();
+    }
+
+    /// <summary>Shows the card sign-in screen in the card instead of the greeting (or back).</summary>
+    internal void ShowSignIn(bool show)
+    {
+        if (signingIn == show) return;
+        signingIn = show;
+        signInPlace.Visible = show;
+        foreach (var c in new Control[] { heading, detail }) c.Visible = !show;
+        resume.Visible = locked && !AskingPin && !show;
+        hint.Visible = !AskingPin && !show;
+        card.SignIn = show;
         ArrangeControls();
         card.Invalidate();
     }
@@ -300,7 +320,7 @@ internal sealed class DesktopView : UserControl
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin;
-        int cardHeight = Scale(AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
+        int cardHeight = Scale(signingIn ? 500 : AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
         bool help = Help.Count > 0 && !AskingPin;
         var column = Help.Needed(true);
@@ -333,6 +353,7 @@ internal sealed class DesktopView : UserControl
             Help.SetBounds((Width - rowWidth) / 2, card.Bottom + Scale(16), rowWidth, row.Height);
         }
         int innerMargin = Scale(30);
+        signInPlace.SetBounds(innerMargin, Scale(24), Math.Max(0, cardWidth - innerMargin * 2), Math.Max(0, cardHeight - Scale(48)));
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
         if (personRow)
         {
@@ -428,6 +449,8 @@ internal sealed class DesktopView : UserControl
         internal bool Locked { get; set; }
         internal string Initials { get; set; } = "";
         internal Rectangle Avatar { get; set; }
+        /// <summary>The card sign-in fills the card: no icon.</summary>
+        internal bool SignIn { get; set; }
 
         internal StatusCard()
         {
@@ -447,6 +470,7 @@ internal sealed class DesktopView : UserControl
             using var border = new Pen(KioskTheme.Border);
             g.DrawPath(border, cardPath);
 
+            if (SignIn) return;
             if (Initials.Length > 0 && !Avatar.IsEmpty)
             {
                 using var fill = new SolidBrush(KioskTheme.AccentSoft);

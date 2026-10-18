@@ -53,12 +53,24 @@ namespace FidoRun
         private AccountCredentialFilter accountFilter;
 
         private bool Hidden { get { return options.Broker && options.PinFromClient; } }
+        private bool Embedded { get { return options != null && options.Embedded; } }
+        // Inside the Kiosk: its scale and colours (surface, text, muted, accent).
+        private float scale = 1f;
+        private Color statusColor = SystemColors.ControlText;
+        private Timer fitTimer;
         protected override CreateParams CreateParams
         {
             get
             {
                 CreateParams parameters = base.CreateParams;
                 if (options != null && options.Broker && options.PinFromClient) parameters.ExStyle |= 0x20 | 0x80; // WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
+                if (Embedded)
+                {
+                    // Created right inside the Kiosk's window (also whenever WinForms re-applies the styles).
+                    parameters.Style = (parameters.Style & ~unchecked((int)0x80000000) & ~0x00C00000) | 0x40000000 | 0x02000000; // -POPUP -CAPTION +CHILD +CLIPCHILDREN
+                    parameters.ExStyle &= ~0x00040000;                    // -WS_EX_APPWINDOW
+                    parameters.Parent = options.EmbedParent;
+                }
                 return parameters;
             }
         }
@@ -175,6 +187,7 @@ namespace FidoRun
         {
             this.options = options; this.log = log;
             pinScreen = options.PinScreen;
+            if (Embedded) scale = options.EmbedDpi / 96f;
             bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
             if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
             if (Hidden)
@@ -191,6 +204,15 @@ namespace FidoRun
                 Opacity = Environment.GetEnvironmentVariable("FIDORUN_VISIBLE") == "1" ? 1 : 0.01;
                 KioskBroker.View = this;
                 Shown += delegate { KioskBroker.ViewHandle = Handle; TakeForeground("Shown"); };
+            }
+            if (Embedded)
+            {
+                // The Kiosk's sign-in place: a child window of the Kiosk, filling the place it was given.
+                ShowInTaskbar = false;
+                TopMost = false;
+                WindowState = FormWindowState.Normal;
+                StartPosition = FormStartPosition.Manual;
+                KioskBroker.View = this;
             }
 
             // Wrap the two status labels to the window width instead of clipping/overflowing.
@@ -239,6 +261,7 @@ namespace FidoRun
             Resize += delegate { if (host != null) host.SetHostVisible(Visible && WindowState != FormWindowState.Minimized); };
             FormClosing += delegate
             {
+                if (fitTimer != null) { fitTimer.Dispose(); fitTimer = null; }
                 if (cardMonitor != null) { try { cardMonitor.Dispose(); } catch { } cardMonitor = null; }
                 if (restartTimer != null) { restartTimer.Dispose(); restartTimer = null; }
                 DiagnosticSession.Stop();
@@ -250,7 +273,52 @@ namespace FidoRun
             };
         }
 
-        private int FieldWidth { get { return pinScreen ? 560 : 650; } }
+        private int FieldWidth { get { return (int)((pinScreen ? 560 : 650) * scale); } }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            if (!Embedded) return;
+            KioskBroker.ViewHandle = Handle;
+            // A child of the Kiosk's window from now on: it moves, hides and shows with the Kiosk.
+            int style = GetWindowLong(Handle, -16);                       // GWL_STYLE
+            SetWindowLong(Handle, -16, (style & ~unchecked((int)0x80000000) & ~0x00C00000) | 0x40000000 | 0x02000000); // -POPUP -CAPTION +CHILD +CLIPCHILDREN
+            if (SetParent(Handle, options.EmbedParent) == IntPtr.Zero)
+                log.Write("Embed=Failed; Error=" + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            else log.Write("Embed=Ok; Parent=" + options.EmbedParent.ToInt64() + "; Dpi=" + options.EmbedDpi);
+            FitToParent();
+            fitTimer = new Timer { Interval = 300 };
+            fitTimer.Tick += delegate { FitToParent(); };
+            fitTimer.Start();
+        }
+
+        // Fills the Kiosk's sign-in place; the Kiosk gone means nobody can sign in here any more.
+        private void FitToParent()
+        {
+            if (!IsWindow(options.EmbedParent))
+            {
+                if (fitTimer != null) fitTimer.Stop();
+                KioskBroker.Failed("Okno Kiosku zostało zamknięte.");
+                Close();
+                return;
+            }
+            Rect area;
+            if (!GetClientRect(options.EmbedParent, out area)) return;
+            if (Left != 0 || Top != 0 || Width != area.Right || Height != area.Bottom)
+                SetWindowPos(Handle, IntPtr.Zero, 0, 0, area.Right, area.Bottom, 0x0004 | 0x0010); // NOZORDER | NOACTIVATE
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct Rect { public int Left, Top, Right, Bottom; }
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr window, int index);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr window, int index, int value);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr window, out Rect area);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+
+        private static Color Rgb(int value) { return Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255); }
 
         private void BuildDiagnosticWindow(bool edgeCapable)
         {
@@ -321,13 +389,21 @@ namespace FidoRun
         private void BuildPinScreen(bool edgeCapable)
         {
             Color accent = Color.FromArgb(0, 95, 184);
+            Color surface = Color.White, text = Color.FromArgb(32, 32, 32), muted = Color.FromArgb(80, 80, 80);
+            if (Embedded)
+            {
+                surface = Rgb(options.EmbedColors[0]); text = Rgb(options.EmbedColors[1]);
+                muted = Rgb(options.EmbedColors[2]); accent = Rgb(options.EmbedColors[3]);
+                statusColor = text;
+            }
             Text = "Logowanie kartą";
-            Font = new Font("Segoe UI", 14f);
+            Font = new Font("Segoe UI", 14f * scale);
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
-            WindowState = FormWindowState.Maximized;
+            WindowState = Embedded ? FormWindowState.Normal : FormWindowState.Maximized;
             StartPosition = FormStartPosition.Manual;
-            BackColor = Color.FromArgb(232, 237, 243);
+            BackColor = Embedded ? surface : Color.FromArgb(232, 237, 243);
+            ForeColor = text;
             KeyPreview = true;
             KeyDown += delegate(object sender, KeyEventArgs e)
             {
@@ -345,16 +421,16 @@ namespace FidoRun
             TableLayoutPanel card = new TableLayoutPanel
             {
                 ColumnCount = 1, RowCount = 6, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                BackColor = Color.White, Padding = new Padding(48, 40, 48, 36), Margin = new Padding(16)
+                BackColor = surface, Padding = Embedded ? new Padding(0) : new Padding(48, 40, 48, 36), Margin = new Padding(16)
             };
             card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             for (int row = 0; row < 6; row++) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            Label title = new Label { Text = "Zaloguj się kartą", AutoSize = true, Font = new Font("Segoe UI Semibold", 26f), ForeColor = Color.FromArgb(32, 32, 32), Margin = new Padding(0, 0, 0, 8) };
+            Label title = new Label { Text = "Zaloguj się kartą", AutoSize = true, Font = new Font("Segoe UI Semibold", 26f * scale), ForeColor = text, Margin = new Padding(0, 0, 0, 8) };
             card.Controls.Add(title, 0, 0);
 
             providerStatus.AutoSize = true; providerStatus.Margin = new Padding(0, 0, 0, 16);
-            providerStatus.ForeColor = Color.FromArgb(80, 80, 80);
+            providerStatus.ForeColor = muted;
             providerStatus.MaximumSize = new Size(FieldWidth, 0);
             providerStatus.Text = "Przygotowanie logowania...";
             card.Controls.Add(providerStatus, 0, 1);
@@ -378,7 +454,8 @@ namespace FidoRun
             openEdge.Text = "Otwórz Edge"; openEdge.Enabled = false; openEdge.Visible = false;
             openEdge.Click += delegate { OpenEdgeClicked(); };
             Button restart = new Button { Text = options.Broker ? "Anuluj" : "Zacznij od nowa", AutoSize = true, FlatStyle = FlatStyle.Flat, Padding = new Padding(12, 6, 12, 6), Margin = new Padding(0, 0, 12, 4) };
-            restart.FlatAppearance.BorderColor = Color.FromArgb(180, 180, 180);
+            restart.FlatAppearance.BorderColor = Embedded ? muted : Color.FromArgb(180, 180, 180);
+            restart.ForeColor = text;
             restart.Click += delegate
             {
                 if (options.Broker) { KioskBroker.Failed("Anulowano logowanie kartą."); Close(); }
@@ -387,8 +464,8 @@ namespace FidoRun
             if (options.Broker)
             {
                 // Over the Kiosk's own full-screen window until the person has signed in.
-                TopMost = !options.PinFromClient;
-                if (!options.PinFromClient) Shown += delegate { Activate(); };
+                TopMost = !options.PinFromClient && !Embedded;
+                if (!options.PinFromClient && !Embedded) Shown += delegate { Activate(); };
             }
             buttons.Controls.Add(submit);
             if (edgeCapable) buttons.Controls.Add(openEdge);
@@ -396,8 +473,8 @@ namespace FidoRun
             card.Controls.Add(buttons, 0, 4);
 
             state.AutoSize = true; state.Margin = new Padding(0, 4, 0, 0);
-            state.ForeColor = Color.FromArgb(90, 90, 90);
-            state.Font = new Font("Segoe UI", 12f);
+            state.ForeColor = Embedded ? muted : Color.FromArgb(90, 90, 90);
+            state.Font = new Font("Segoe UI", 12f * scale);
             state.MaximumSize = new Size(FieldWidth, 0);
             state.Text = "Uruchamianie...";
             card.Controls.Add(state, 0, 5);
@@ -426,8 +503,8 @@ namespace FidoRun
         {
             if(closing||IsDisposed)return -1;
             if(InvokeRequired)return (int)Invoke(new Func<int>(delegate{return ChooseKeyAccount(accounts);}));
-            using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,TopMost=Hidden,
-                StartPosition=Hidden?FormStartPosition.CenterScreen:FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
+            using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,TopMost=Hidden||Embedded,
+                StartPosition=Hidden||Embedded?FormStartPosition.CenterScreen:FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
             {
                 var list=new ListBox {Dock=DockStyle.Fill,Font=new Font(Font.FontFamily,12),IntegralHeight=false};
                 foreach(var account in accounts)list.Items.Add(account);
@@ -503,7 +580,7 @@ namespace FidoRun
                     providerStatus.Text = count == 0
                         ? "Nie znaleziono dostawcy FIDO. Uruchom aplikację jako administrator."
                         : "Dostawca FIDO gotowy. Włóż klucz i podaj PIN.";
-                    providerStatus.ForeColor = count == 0 ? Color.Firebrick : SystemColors.ControlText;
+                    providerStatus.ForeColor = count == 0 ? Color.Firebrick : statusColor;
                     // Enumeration does not establish successful Advise/SetSelected.
                     canSubmit = false;
                     ApplyInteractionState();
@@ -656,7 +733,7 @@ namespace FidoRun
                                 input = action; break;
                             case 4: case 5:
                                 TextBox text = new TextBox { Width = FieldWidth, Text = field.Type == 5 ? "" : (field.Value ?? ""), UseSystemPasswordChar = field.Type == 5 };
-                                if (pinScreen && field.Type == 5) text.Font = new Font(Font.FontFamily, 22f);
+                                if (pinScreen && field.Type == 5) text.Font = new Font(Font.FontFamily, 22f * scale);
                                 text.TextChanged += delegate { if (!rendering && !closing) host.StringValue(generation, field.Id, text.Text); };
                                 text.ReadOnly = field.Interactive == 1;
                                 input = text; break;
