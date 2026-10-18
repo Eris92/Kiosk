@@ -24,7 +24,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | sharedaccount
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | sharedaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -73,6 +73,7 @@ internal static class CardService
         try
         {
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
+            if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
             if (request.Op == "syncnews") return CentralConfig.SyncNewsForMachine();   // Only the messages folder an administrator configured.
@@ -188,6 +189,9 @@ internal static class CardService
                     : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: ClientIsAdministrator(pipe))
                     // A shared account's password only for the installed Kiosk program, named by Windows (the pipe's client process).
                     : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
+                    // Card + PIN sign-in: the PIN screen for the Kiosk process and session Windows names, nobody else.
+                    : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
+                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe))
                     : Handle(request);
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');

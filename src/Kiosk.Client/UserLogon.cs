@@ -16,6 +16,9 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     private readonly string? domain;
     private byte[]? secret; // UTF-16 password, CryptProtectMemory(SAME_PROCESS), padded to 16 bytes.
     private readonly int length;
+    /// <summary>Signed in with the card alone (no password here): programs start through the sign-in program.</summary>
+    private FidoSignIn? card;
+    internal bool WithCard => card != null;
 
     /// <summary>The account as Windows shows it, e.g. AzureAD\JanKowalski.</summary>
     internal string DisplayName { get; }
@@ -31,6 +34,29 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         secret = new byte[(length * 2 + 15) / 16 * 16];
         Encoding.Unicode.GetBytes(password, 0, length, secret, 0);
         if (!CryptProtectMemory(secret, secret.Length, 0)) throw new Win32Exception();
+    }
+
+    /// <summary>Card + PIN: the Windows sign-in with the card itself; the person's token stays in the sign-in program.</summary>
+    internal static UserLogon FromCard(FidoSignIn signIn)
+    {
+        // "AzureAD\JanKowalski" from Windows; the card names the account (jan@firma.pl), which remote desktops use.
+        var name = signIn.WindowsName;
+        int slash = name.IndexOf('\\');
+        string? domain = slash > 0 ? name[..slash] : null;
+        var account = signIn.Account.Contains('@') ? signIn.Account : slash > 0 ? name[(slash + 1)..] : name;
+        var logon = new UserLogon(account, domain, name)
+        {
+            card = signIn, Sid = signIn.Sid, IsAdministrator = signIn.IsAdministrator,
+            FriendlyName = People.FriendlyName("", account, name)
+        };
+        return logon;
+    }
+
+    private UserLogon(string user, string? domain, string displayName)
+    {
+        this.user = user;
+        this.domain = domain;
+        DisplayName = displayName;
     }
 
     internal string User => user;
@@ -130,6 +156,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     /// <summary>Starts a program as this person (with their profile), suspended, like runas.</summary>
     public (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
     {
+        if (card != null) return card.Start(application, commandLine, directory, show);
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = show };
         var password = Reveal();
         try
@@ -148,6 +175,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     /// <summary>Runs <paramref name="work"/> as this person (Pliki: their folders, with their rights).</summary>
     internal object? RunAs(Func<object?> work)
     {
+        if (card != null) throw new NotSupportedException("Pliki osoby zalogowanej kartą otwierają się w osobnym oknie.");
         if (token == null || token.IsInvalid)
         {
             var password = Reveal();
@@ -180,6 +208,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     /// <summary>The password for the RDP control; the caller clears it as soon as it is handed over.</summary>
     internal char[] Reveal()
     {
+        if (card != null) throw new InvalidOperationException("Logowanie kartą nie używa hasła.");
         if (secret == null) throw new ObjectDisposedException(nameof(UserLogon));
         var copy = (byte[])secret.Clone();
         try
@@ -192,7 +221,12 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         finally { Array.Clear(copy); }
     }
 
-    public void Dispose() { if (secret != null) { Array.Clear(secret); secret = null; } token?.Dispose(); token = null; }
+    public void Dispose()
+    {
+        if (secret != null) { Array.Clear(secret); secret = null; }
+        token?.Dispose(); token = null;
+        card?.Dispose(); card = null; // Signs the person out: their programs close with it.
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }

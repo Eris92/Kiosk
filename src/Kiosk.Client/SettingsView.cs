@@ -64,7 +64,7 @@ internal sealed class SettingsView : UserControl
     private const string CustomAccent = "Własny kolor…";
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
-    private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” pyta o login i hasło konta (jak runas): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
+    private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” kartą i jej PIN-em (bez loginu i hasła): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
     private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };
     private readonly ComboBox autoConnect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320 };
     private readonly DataGridView connections = Grid();

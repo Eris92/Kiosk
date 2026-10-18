@@ -292,33 +292,19 @@ internal sealed partial class KioskForm : Form
         cardKey = reader.Snapshot(config.ReaderName); // A PIN check resets the card; that is not a new insertion.
         if (config.SignInAsUser && session.Logon == null)
         {
-            // Like runas: the person's own account, checked by Windows; asked once per Kiosk session.
-            try { session.Logon = UserLogon.Prompt(Handle, "Podaj login (np. jan@firma.pl) i hasło swojego konta. Aplikacje, przeglądarka i pulpity zdalne uruchomią się jako Ty."); }
-            catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
-            if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
-            Audit.Write("signed_in_as_user", session.Logon.DisplayName);
-            await PrepareProfileAsync(session);
-            // Remember the account for this card: next time the card and its PIN are enough.
-            var logon = session.Logon;
-            var id = session.Identity.Id;
-            var readerName = reader.ActiveReader;
-            verifying = true;
-            try
+            // The card alone: Windows signs the person in with the card and its PIN, no login and no password.
+            var signedIn = await SignInWithCardAsync();
+            if (signedIn == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
+            if (signedIn.SignIn == null)
             {
-                string message = "Wpisz PIN karty, aby ją zapamiętać. Następnym razem wystarczy sam PIN.";
-                var first = await EnsureCardPinAsync(readerName);
-                while ((first ?? await desktop.AskPinAsync(message, cardPresent)) is { } pin)
-                {
-                    first = null;
-                    var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
-                    Audit.Write(saved.Code == CardPin.Verified ? "card_enrolled" : "card_enroll_failed", saved.Code + " " + saved.Message);
-                    if (saved.Code == CardPin.WrongPin) { message = saved.Message + " Spróbuj ponownie."; continue; }
-                    session.Notice = saved.Code == CardPin.Verified ? null : "Karta nie została zapamiętana: " + saved.Message;
-                    break;
-                }
+                session.Notice = "Nie udało się zalogować kartą: " + signedIn.Message;
+                Audit.Write("card_signin_failed", signedIn.Message);
+                RefreshChrome();
+                return;
             }
-            catch (Exception ex) { session.Notice = "Karta nie została zapamiętana: " + ex.Message; Audit.Write("card_enroll_failed", ex.Message); }
-            finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+            session.Logon = UserLogon.FromCard(signedIn.SignIn);
+            Audit.Write("signed_in_with_card", session.Logon.DisplayName);
+            await PrepareProfileAsync(session);
         }
         Unlock(session);
     }
@@ -361,6 +347,31 @@ internal sealed partial class KioskForm : Form
         RefreshChrome();
     }
 
+    /// <summary>
+    /// The PIN screen of the card sign-in (see <see cref="FidoSignIn"/>); null when the card has no PIN and none was set.
+    /// Windows' sign-in waits for a card to arrive, so a card already lying on the reader is switched off and on once.
+    /// </summary>
+    private async Task<FidoSignIn.Outcome?> SignInWithCardAsync()
+    {
+        var readerName = reader.ActiveReader;
+        verifying = true;
+        try
+        {
+            // A new card first gets its PIN (Windows asks for one it can check).
+            var state = await Task.Run(() => CardService.Call(new CardService.Request { Op = "haspin", Reader = readerName }));
+            if (state.Code == 0x35 && await EnsureCardPinAsync(readerName) == null) return null;
+            var signIn = FidoSignIn.SignInAsync();
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(2500);   // The PIN screen is listening for the card by now.
+                try { if (!signIn.IsCompleted) CtapCard.PowerCycle(readerName); }
+                catch (Exception ex) { Audit.Write("card_signin_wake_error", ex.Message); }
+            });
+            return await signIn;
+        }
+        finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+    }
+
     private async Task<CardPin.Result> VerifyFidoPinAsync()
     {
         var readerName = reader.ActiveReader;
@@ -381,29 +392,8 @@ internal sealed partial class KioskForm : Form
     {
         if (config.SignInAsUser && session.Logon == null)
         {
-            // A remembered card: only its PIN, typed in Kiosk, opens the account stored for it.
-            if (!CardVault.IsEnrolled(session.Identity.Id)) return true; // First use: Zaloguj asks, enrolling checks the PIN.
-            var id = session.Identity.Id;
-            var readerName = reader.ActiveReader;
-            string message = "Wpisz PIN karty, aby się zalogować.";
-            while (true)
-            {
-                var pin = await desktop.AskPinAsync(message, cardPresent);
-                if (pin == null) { session.Notice = "Logowanie anulowane."; return false; }
-                var opened = await Task.Run(() => CardVault.Open(id, readerName, pin));
-                if (opened.Logon != null) { session.Logon = opened.Logon; Audit.Write("card_vault_opened", opened.Logon.DisplayName); await PrepareProfileAsync(session); return true; }
-                Audit.Write("card_vault_failed", opened.Code + " " + opened.Message);
-                if (opened.Code == CardPin.WrongPin) { message = opened.Message + " Spróbuj ponownie."; continue; }
-                if (opened.Code == CardPin.NoKey) { session.Notice = opened.Message; return true; } // Set the card up again below.
-                if (opened.Code != CardPin.Verified) { session.Notice = opened.Message; return false; }
-                // The PIN was right but the password changed: ask once and store the new one.
-                var logon = UserLogon.Prompt(Handle, opened.Message);
-                if (logon == null) { session.Notice = "Logowanie anulowane."; return false; }
-                session.Logon = logon;
-                var saved = await Task.Run(() => CardVault.Enroll(id, logon, readerName, pin));
-                if (saved.Code != CardPin.Verified) session.Notice = "Nowe hasło nie zostało zapamiętane: " + saved.Message;
-                return true;
-            }
+            // Signing in with the card checks its PIN itself (VerifyAndUnlockAsync).
+            return true;
         }
         switch (config.UnlockMethod)
         {
@@ -1085,6 +1075,7 @@ internal sealed partial class KioskForm : Form
     /// <summary>A Szybka pomoc page; in Punkt samoobsługowy with the card's sign-in while the card lies on the reader.</summary>
     private void ShowHelpPage(string title, string url)
     {
+        if (SelfService && OpenPageAsCardPerson(url)) return;
         helpBrowser?.Close();
         var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds, SelfService ? cardFolder : null) { Bounds = Screen.FromControl(this).Bounds };
         window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };
@@ -1553,6 +1544,16 @@ internal sealed partial class KioskForm : Form
         if (!CheckCard()) return;
         var session = current!;
         var logon = session.Logon;
+        if (logon is { WithCard: true })
+        {
+            // Signed in with the card: Pliki run as the person in their own window, with their rights.
+            _ = OpenApplicationAsync(new ApplicationEntry
+            {
+                Name = config.Applications.FirstOrDefault(a => a.IsBuiltInFiles)?.Name ?? "Pliki",
+                Path = Environment.ProcessPath!, Arguments = FilesHost.Argument
+            });
+            return;
+        }
         Func<Func<object?>, object?> runAs = logon != null ? logon.RunAs : work => work();
         try { session.Files = new FilesView(runAs, logon?.ProfileDirectory); }
         catch (Exception ex) { notice = "Nie można otworzyć Plików: " + ex.Message; Audit.Write("files_error", ex.Message); RefreshChrome(); return; }

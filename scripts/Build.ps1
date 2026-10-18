@@ -11,6 +11,11 @@ $project = Join-Path $PSScriptRoot '..\src\Kiosk.Client\Kiosk.Client.csproj'
 $versionArguments = if ($Version) { @("-p:InformationalVersion=$Version", '-p:IncludeSourceRevisionInInformationalVersion=false') } else { @() }
 & dotnet publish $project -c Release -r win-x64 --self-contained true -o $OutputPath @versionArguments
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+# The card sign-in program (card + PIN signs the person in to Windows), .NET Framework 4.8: out\client\fido.
+$fido = Join-Path $PSScriptRoot '..\src\Kiosk.FidoBroker\FidoRun.csproj'
+& dotnet build $fido -c Release -o (Join-Path $OutputPath 'fido') --nologo
+if ($LASTEXITCODE -ne 0) { throw 'Building the card sign-in program failed.' }
+Remove-Item (Join-Path $OutputPath 'fido\*.pdb') -ErrorAction SilentlyContinue
 $localConfig = Join-Path $PSScriptRoot '..\client.local.json'
 $outputConfig = Join-Path $OutputPath 'client.json'
 if (Test-Path -LiteralPath $localConfig) {

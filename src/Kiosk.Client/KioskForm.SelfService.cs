@@ -14,6 +14,10 @@ internal sealed partial class KioskForm
     private string? cardFolder;
     private static string CardFolders => Path.Combine(Path.GetTempPath(), "KioskCard");
 
+    /// <summary>The person signed in to Windows with the card and its PIN: Szybka pomoc pages open in their own Edge
+    /// (their account, SSO, a device Microsoft recognises). Null = not signed in, pages use the card's web browser.</summary>
+    private UserLogon? cardLogon;
+
     /// <summary>The card of the current sign-in (its UID): the same card coming back continues it.</summary>
     private string? cardId;
     /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
@@ -119,8 +123,31 @@ internal sealed partial class KioskForm
         {
             notice = "PIN karty ustawiony. Zaloguj się na stronie i dodaj kartę: Dodaj metodę logowania → Klucz zabezpieczeń.";
             ShowHelpPage("Połącz kartę z kontem", config.SelfServiceLinkUrl);
+            RefreshChrome();
+            return;
         }
-        else if (config.SelfServiceSignInUrl.Length > 0) ShowHelpPage("Logowanie kartą", config.SelfServiceSignInUrl);
+        // The card and its PIN sign the person in to Windows: no login or password on any page.
+        var signedIn = await SignInWithCardAsync();
+        if (cardFolder != folder || cardKey == null) { signedIn?.SignIn?.Dispose(); RefreshChrome(); return; } // Taken away meanwhile.
+        if (signedIn?.SignIn is { } signIn)
+        {
+            var logon = UserLogon.FromCard(signIn);
+            cardLogon = logon;
+            Audit.Write("selfservice_signed_in_with_card", logon.DisplayName);
+            notice = "Zalogowano: " + logon.FriendlyName + ".";
+            RefreshChrome();
+            bool ready;
+            try { ready = await Task.Run(logon.EnsureProfile); }
+            catch (Exception ex) { ready = false; Audit.Write("profile_failed", ex.Message); }
+            if (cardLogon != logon) return;
+            if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
+        }
+        else if (signedIn != null)
+        {
+            notice = "Nie udało się zalogować kartą do Windows (" + signedIn.Message + "). Zaloguj się kartą na stronie.";
+            Audit.Write("selfservice_card_signin_failed", signedIn.Message);
+        }
+        if (config.SelfServiceSignInUrl.Length > 0) ShowHelpPage("Logowanie kartą", config.SelfServiceSignInUrl);
         RefreshChrome();
     }
 
@@ -134,6 +161,8 @@ internal sealed partial class KioskForm
         helpBrowser?.Close();
         cardKeeper?.Close();
         cardKeeper = null;
+        cardLogon?.Dispose(); // Signs the person out of Windows here: their Edge closes with it.
+        cardLogon = null;
         credentialPrompt = IntPtr.Zero;
         notice = null;
         if (reason != null) Audit.Write(reason);
@@ -157,6 +186,28 @@ internal sealed partial class KioskForm
     {
         try { if (Directory.Exists(CardFolders)) foreach (var folder in Directory.GetDirectories(CardFolders)) DeleteCardFolder(folder); }
         catch (Exception ex) { Audit.Write("selfservice_cleanup_error", ex.Message); }
+    }
+
+    /// <summary>A Szybka pomoc page in the signed-in person's own Edge (a new window of it when it already runs).</summary>
+    private bool OpenPageAsCardPerson(string url)
+    {
+        if (cardLogon == null) return false;
+        try
+        {
+            var edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe");
+            var (process, thread) = cardLogon.Start(edge, "\"" + edge + "\" --new-window --start-maximized --no-first-run \"" + url + "\"", Path.GetDirectoryName(edge), show: 3);
+            AppNative.ResumeThread(thread);
+            AppNative.CloseHandle(thread);
+            AppNative.CloseHandle(process);
+            Audit.Write("selfservice_page_as_person");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("selfservice_page_as_person_error", ex.Message);
+            notice = "Nie udało się otworzyć strony na Twoim koncie: " + ex.Message;
+            return false;
+        }
     }
 
     private void SelfServiceStatus()

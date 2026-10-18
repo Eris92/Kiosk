@@ -1,0 +1,644 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace FidoRun
+{
+    internal sealed class FieldData
+    {
+        public uint Id;
+        public int Type, State, Interactive;
+        public string Label, Value;
+        public bool Checked;
+        public uint Selected;
+        public readonly List<string> Items = new List<string>();
+        public static bool IsVisible(int state) { return state == 1 || state == 3; }
+        // Only native display fields can be included in diagnostic text logs.
+        // Edit/PIN fields (types 4/5) and their values are always excluded.
+        public static bool IsDisplayText(int type) { return type == 1 || type == 2 || type == 3 || type == 9; }
+        public static bool CanSubmit(int type, int state, int interactive)
+        {
+            if (!IsVisible(state) || interactive == 1 || interactive == 2) return false;
+            // Command links (type 3), such as Retry, perform their own action;
+            // they must not enable the host's unrelated serialization button.
+            return type == 4 || type == 5 || type == 7 || type == 8 || type == 9;
+        }
+    }
+
+    internal sealed class HostForm : Form
+    {
+        private readonly Options options;
+        private readonly TraceLog log;
+        private readonly Label providerStatus = new Label();
+        private readonly FlowLayoutPanel fields = new FlowLayoutPanel();
+        private readonly TextBox trace = new TextBox();
+        private Control providerFeedback;
+        private readonly bool pinScreen;
+        private string signedInAccount;
+        private Timer restartTimer;
+        private readonly Label state = new Label();
+        private readonly Button submit = new Button();
+        private readonly Button openEdge = new Button();
+        private readonly Dictionary<uint, Control> inputs = new Dictionary<uint, Control>();
+        private readonly Dictionary<uint, Control> containers = new Dictionary<uint, Control>();
+        private readonly Dictionary<uint, FieldData> fieldData = new Dictionary<uint, FieldData>();
+        private readonly List<Action> pendingFieldUpdates = new List<Action>();
+        private int fieldGeneration;
+        private bool preparingFields, serializationAvailable, fieldUpdatesFailed;
+        private ProviderHost host;
+        private bool rendering, closing, canSubmit, working;
+        private CardMonitor cardMonitor;
+        private bool kioskRestarting;
+        private AccountCredentialFilter accountFilter;
+
+        public HostForm(Options options, TraceLog log)
+        {
+            this.options = options; this.log = log;
+            pinScreen = options.PinScreen;
+            bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
+            if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
+
+            // Wrap the two status labels to the window width instead of clipping/overflowing.
+            Resize += delegate
+            {
+                int w = pinScreen ? FieldWidth : ClientSize.Width - 28;
+                if (w < 80) return;
+                providerStatus.MaximumSize = new Size(w, 0);
+                state.MaximumSize = new Size(w, 0);
+            };
+
+            // Enter (for example right after typing the PIN) triggers the login button.
+            AcceptButton = submit;
+            if (!pinScreen) log.Line += AddLog;
+            Shown += delegate
+            {
+                if (!pinScreen)
+                {
+                    // Never let the window exceed the screen, so the docked buttons stay reachable
+                    // on small or scaled kiosk displays.
+                    Rectangle work = Screen.FromControl(this).WorkingArea;
+                    int w = Math.Min(Width, work.Width), h = Math.Min(Height, work.Height);
+                    if (w != Width || h != Height) Size = new Size(w, h);
+                    Location = new Point(work.X + Math.Max(0, (work.Width - Width) / 2),
+                                         work.Y + Math.Max(0, (work.Height - Height) / 2));
+                }
+                if (options.AccountPicker)
+                {
+                    try
+                    {
+                        log.Write("AccountChoice=Requested; SingleNativePin=True; PickerOnlyForMultipleAccounts=True");
+                        accountFilter = AccountCredentialFilter.InstallAutomatic(ChooseKeyAccount,log.Write);
+                    }
+                    catch (Exception error)
+                    {
+                        log.Write("AccountChoice=CancelledOrFailed; " + error.GetType().Name + "; HRESULT=" + Status.Hex(error.HResult));
+                        state.Text = "Wybór konta nie został zakończony. Logowanie Windows nie zostało rozpoczęte. " + error.Message;
+                        return;
+                    }
+                }
+                host = new ProviderHost(options, log, this, Handle);
+                host.SetHostVisible(Visible && WindowState != FormWindowState.Minimized);
+                host.Start();
+            };
+            VisibleChanged += delegate { if (host != null) host.SetHostVisible(Visible && WindowState != FormWindowState.Minimized); };
+            Resize += delegate { if (host != null) host.SetHostVisible(Visible && WindowState != FormWindowState.Minimized); };
+            FormClosing += delegate
+            {
+                if (cardMonitor != null) { try { cardMonitor.Dispose(); } catch { } cardMonitor = null; }
+                if (restartTimer != null) { restartTimer.Dispose(); restartTimer = null; }
+                DiagnosticSession.Stop();
+                closing = true;
+                if (!pinScreen) log.Line -= AddLog;
+                foreach (Control input in inputs.Values) if (input is TextBox) ((TextBox)input).Clear();
+                if (host != null) host.Stop();
+                if (accountFilter != null) accountFilter.Dispose();
+            };
+        }
+
+        private int FieldWidth { get { return pinScreen ? 560 : 650; } }
+
+        private void BuildDiagnosticWindow(bool edgeCapable)
+        {
+            Text = "FidoRun 0.1.29 - experimental native FIDO provider host";
+            Font = new Font("Segoe UI", 10f);
+            // The app is DPI-unaware (see app.manifest), so Windows scales this whole window up
+            // on a high-DPI kiosk. These are the logical sizes before that scaling.
+            AutoScaleMode = AutoScaleMode.None;
+            MinimumSize = new Size(480, 520);
+            ClientSize = new Size(620, 600);
+            StartPosition = FormStartPosition.CenterScreen;
+
+            // One table owns the whole window; cells never overlap and auto-size rows grow to
+            // fit wrapped text, so the layout holds at any size or DPI.
+            TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(12) };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // 0 provider status
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));   // 1 input fields (PIN)
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));   // 2 key notification
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // 3 buttons
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));       // 4 status line
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));   // 5 diagnostic log
+
+            providerStatus.AutoSize = true; providerStatus.Margin = new Padding(0, 0, 0, 6);
+            providerStatus.Font = new Font(Font, FontStyle.Bold);
+            providerStatus.Text = "Sprawdzanie dostawcy FIDO...";
+            root.Controls.Add(providerStatus, 0, 0);
+
+            fields.Dock = DockStyle.Fill; fields.FlowDirection = FlowDirection.TopDown; fields.WrapContents = false; fields.AutoScroll = true; fields.Enabled = false;
+            root.Controls.Add(fields, 0, 1);
+
+            TextBox feedback = new TextBox();
+            feedback.Dock = DockStyle.Fill; feedback.Multiline = true;
+            feedback.ReadOnly = true; feedback.TabStop = false;
+            feedback.ScrollBars = ScrollBars.Vertical;
+            feedback.BackColor = SystemColors.Info; feedback.ForeColor = SystemColors.InfoText;
+            feedback.AccessibleName = "Powiadomienie klucza zabezpieczeń";
+            feedback.Text = "Oczekiwanie na klucz zabezpieczeń.";
+            providerFeedback = feedback;
+            root.Controls.Add(providerFeedback, 0, 2);
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(0, 6, 0, 2) };
+            submit.Text = "Zaloguj kluczem FIDO"; submit.AutoSize = true; submit.Enabled = false; submit.Margin = new Padding(0, 0, 8, 4);
+            submit.Click += delegate { if (host != null) host.Submit(); };
+            openEdge.Text = "Otwórz Edge"; openEdge.AutoSize = true; openEdge.Enabled = false; openEdge.Visible = edgeCapable; openEdge.Margin = new Padding(0, 0, 8, 4);
+            openEdge.Click += delegate { OpenEdgeClicked(); };
+            Button cancel = new Button { Text = "Anuluj", AutoSize = true, Margin = new Padding(0, 0, 8, 4) };
+            cancel.Click += delegate { if (host != null) host.Cancel(); };
+            Button openLog = new Button { Text = "Pokaż log", AutoSize = true, Margin = new Padding(0, 0, 8, 4) };
+            openLog.Click += delegate { OpenLog(); };
+            buttons.Controls.Add(submit);
+            if (edgeCapable) buttons.Controls.Add(openEdge);
+            buttons.Controls.Add(cancel); buttons.Controls.Add(openLog);
+            root.Controls.Add(buttons, 0, 3);
+
+            state.AutoSize = true; state.Margin = new Padding(0, 2, 0, 4); state.Text = "Uruchamianie dostawcy FIDO...";
+            root.Controls.Add(state, 0, 4);
+
+            trace.Dock = DockStyle.Fill; trace.Multiline = true; trace.ReadOnly = true;
+            trace.ScrollBars = ScrollBars.Both; trace.WordWrap = false; trace.Font = new Font("Consolas", 9);
+            root.Controls.Add(trace, 0, 5);
+
+            Controls.Add(root);
+        }
+
+        // Full-screen kiosk screen: one centred card with the native PIN field. Diagnostics stay
+        // in the log file (Ctrl+Shift+L opens it); Edge opens by itself after sign-in.
+        private void BuildPinScreen(bool edgeCapable)
+        {
+            Color accent = Color.FromArgb(0, 95, 184);
+            Text = "Logowanie kartą";
+            Font = new Font("Segoe UI", 14f);
+            AutoScaleMode = AutoScaleMode.None;
+            FormBorderStyle = FormBorderStyle.None;
+            WindowState = FormWindowState.Maximized;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = Color.FromArgb(232, 237, 243);
+            KeyPreview = true;
+            KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.Control && e.Shift && e.KeyCode == Keys.L) { e.Handled = true; OpenLog(); }
+            };
+
+            TableLayoutPanel outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3 };
+            outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            outer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            outer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            outer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+            TableLayoutPanel card = new TableLayoutPanel
+            {
+                ColumnCount = 1, RowCount = 6, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = Color.White, Padding = new Padding(48, 40, 48, 36), Margin = new Padding(16)
+            };
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            for (int row = 0; row < 6; row++) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            Label title = new Label { Text = "Zaloguj się kartą", AutoSize = true, Font = new Font("Segoe UI Semibold", 26f), ForeColor = Color.FromArgb(32, 32, 32), Margin = new Padding(0, 0, 0, 8) };
+            card.Controls.Add(title, 0, 0);
+
+            providerStatus.AutoSize = true; providerStatus.Margin = new Padding(0, 0, 0, 16);
+            providerStatus.ForeColor = Color.FromArgb(80, 80, 80);
+            providerStatus.MaximumSize = new Size(FieldWidth, 0);
+            providerStatus.Text = "Przygotowanie logowania...";
+            card.Controls.Add(providerStatus, 0, 1);
+
+            Label feedback = new Label { AutoSize = true, MaximumSize = new Size(FieldWidth, 0), ForeColor = accent, Margin = new Padding(0, 0, 0, 8) };
+            feedback.AccessibleName = "Powiadomienie klucza zabezpieczeń";
+            feedback.Text = "Przyłóż kartę do czytnika.";
+            providerFeedback = feedback;
+            card.Controls.Add(providerFeedback, 0, 2);
+
+            fields.AutoSize = true; fields.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            fields.FlowDirection = FlowDirection.TopDown; fields.WrapContents = false; fields.Enabled = false;
+            fields.MinimumSize = new Size(FieldWidth, 0); fields.Margin = new Padding(0);
+            card.Controls.Add(fields, 0, 3);
+
+            FlowLayoutPanel buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 16, 0, 8) };
+            StylePrimary(submit, accent);
+            submit.Text = "Zaloguj"; submit.Enabled = false;
+            submit.Click += delegate { if (host != null) host.Submit(); };
+            StylePrimary(openEdge, accent);
+            openEdge.Text = "Otwórz Edge"; openEdge.Enabled = false; openEdge.Visible = false;
+            openEdge.Click += delegate { OpenEdgeClicked(); };
+            Button restart = new Button { Text = options.Broker ? "Anuluj" : "Zacznij od nowa", AutoSize = true, FlatStyle = FlatStyle.Flat, Padding = new Padding(12, 6, 12, 6), Margin = new Padding(0, 0, 12, 4) };
+            restart.FlatAppearance.BorderColor = Color.FromArgb(180, 180, 180);
+            restart.Click += delegate
+            {
+                if (options.Broker) { KioskBroker.Failed("Anulowano logowanie kartą."); Close(); }
+                else Restart("Uruchamianie logowania od nowa...", true);
+            };
+            if (options.Broker)
+            {
+                // Over the Kiosk's own full-screen window until the person has signed in.
+                TopMost = true;
+                Shown += delegate { Activate(); };
+            }
+            buttons.Controls.Add(submit);
+            if (edgeCapable) buttons.Controls.Add(openEdge);
+            buttons.Controls.Add(restart);
+            card.Controls.Add(buttons, 0, 4);
+
+            state.AutoSize = true; state.Margin = new Padding(0, 4, 0, 0);
+            state.ForeColor = Color.FromArgb(90, 90, 90);
+            state.Font = new Font("Segoe UI", 12f);
+            state.MaximumSize = new Size(FieldWidth, 0);
+            state.Text = "Uruchamianie...";
+            card.Controls.Add(state, 0, 5);
+
+            outer.Controls.Add(card, 1, 1);
+            Controls.Add(outer);
+        }
+
+        private static void StylePrimary(Button button, Color accent)
+        {
+            button.AutoSize = true; button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderSize = 0;
+            button.BackColor = accent; button.ForeColor = Color.White;
+            button.Padding = new Padding(16, 6, 16, 6); button.Margin = new Padding(0, 0, 12, 4);
+        }
+
+        private void OpenLog() { System.Diagnostics.Process.Start("notepad.exe", "\"" + log.PathName + "\""); }
+
+        public void Post(Action action)
+        {
+            if (closing || IsDisposed || !IsHandleCreated) return;
+            try { BeginInvoke(new Action(delegate { if (!closing && !IsDisposed) action(); })); }
+            catch (InvalidOperationException) { }
+        }
+
+        private int ChooseKeyAccount(List<KeyAccount> accounts)
+        {
+            if(closing||IsDisposed)return -1;
+            if(InvokeRequired)return (int)Invoke(new Func<int>(delegate{return ChooseKeyAccount(accounts);}));
+            using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,
+                StartPosition=FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
+            {
+                var list=new ListBox {Dock=DockStyle.Fill,Font=new Font(Font.FontFamily,12),IntegralHeight=false};
+                foreach(var account in accounts)list.Items.Add(account);
+                var heading=new Label{Text="Wybierz konto, na którym chcesz się zalogować",Dock=DockStyle.Top,Height=44,Padding=new Padding(10)};
+                var buttons=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=48,FlowDirection=FlowDirection.RightToLeft};
+                var ok=new Button{Text="Zaloguj",DialogResult=DialogResult.OK,Enabled=false,AutoSize=true};
+                var cancel=new Button{Text="Anuluj",DialogResult=DialogResult.Cancel,AutoSize=true};
+                list.SelectedIndexChanged+=delegate{ok.Enabled=list.SelectedIndex>=0;};
+                list.DoubleClick+=delegate{if(list.SelectedIndex>=0){dialog.DialogResult=DialogResult.OK;dialog.Close();}};
+                buttons.Controls.Add(ok);buttons.Controls.Add(cancel);dialog.Controls.Add(list);dialog.Controls.Add(heading);dialog.Controls.Add(buttons);
+                dialog.AcceptButton=ok;dialog.CancelButton=cancel;
+                return dialog.ShowDialog(this)==DialogResult.OK ? list.SelectedIndex : -1;
+            }
+        }
+        private void AddLog(string line) { Post(delegate { trace.AppendText(line + Environment.NewLine); }); }
+        public void StatusText(string message) { Post(delegate { state.Text = message; }); }
+        public void ProviderFeedback(string message) { Post(delegate { providerFeedback.Text = message ?? ""; }); }
+        private void ApplyInteractionState()
+        {
+            bool hasInput = false;
+            foreach (FieldData field in fieldData.Values)
+                if (FieldData.CanSubmit(field.Type, field.State, field.Interactive)) { hasInput = true; break; }
+            submit.Enabled = !working && canSubmit && !preparingFields && !fieldUpdatesFailed && (hasInput || serializationAvailable);
+            fields.Enabled = !working && canSubmit && !fieldUpdatesFailed;
+        }
+        public void Busy(bool value) { Post(delegate { working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
+
+        // On the PIN screen the visible PIN box always holds the cursor, so the user just types.
+        private void FocusPin()
+        {
+            if (!pinScreen || closing || !fields.Enabled || !fields.Visible) return;
+            foreach (KeyValuePair<uint, Control> pair in inputs)
+            {
+                TextBox box = pair.Value as TextBox;
+                Control container;
+                if (box == null || !box.UseSystemPasswordChar || box.ReadOnly || !box.Enabled) continue;
+                if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
+                if (!box.Focused) box.Focus();
+                return;
+            }
+        }
+        public void AllowSubmit(bool value) { Post(delegate { canSubmit = value && options.Mode != "inspect"; ApplyInteractionState(); }); }
+
+        public void BeginFields(int generation)
+        {
+            Post(delegate
+            {
+                fieldGeneration = generation;
+                preparingFields = true;
+                fieldUpdatesFailed = false;
+                serializationAvailable = false;
+                canSubmit = false;
+                pendingFieldUpdates.Clear();
+                ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
+                ApplyInteractionState();
+            });
+        }
+
+        public void SerializationAvailable(int generation)
+        { Post(delegate { if (generation == fieldGeneration) { serializationAvailable = true; ApplyInteractionState(); } }); }
+        public void SerializationUnavailable(int generation)
+        { Post(delegate { if (generation == fieldGeneration) { serializationAvailable = false; ApplyInteractionState(); } }); }
+
+        public void ShowTiles(uint count, uint selected)
+        {
+            Post(delegate
+            {
+                rendering = true;
+                try
+                {
+                    // There is always a single system FIDO provider, so the former tile
+                    // picker is replaced by a status line. Zero means it could not load.
+                    providerStatus.Text = count == 0
+                        ? "Nie znaleziono dostawcy FIDO. Uruchom aplikację jako administrator."
+                        : "Dostawca FIDO gotowy. Włóż klucz i podaj PIN.";
+                    providerStatus.ForeColor = count == 0 ? Color.Firebrick : SystemColors.ControlText;
+                    // Enumeration does not establish successful Advise/SetSelected.
+                    canSubmit = false;
+                    ApplyInteractionState();
+                    if (count == 0) { ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear(); pendingFieldUpdates.Clear(); }
+                }
+                finally { rendering = false; }
+            });
+        }
+
+        // Enabled once a FIDO logon has produced a retained token session. In kiosk mode this
+        // also starts watching the card reader so removing the card ends the session.
+        public void EdgeReady(string sid, string account)
+        {
+            Post(delegate
+            {
+                signedInAccount = account;
+                if (openEdge.Visible) openEdge.Enabled = true;
+                if (options.WatchCard && cardMonitor == null)
+                {
+                    cardMonitor = new CardMonitor(delegate { Post(KioskEndAndRestart); }, log.Write);
+                    cardMonitor.Start();
+                    log.Write("KioskCardWatch=Started; remove the card to end the session.");
+                }
+                if (pinScreen)
+                {
+                    // The PIN was the user's consent; the browser follows without another click.
+                    submit.Visible = false;
+                    fields.Visible = false;
+                    providerStatus.Text = "Zalogowano: " + account;
+                    providerFeedback.Text = "Wyjmij kartę z czytnika, aby się wylogować.";
+                    openEdge.Text = "Otwórz Edge ponownie";
+                    openEdge.Visible = true;
+                    log.Write("PinScreen=SignedIn; EdgeOpensAutomatically=True");
+                    OpenEdgeClicked();
+                }
+            });
+        }
+
+        // Kiosk broker: signed in; the window goes away and the process keeps the token for the Kiosk.
+        public void BrokerSignedIn(string account)
+        {
+            Post(delegate
+            {
+                signedInAccount = account;
+                TopMost = false;
+                Hide();
+                log.Write("PinScreen=SignedIn; Broker=True; WindowHidden=True");
+            });
+        }
+
+        private void KioskEndAndRestart()
+        {
+            Restart("Karta wyjęta. Zamykanie sesji i oczekiwanie na następną kartę...", true);
+        }
+
+        // After a failed Windows logon the native tile cannot be reused, so the PIN screen
+        // shows the reason for a moment and then starts a fresh instance.
+        public void RestartAfterFailure(string message)
+        {
+            if (options.Broker)
+            {
+                // The Kiosk shows the reason and offers to try again.
+                KioskBroker.Failed(message);
+                Post(delegate
+                {
+                    state.Text = message;
+                    restartTimer = new Timer { Interval = 4000 };
+                    restartTimer.Tick += delegate { restartTimer.Stop(); Close(); };
+                    restartTimer.Start();
+                });
+                return;
+            }
+            if (!pinScreen) return;
+            Post(delegate
+            {
+                if (kioskRestarting || restartTimer != null) return;
+                state.Text = message + " Logowanie uruchomi się ponownie za chwilę.";
+                restartTimer = new Timer { Interval = 6000 };
+                restartTimer.Tick += delegate { restartTimer.Stop(); Restart("Uruchamianie logowania od nowa...", true); };
+                restartTimer.Start();
+            });
+        }
+
+        private void Restart(string message, bool endSession)
+        {
+            if (kioskRestarting) return;
+            kioskRestarting = true;
+            StatusText(message);
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                if (endSession) { try { DiagnosticSession.EndSessionForKiosk(log.Write); } catch { } }
+                try
+                {
+                    // Relaunch a fresh instance so the next user gets a clean session.
+                    string[] parts = Environment.GetCommandLineArgs();
+                    System.Text.StringBuilder args = new System.Text.StringBuilder();
+                    for (int i = 1; i < parts.Length; i++)
+                    {
+                        if (args.Length > 0) args.Append(' ');
+                        args.Append(parts[i].IndexOf(' ') >= 0 ? "\"" + parts[i] + "\"" : parts[i]);
+                    }
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                        Application.ExecutablePath, args.ToString()) { UseShellExecute = false });
+                    log.Write("KioskRestart=Launched; awaiting next card.");
+                }
+                catch (Exception error) { log.Write("KioskRestart=Failed; " + error.Message); }
+                Post(delegate { Close(); });
+            });
+        }
+
+        private void OpenEdgeClicked()
+        {
+            openEdge.Enabled = false;
+            StatusText("Otwieranie Edge...");
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                string result;
+                try { result = DiagnosticSession.RequestEdge(false); }
+                catch (Exception error) { result = "ERROR " + error.Message; }
+                if (pinScreen)
+                    result = result.StartsWith("OK", StringComparison.Ordinal)
+                        ? "Edge jest otwarty na koncie " + signedInAccount + "."
+                        : "Nie udało się otworzyć Edge: " + (result.StartsWith("ERROR ", StringComparison.Ordinal) ? result.Substring(6) : result);
+                Post(delegate { StatusText(result); if (openEdge.Visible) openEdge.Enabled = true; });
+            });
+        }
+
+        public void ShowFields(int generation, List<FieldData> values)
+        {
+            Post(delegate
+            {
+                if (generation != fieldGeneration) return;
+                rendering = true;
+                try
+                {
+                    ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
+                    foreach (FieldData field in values)
+                    {
+                        Control input;
+                        string caption = String.IsNullOrEmpty(field.Value) ? field.Label : field.Value;
+                        switch (field.Type)
+                        {
+                            case 1: case 2:
+                                input = new Label { Text = caption ?? "", AutoSize = true, MaximumSize = new Size(FieldWidth, 0) };
+                                if (field.Type == 1) input.Font = new Font(Font, FontStyle.Bold);
+                                break;
+                            case 3:
+                                Button action = new Button { Text = caption ?? "Provider action", AutoSize = true };
+                                action.Click += delegate { host.Command(generation, field.Id); };
+                                input = action; break;
+                            case 4: case 5:
+                                TextBox text = new TextBox { Width = FieldWidth, Text = field.Type == 5 ? "" : (field.Value ?? ""), UseSystemPasswordChar = field.Type == 5 };
+                                if (pinScreen && field.Type == 5) text.Font = new Font(Font.FontFamily, 22f);
+                                text.TextChanged += delegate { if (!rendering && !closing) host.StringValue(generation, field.Id, text.Text); };
+                                text.ReadOnly = field.Interactive == 1;
+                                input = text; break;
+                            case 6:
+                                input = new Label { Text = "FIDO security key", AutoSize = true }; break;
+                            case 7:
+                                CheckBox check = new CheckBox { Text = caption ?? "", Checked = field.Checked, AutoSize = true };
+                                check.CheckedChanged += delegate { if (!rendering) host.CheckboxValue(generation, field.Id, check.Checked); };
+                                input = check; break;
+                            case 8:
+                                ComboBox combo = new ComboBox { Width = FieldWidth, DropDownStyle = ComboBoxStyle.DropDownList };
+                                foreach (string item in field.Items) combo.Items.Add(item);
+                                if (field.Selected < field.Items.Count) combo.SelectedIndex = (int)field.Selected;
+                                combo.SelectedIndexChanged += delegate { if (!rendering && combo.SelectedIndex >= 0) host.ComboValue(generation, field.Id, (uint)combo.SelectedIndex); };
+                                input = combo; break;
+                            case 9:
+                                Button nativeSubmit = new Button { Text = caption ?? "Continue", AutoSize = true };
+                                nativeSubmit.Click += delegate { host.Submit(generation); };
+                                input = nativeSubmit; break;
+                            default: continue;
+                        }
+                        input.Enabled = field.Interactive != 2 && options.Mode != "inspect";
+                        if (field.Type == 1 || field.Type == 2 || field.Type == 6) input.Enabled = true;
+                        FlowLayoutPanel container = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Width = FieldWidth + 20, Margin = new Padding(3, 8, 3, 8) };
+                        if ((field.Type == 4 || field.Type == 5 || field.Type == 8) && !String.IsNullOrEmpty(field.Label))
+                            container.Controls.Add(new Label { Text = field.Label, AutoSize = true });
+                        container.Controls.Add(input);
+                        container.Visible = FieldData.IsVisible(field.State);
+                        fieldData[field.Id] = field;
+                        inputs[field.Id] = input; containers[field.Id] = container;
+                        fields.Controls.Add(container);
+                    }
+                }
+                finally { rendering = false; }
+                preparingFields = false;
+                foreach (Action update in pendingFieldUpdates) update();
+                pendingFieldUpdates.Clear();
+                ApplyInteractionState();
+                FocusPin();
+            });
+        }
+
+        private void ClearFieldControls()
+        {
+            for (int index = fields.Controls.Count - 1; index >= 0; index--) fields.Controls[index].Dispose();
+            fields.Controls.Clear();
+        }
+
+        public void UpdateField(int generation, uint id, string kind, string text, int value)
+        {
+            Post(delegate
+            {
+                if (generation != fieldGeneration) return;
+                if (fieldUpdatesFailed) return;
+                if (preparingFields)
+                {
+                    if (pendingFieldUpdates.Count >= 512)
+                    {
+                        canSubmit = false;
+                        fieldUpdatesFailed = true;
+                        pendingFieldUpdates.Clear();
+                        state.Text = "Too many native field updates during initialization. Close this host and retain its log.";
+                        ApplyInteractionState();
+                        log.Write("Outcome=FieldUpdateOverflow; AuthenticationDisabled=True");
+                        return;
+                    }
+                    pendingFieldUpdates.Add(delegate { ApplyFieldUpdate(id, kind, text, value); });
+                    return;
+                }
+                ApplyFieldUpdate(id, kind, text, value);
+                ApplyInteractionState();
+                if (kind == "state" || kind == "interactive") FocusPin();
+            });
+        }
+
+        private void ApplyFieldUpdate(uint id, string kind, string text, int value)
+        {
+            Control input, container;
+            FieldData data;
+            if (!inputs.TryGetValue(id, out input) || !containers.TryGetValue(id, out container) || !fieldData.TryGetValue(id, out data)) return;
+            rendering = true;
+            try
+            {
+                if (kind == "state") { data.State = value; container.Visible = FieldData.IsVisible(value); }
+                else if (kind == "interactive")
+                {
+                    data.Interactive = value;
+                    input.Enabled = value != 2 && options.Mode != "inspect";
+                    if (input is TextBox) ((TextBox)input).ReadOnly = value == 1;
+                }
+                else if (kind == "text") input.Text = text ?? "";
+                else if (kind == "checkbox" && input is CheckBox) { ((CheckBox)input).Checked = value != 0; input.Text = text ?? ""; }
+                else if (kind == "combo-select" && input is ComboBox)
+                {
+                    ComboBox combo = (ComboBox)input;
+                    if (value >= 0 && value < combo.Items.Count) combo.SelectedIndex = value;
+                }
+                else if (kind == "combo-delete" && input is ComboBox)
+                {
+                    ComboBox combo = (ComboBox)input;
+                    if (value == -1) combo.Items.Clear(); else if (value >= 0 && value < combo.Items.Count) combo.Items.RemoveAt(value);
+                }
+                else if (kind == "combo-append" && input is ComboBox) ((ComboBox)input).Items.Add(text ?? "");
+                else if (kind == "options" && input is TextBox && (value & 8) != 0) ((TextBox)input).ImeMode = ImeMode.Disable;
+            }
+            finally { rendering = false; }
+        }
+
+        public void ClearSecrets()
+        {
+            Post(delegate
+            {
+                rendering = true;
+                try { foreach (Control input in inputs.Values) if (input is TextBox && ((TextBox)input).UseSystemPasswordChar) ((TextBox)input).Clear(); }
+                finally { rendering = false; }
+            });
+        }
+    }
+}

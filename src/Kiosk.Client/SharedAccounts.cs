@@ -68,7 +68,7 @@ internal static class SharedAccounts
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
     }
 
-    private static bool IsInstalledKiosk(string? program)
+    internal static bool IsInstalledKiosk(string? program)
     {
         if (program == null || !string.Equals(Path.GetFileName(program), "Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase)) return false;
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).TrimEnd('\\') + "\\";
