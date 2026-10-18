@@ -222,6 +222,7 @@ namespace FidoRun
             DateTime until = DateTime.UtcNow.AddSeconds(45);
             while (!view.TryEnterPin(pin))
             {
+                view.TryAutoRetry();
                 if (finished.WaitOne(250)) lock (gate) return result;
                 if (DateTime.UtcNow > until) return "ERROR Karta nie odpowiada. Przyłóż ją jeszcze raz.";
             }

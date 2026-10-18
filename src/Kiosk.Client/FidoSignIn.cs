@@ -55,7 +55,7 @@ internal sealed class FidoSignIn : IDisposable
         // the card breaks the sign-in. Only when it has not found the card after a while is the card woken once.
         _ = Task.Run(async () =>
         {
-            await Task.Delay(8000);
+            await Task.Delay(25000);
             try { if (signIn.Send("entered", 2000, 5000) == "OK 0") wakeCard(); }
             catch { /* finished meanwhile */ }
         });

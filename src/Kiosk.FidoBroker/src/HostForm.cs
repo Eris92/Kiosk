@@ -100,6 +100,36 @@ namespace FidoRun
             catch (InvalidOperationException) { return false; }
         }
 
+        private int autoRetries;
+        private DateTime lastAutoRetry;
+
+        // The first card exchange with a card already lying on the reader often ends in "Nie można zakończyć
+        // logowania" with a "try again" link; nobody sees this window, so it is clicked here (a few times at most).
+        internal bool TryAutoRetry()
+        {
+            if (closing || IsDisposed || !IsHandleCreated || host == null) return false;
+            try
+            {
+                return (bool)Invoke(new Func<bool>(delegate
+                {
+                    if (working || host == null || autoRetries >= 3 || (DateTime.UtcNow - lastAutoRetry).TotalSeconds < 4) return false;
+                    foreach (KeyValuePair<uint, FieldData> pair in fieldData)
+                    {
+                        Control input, container;
+                        if (pair.Value.Type != 3 || !inputs.TryGetValue(pair.Key, out input) || !input.Enabled) continue;
+                        if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
+                        autoRetries++;
+                        lastAutoRetry = DateTime.UtcNow;
+                        log.Write("PinFromClient=AutoRetry; Field=" + pair.Key + "; Attempt=" + autoRetries);
+                        host.Command(fieldGeneration, pair.Key);
+                        return true;
+                    }
+                    return false;
+                }));
+            }
+            catch (InvalidOperationException) { return false; }
+        }
+
         // After a submission: the reason when the tile is waiting for a PIN again (wrong PIN, card removed), else null.
         internal string WaitingForPinAgain()
         {
