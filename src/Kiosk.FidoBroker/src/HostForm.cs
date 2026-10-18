@@ -58,6 +58,7 @@ namespace FidoRun
         private float scale = 1f;
         private Color statusColor = SystemColors.ControlText;
         private Timer fitTimer;
+        private TableLayoutPanel pinCard;
         protected override CreateParams CreateParams
         {
             get
@@ -314,6 +315,34 @@ namespace FidoRun
             if (!GetClientRect(options.EmbedParent, out area)) return;
             if (Left != 0 || Top != 0 || Width != area.Right || Height != area.Bottom)
                 SetWindowPos(Handle, IntPtr.Zero, 0, 0, area.Right, area.Bottom, 0x0004 | 0x0010); // NOZORDER | NOACTIVATE
+            ShrinkToFit(area.Right, area.Bottom);
+        }
+
+        // The whole sign-in stays visible in the Kiosk's card: when it does not fit, everything gets smaller together.
+        private void ShrinkToFit(int width, int height)
+        {
+            if (pinCard == null || width <= 0 || height <= 0) return;
+            for (int round = 0; round < 3; round++)
+            {
+                Size needed = pinCard.GetPreferredSize(Size.Empty) + pinCard.Margin.Size;
+                float ratio = Math.Min((float)width / needed.Width, (float)height / needed.Height);
+                if (ratio >= 1f) return;
+                ratio *= 0.97f;
+                scale *= ratio;
+                SuspendLayout();
+                ScaleContent(this, ratio);
+                ResumeLayout(true);
+                log.Write("Embed=Shrunk; Ratio=" + ratio.ToString("0.00") + "; Needed=" + needed.Width + "x" + needed.Height + "; Place=" + width + "x" + height);
+            }
+        }
+
+        private static void ScaleContent(Control control, float ratio)
+        {
+            control.Font = new Font(control.Font.FontFamily, Math.Max(6f, control.Font.Size * ratio), control.Font.Style);
+            if (control.MaximumSize.Width > 0) control.MaximumSize = new Size((int)(control.MaximumSize.Width * ratio), 0);
+            if (control.MinimumSize.Width > 0) control.MinimumSize = new Size((int)(control.MinimumSize.Width * ratio), 0);
+            if (control is TextBox || control is ComboBox) control.Width = (int)(control.Width * ratio);
+            foreach (Control child in control.Controls) ScaleContent(child, ratio);
         }
 
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -488,6 +517,7 @@ namespace FidoRun
             state.Text = "Uruchamianie...";
             card.Controls.Add(state, 0, 5);
 
+            pinCard = card;
             outer.Controls.Add(card, 1, 1);
             Controls.Add(outer);
         }
@@ -636,6 +666,13 @@ namespace FidoRun
                 signedInAccount = account;
                 TopMost = false;
                 Hide();
+                if (Embedded)
+                {
+                    // Out of the Kiosk altogether: a child window from another program shares the Kiosk's keyboard
+                    // and mouse input, and would keep it waiting on this program.
+                    if (fitTimer != null) fitTimer.Stop();
+                    SetParent(Handle, new IntPtr(-3));   // HWND_MESSAGE
+                }
                 log.Write("PinScreen=SignedIn; Broker=True; WindowHidden=True");
             });
         }
