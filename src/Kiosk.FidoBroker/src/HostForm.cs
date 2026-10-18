@@ -133,7 +133,8 @@ namespace FidoRun
                 WindowState = FormWindowState.Normal;
                 StartPosition = FormStartPosition.Manual;
                 Bounds = Screen.PrimaryScreen.Bounds;
-                Opacity = 0;
+                // FIDORUN_VISIBLE=1 (diagnostics): the native tile stays visible over the Kiosk.
+                Opacity = Environment.GetEnvironmentVariable("FIDORUN_VISIBLE") == "1" ? 1 : 0;
                 KioskBroker.View = this;
                 Shown += delegate { BringToFront(); Activate(); };
             }
