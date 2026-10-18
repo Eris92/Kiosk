@@ -21,6 +21,7 @@ namespace FidoRun
     //   wait                    -> "OK <sid>\t<windows name>\t<card account>\t<admin 0|1>" once signed in, or "ERROR <text>"
     //   listening               -> "OK" once Windows' sign-in waits for the card (the Kiosk then wakes a card lying on the
     //                              reader), "ERROR <text>" after 40 s
+    //   entered                 -> "OK 1" once the PIN went into Windows' field (the card was found), else "OK 0"
     //   pin\t<PIN>              -> (with --pin-from-client) types the PIN the Kiosk asked for into the native field and
     //                              submits it: "OK ..." as for wait, "RETRY <reason>" when the PIN is asked again
     //                              (wrong PIN), or "ERROR <text>"
@@ -44,6 +45,7 @@ namespace FidoRun
         private static string clientSid;
         internal static HostForm View;
         private static volatile bool stopping;
+        private static volatile bool pinEntered;
 
         internal static string PipeName(int client) { return "KioskFido-" + client; }
 
@@ -197,6 +199,8 @@ namespace FidoRun
                     if (WaitHandle.WaitAny(new WaitHandle[] { listening, finished }, 40000) == WaitHandle.WaitTimeout)
                         return "ERROR Logowanie kartą nie wystartowało.";
                     lock (gate) return finished.WaitOne(0) ? result : "OK";
+                case "entered":
+                    return pinEntered ? "OK 1" : "OK 0";
                 case "pin":
                     if (parts.Length != 2 || parts[1].Length == 0) return "ERROR Bad pin request";
                     return EnterPin(parts[1]);
@@ -222,6 +226,7 @@ namespace FidoRun
                 if (DateTime.UtcNow > until) return "ERROR Karta nie odpowiada. Przyłóż ją jeszcze raz.";
             }
             pin = null;
+            pinEntered = true;
             // Signed in, failed, or the tile asks for the PIN again (steadily, not just between two native steps).
             DateTime submitted = DateTime.UtcNow, limit = submitted.AddSeconds(120);
             DateTime? waitingSince = null;

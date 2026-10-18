@@ -47,12 +47,18 @@ internal sealed class FidoSignIn : IDisposable
         var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
         try
         {
-            // Windows' sign-in notices only a card that arrives: once it listens, the card is switched off and on.
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
             if (listening.StartsWith("ERROR ", StringComparison.Ordinal)) { signIn.Dispose(); return new(null, listening[6..]); }
-            if (listening == "OK") { await Task.Delay(800); await Task.Run(wakeCard); }
         }
         catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
+        // Windows normally finds a card lying on the reader by itself; switching the card off and on while it talks to
+        // the card breaks the sign-in. Only when it has not found the card after a while is the card woken once.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(8000);
+            try { if (signIn.Send("entered", 2000, 5000) == "OK 0") wakeCard(); }
+            catch { /* finished meanwhile */ }
+        });
         while (true)
         {
             if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
