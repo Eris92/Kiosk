@@ -39,6 +39,8 @@ internal sealed class BrowserView : UserControl
     internal event Action? Activity;
     /// <summary>Sites that get the Windows account's own sign-in (Negotiate) when <see cref="windowsAccount"/> is set.</summary>
     internal static string[] IntegratedAuthHosts { get; set; } = [];
+    /// <summary>How long a site's login window waits for someone to type before it cancels.</summary>
+    internal static int SignInSeconds { get; set; } = 90;
     private const string ActivityScript = """
         (() => {
           let last = 0;
@@ -283,6 +285,27 @@ internal sealed class BrowserView : UserControl
             e.Handled = true;
         };
         core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
+        if (windowsAccount)
+        {
+            // The Windows account's own sign-in did not get the person in (for example no domain ticket for an
+            // on-premises site): ask for login and password like a normal Edge does, instead of a bare 401 page.
+            core.BasicAuthenticationRequested += (_, e) =>
+            {
+                var deferral = e.GetDeferral();
+                string host = Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ? uri.Host : e.Uri;
+                Audit.Write("browser_sign_in_asked", host);
+                BeginInvoke(() =>
+                {
+                    try
+                    {
+                        var typed = HelpSignIn.Ask(FindForm(), host, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
+                        if (typed is { } credentials) { e.Response.UserName = credentials.User; e.Response.Password = credentials.Password; }
+                        else e.Cancel = true;
+                    }
+                    finally { deferral.Complete(); }
+                });
+            };
+        }
         if (singlePage)
         {
             await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);

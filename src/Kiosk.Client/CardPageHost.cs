@@ -25,6 +25,7 @@ internal static class CardPageHost
         catch (Exception) { return 2; }
         KioskTheme.SetAccent(request.Accent);   // The Kiosk's colours (Konfiguracja → Wygląd).
         // The page's own site and the configured ones sign in with the person's Windows account; Microsoft's do via SSO.
+        BrowserView.SignInSeconds = Math.Max(30, request.Seconds);
         BrowserView.IntegratedAuthHosts = request.Domains.Where(d => d.Length > 0 && !HelpBrowserForm.SignInDomains.Contains(d, StringComparer.OrdinalIgnoreCase))
             .Where(d => d.All(c => char.IsLetterOrDigit(c) || c == '.' || c == '-')).ToArray();
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return 2;

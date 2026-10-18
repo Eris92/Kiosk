@@ -239,6 +239,85 @@ internal sealed class HelpConfirm : Form
 }
 
 /// <summary>
+/// A site's own sign-in (login and password) when the Windows account's sign-in did not get the person in, like the
+/// window a normal Edge shows. Drawn like the rest of the Kiosk; nobody types for the help time: it cancels by itself.
+/// The password is handed to the page only, never kept or written anywhere.
+/// </summary>
+internal sealed class HelpSignIn : Form
+{
+    private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
+    private readonly TextBox user = new() { BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox password = new() { BorderStyle = BorderStyle.FixedSingle, UseSystemPasswordChar = true };
+
+    private HelpSignIn(string host, string userName, int idleSeconds)
+    {
+        Text = "Logowanie";
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        TopMost = true;
+        KeyPreview = true;
+        BackColor = KioskTheme.Surface;
+        ForeColor = KioskTheme.Text;
+        Font = new Font("Segoe UI", 10.5f);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(600, 380);
+        Padding = new Padding(1);
+        var heading = new Label { Text = "Zaloguj się", Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
+        var message = new Label { Text = "Strona " + host + " prosi o login i hasło Windows.", Dock = DockStyle.Top, Height = 40, Padding = new Padding(24, 8, 24, 0), ForeColor = KioskTheme.Muted };
+        var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(24, 8, 24, 0) };
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foreach (var box in new[] { user, password })
+        {
+            box.BackColor = KioskTheme.Background;
+            box.ForeColor = KioskTheme.Text;
+            box.Font = new Font("Segoe UI", 12f);
+            box.Dock = DockStyle.Fill;
+            box.Margin = new Padding(0, 6, 0, 6);
+        }
+        fields.Controls.Add(new Label { Text = "Użytkownik", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 0) }, 0, 0);
+        fields.Controls.Add(user, 1, 0);
+        fields.Controls.Add(new Label { Text = "Hasło", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 0) }, 0, 1);
+        fields.Controls.Add(password, 1, 1);
+        user.Text = userName;
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Color.Transparent };
+        var cancel = new Button { Text = "Anuluj", Width = 140, Height = 40, DialogResult = DialogResult.Cancel };
+        var ok = new Button { Text = "Zaloguj", Width = 160, Height = 40, DialogResult = DialogResult.OK };
+        KioskTheme.StyleButton(cancel);
+        KioskTheme.StyleButton(ok, primary: true);
+        buttons.Controls.Add(cancel);
+        buttons.Controls.Add(ok);
+        countdown.BackColor = KioskTheme.Surface;
+        countdown.Padding = new Padding(24, 0, 24, 10);
+        Controls.Add(fields);
+        Controls.Add(message);
+        Controls.Add(heading);
+        Controls.Add(buttons);
+        Controls.Add(countdown);
+        AcceptButton = ok;
+        CancelButton = cancel;
+        Paint += (_, e) => { using var border = new Pen(KioskTheme.Border); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); };
+        HelpCountdown.Watch(this, countdown.Restart);
+        countdown.Expired += () => DialogResult = DialogResult.Cancel;
+        Shown += (_, _) =>
+        {
+            countdown.Start(idleSeconds);
+            (user.TextLength == 0 ? user : password).Focus();
+        };
+        FormClosed += (_, _) => password.Clear();
+    }
+
+    /// <summary>The login and password typed, or null when cancelled.</summary>
+    internal static (string User, string Password)? Ask(IWin32Window? owner, string host, string userName, int idleSeconds)
+    {
+        using var dialog = new HelpSignIn(host, userName, idleSeconds);
+        if (dialog.ShowDialog(owner) != DialogResult.OK || dialog.user.TextLength == 0) return null;
+        return (dialog.user.Text.Trim(), dialog.password.Text);
+    }
+}
+
+/// <summary>
 /// The Szybka pomoc countdown, the same everywhere (help page, yes / no questions, PIN field): the seconds left
 /// and a bar in the accent colour that shrinks. Restart() on activity; Expired when the time is up.
 /// </summary>
