@@ -118,7 +118,8 @@ internal sealed class HelpBrowserForm : Form
     private static readonly string[] SignInDomains =
     [
         "aka.ms", "microsoft.com", "microsoftonline.com", "microsoftonline-p.com", "live.com", "msauth.net", "msftauth.net",
-        "windows.net", "office.com", "office365.com", "microsoftazuread-sso.com", "azure.com", "msidentity.com"
+        "windows.net", "office.com", "office365.com", "microsoftazuread-sso.com", "azure.com", "msidentity.com",
+        "microsoft365.com", "cloud.microsoft", "sharepoint.com", "sharepointonline.com"
     ];
 
     private readonly BrowserView browser;

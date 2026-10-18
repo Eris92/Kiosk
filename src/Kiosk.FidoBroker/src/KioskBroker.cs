@@ -35,6 +35,7 @@ namespace FidoRun
         // Every program started for the person, and everything those programs start (Edge's own processes), lives in
         // this job; closing it ends them all, whoever can or cannot open their tokens.
         private static IntPtr job;
+        private static string clientSid;
         private static volatile bool stopping;
 
         internal static string PipeName(int client) { return "KioskFido-" + client; }
@@ -46,13 +47,18 @@ namespace FidoRun
             clientProcess = OpenProcess(0x0040 | 0x00100000 | 0x1000, false, (uint)client); // DUP_HANDLE | SYNCHRONIZE | QUERY_LIMITED
             if (clientProcess == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "The Kiosk process could not be opened.");
             job = CreateJob();
+            // Edge's sandboxed processes refuse even administrators unless SeDebugPrivilege is on; without it a closed
+            // sign-in leaves the person's browser running.
+            try { Process.EnterDebugMode(); } catch (Exception error) { log("KioskBroker=DebugPrivilege; " + error.Message); }
             PipeSecurity security = new PipeSecurity();
             security.SetAccessRuleProtection(true, false);
             security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
             // This program's own account (LocalSystem from the service, an administrator otherwise) must be able to add pipe instances.
             using (WindowsIdentity self = WindowsIdentity.GetCurrent())
                 security.AddAccessRule(new PipeAccessRule(self.User, PipeAccessRights.FullControl, AccessControlType.Allow));
-            security.AddAccessRule(new PipeAccessRule(ClientUser(), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            SecurityIdentifier client = ClientUser();
+            clientSid = client.Value;
+            security.AddAccessRule(new PipeAccessRule(client, PipeAccessRights.ReadWrite, AccessControlType.Allow));
             Thread server = new Thread(delegate() { Serve(security); }) { IsBackground = true, Name = "KioskBroker pipe" };
             server.Start();
             Thread watch = new Thread(delegate()
@@ -76,6 +82,9 @@ namespace FidoRun
             lock (gate)
             {
                 retained = WindowsLogon.CloneForSession(outcome, targetSid);
+                // Programs of the same person left from an earlier sign-in (a crash) have lost their desktop access; a new
+                // Edge would hand its page to them and show nothing.
+                CloseLeftovers();
                 result = "OK " + outcome.Sid + "\t" + Clean(outcome.Name) + "\t" + Clean(account) + "\t" + (admin ? "1" : "0");
             }
             logger("KioskBroker=SignedIn; SID=" + outcome.Sid);
@@ -90,6 +99,14 @@ namespace FidoRun
         }
 
         internal static bool Completed { get { return finished.WaitOne(0); } }
+
+        // Never the Kiosk's own account: when the person signed in with the card is also the Windows user the Kiosk runs
+        // as, closing "their programs" would close the Kiosk and the whole desktop.
+        private static void CloseLeftovers()
+        {
+            if (retained == null || String.Equals(retained.Sid, clientSid, StringComparison.OrdinalIgnoreCase)) return;
+            try { WindowsLogon.CloseProgramsForSession(retained, logger); } catch { }
+        }
 
         private static bool HasGroup(WindowsIdentity identity, string sid)
         {
@@ -216,7 +233,7 @@ namespace FidoRun
                         bool ended = TerminateJobObject(job, 1);
                         logger("KioskBroker=JobClosed; Ok=" + ended);
                     }
-                    try { WindowsLogon.CloseProgramsForSession(retained, logger); } catch { }
+                    CloseLeftovers();
                     retained.Dispose();
                     retained = null;
                 }

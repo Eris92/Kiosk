@@ -91,6 +91,7 @@ internal sealed record HelpAction
         new() { Name = "Pierwsze logowanie", Action = FirstSignIn },
         new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup" },
         new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr" },
+        new() { Name = "SharePoint", Action = "https://www.microsoft365.com/launch/sharepoint" },
         new() { Name = "Zmień PIN karty", Action = ChangePin },
         new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll },
         new() { Name = "Resetuj kartę", Action = ResetCard },
