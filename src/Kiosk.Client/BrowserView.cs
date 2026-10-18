@@ -186,12 +186,32 @@ internal sealed class BrowserView : UserControl
         var environmentOptions = new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = windowsAccount };
         // Company sites with Windows sign-in (Kerberos / NTLM, e.g. RCP on IIS): the person's own account signs in by
         // itself, like in their Edge, instead of a 401.
-        if (windowsAccount && IntegratedAuthHosts.Length > 0)
-            environmentOptions.AdditionalBrowserArguments = "--auth-server-allowlist=\"" + string.Join(",", IntegratedAuthHosts.Select(h => "*" + h)) + "\"";
+        // Edge's own policy (AuthServerAllowlist) is not read by WebView2, so it is passed on too.
+        if (windowsAccount)
+        {
+            var servers = IntegratedAuthHosts.Select(h => "*" + h).Concat(EdgePolicy("AuthServerAllowlist")).Distinct().ToArray();
+            var delegated = EdgePolicy("AuthNegotiateDelegateAllowlist");
+            var arguments = new List<string>();
+            if (servers.Length > 0) arguments.Add("--auth-server-allowlist=\"" + string.Join(",", servers) + "\"");
+            if (delegated.Length > 0) arguments.Add("--auth-negotiate-delegate-allowlist=\"" + string.Join(",", delegated) + "\"");
+            if (arguments.Count > 0) environmentOptions.AdditionalBrowserArguments = string.Join(" ", arguments);
+        }
         environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
         if (IsDisposed) return;
         await AddTabAsync(url);
         message.Text = "";
+    }
+
+    /// <summary>A list from Edge's machine policy (HKLM\SOFTWARE\Policies\Microsoft\Edge), only plain host patterns.</summary>
+    private static string[] EdgePolicy(string name)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge");
+            return (key?.GetValue(name) as string ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(h => h.All(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '*')).ToArray();
+        }
+        catch (Exception) { return []; }
     }
 
     /// <summary>Opens a tab. <paramref name="request"/> is a page asking for a new window (target=_blank, window.open).</summary>
