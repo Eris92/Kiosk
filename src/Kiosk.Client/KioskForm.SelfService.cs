@@ -97,6 +97,8 @@ internal sealed partial class KioskForm
         if (cardFolder != null && cardId != null && PresentCardId() == cardId)
         {
             if (cardAwaySince != null) { cardAwaySince = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
+            // Not signed in yet (the PIN screen closed when the card slipped away): sign in again.
+            if (cardLogon == null) _ = StartCardSessionAsync();
             return;
         }
         cardAwaySince = null;
@@ -150,7 +152,11 @@ internal sealed partial class KioskForm
                 notice = "Nie udało się zalogować kartą: " + signedIn.Message + " Zabierz kartę i przyłóż ją jeszcze raz.";
                 Audit.Write("selfservice_card_signin_failed", signedIn.Message);
             }
-            else notice = "Logowanie anulowane. Zabierz kartę i przyłóż ją jeszcze raz.";
+            else
+            {
+                notice = "Logowanie anulowane. Zabierz kartę i przyłóż ją jeszcze raz.";
+                Audit.Write("selfservice_card_signin_cancelled");
+            }
             RefreshChrome();
             return;
         }
