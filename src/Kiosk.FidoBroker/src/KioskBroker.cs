@@ -56,9 +56,9 @@ namespace FidoRun
             // This program's own account (LocalSystem from the service, an administrator otherwise) must be able to add pipe instances.
             using (WindowsIdentity self = WindowsIdentity.GetCurrent())
                 security.AddAccessRule(new PipeAccessRule(self.User, PipeAccessRights.FullControl, AccessControlType.Allow));
-            SecurityIdentifier client = ClientUser();
-            clientSid = client.Value;
-            security.AddAccessRule(new PipeAccessRule(client, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            SecurityIdentifier clientUser = ClientUser();
+            clientSid = clientUser.Value;
+            security.AddAccessRule(new PipeAccessRule(clientUser, PipeAccessRights.ReadWrite, AccessControlType.Allow));
             Thread server = new Thread(delegate() { Serve(security); }) { IsBackground = true, Name = "KioskBroker pipe" };
             server.Start();
             Thread watch = new Thread(delegate()
