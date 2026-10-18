@@ -189,8 +189,8 @@ namespace FidoRun
         {
             this.options = options; this.log = log;
             pinScreen = options.PinScreen;
-            // Inside the Kiosk's card the screen is smaller than full screen: 70 % of its full-screen size fits the card.
-            if (Embedded) scale = options.EmbedDpi / 96f * 0.7f;
+            // Inside the Kiosk's card: the Kiosk's own sizes at the Kiosk's DPI (smaller only when it does not fit).
+            if (Embedded) scale = options.EmbedDpi / 96f;
             bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
             if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
             if (Hidden)
@@ -222,7 +222,7 @@ namespace FidoRun
             // Wrap the two status labels to the window width instead of clipping/overflowing.
             Resize += delegate
             {
-                int w = pinScreen ? FieldWidth : ClientSize.Width - 28;
+                int w = Embedded ? TextWidth : pinScreen ? FieldWidth : ClientSize.Width - 28;
                 if (w < 80) return;
                 providerStatus.MaximumSize = new Size(w, 0);
                 state.MaximumSize = new Size(w, 0);
@@ -277,7 +277,12 @@ namespace FidoRun
             };
         }
 
-        private int FieldWidth { get { return (int)((pinScreen ? 560 : 650) * scale); } }
+        private int FieldWidth { get { return (int)((Embedded ? 360 : pinScreen ? 560 : 650) * scale); } }
+        private int TextWidth { get { return (int)(540 * scale); } }
+
+        // A font of the Kiosk's size: points at the Kiosk's DPI, in pixels so nothing rescales it a second time.
+        private Font KioskFont(float points, FontStyle style = FontStyle.Regular)
+        { return new Font("Segoe UI", points * scale * 96f / 72f, style, GraphicsUnit.Pixel); }
 
         protected override void OnHandleCreated(EventArgs e)
         {
@@ -339,7 +344,7 @@ namespace FidoRun
 
         private static void ScaleContent(Control control, float ratio)
         {
-            control.Font = new Font(control.Font.FontFamily, Math.Max(6f, control.Font.Size * ratio), control.Font.Style);
+            control.Font = new Font(control.Font.FontFamily, Math.Max(6f, control.Font.Size * ratio), control.Font.Style, control.Font.Unit);
             if (control.MaximumSize.Width > 0) control.MaximumSize = new Size((int)(control.MaximumSize.Width * ratio), 0);
             if (control.MinimumSize.Width > 0) control.MinimumSize = new Size((int)(control.MinimumSize.Width * ratio), 0);
             if (control is TextBox || control is ComboBox) control.Width = (int)(control.Width * ratio);
@@ -438,7 +443,7 @@ namespace FidoRun
                 kioskSurface = surface; kioskText = text; kioskMuted = muted; kioskAccent = accent;
             }
             Text = "Logowanie kartą";
-            Font = new Font("Segoe UI", 14f * scale);
+            Font = Embedded ? KioskFont(11) : new Font("Segoe UI", 14f * scale);
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             WindowState = Embedded ? FormWindowState.Normal : FormWindowState.Maximized;
@@ -529,30 +534,56 @@ namespace FidoRun
         // Inside the Kiosk: centred like the Kiosk's own cards, its colours, its buttons.
         private void ApplyKioskLook(TableLayoutPanel card, Label title, FlowLayoutPanel buttons, Button restart)
         {
+            // The same type and sizes as the Kiosk's own PIN card: bold heading, one text size under it, 46 px buttons.
             foreach (Control control in new Control[] { title, providerStatus, providerFeedback, fields, buttons, state })
                 control.Anchor = AnchorStyles.Top;
-            foreach (Label label in new[] { title, providerStatus, (Label)providerFeedback, state }) label.TextAlign = ContentAlignment.MiddleCenter;
+            foreach (Label label in new[] { title, providerStatus, (Label)providerFeedback, state })
+            {
+                label.TextAlign = ContentAlignment.MiddleCenter;
+                label.MaximumSize = new Size(TextWidth, 0);
+            }
+            title.Font = KioskFont(22, FontStyle.Bold);
+            providerStatus.Font = KioskFont(11);
+            providerFeedback.Font = KioskFont(11);
+            state.Font = KioskFont(10);
             providerStatus.Text = "Przygotowuję logowanie kartą...";
-            title.Margin = new Padding(0, 0, 0, (int)(12 * scale));
+            title.Margin = new Padding(0, 0, 0, (int)(10 * scale));
+            providerStatus.Margin = new Padding(0, 0, 0, (int)(6 * scale));
+            providerFeedback.Margin = new Padding(0, 0, 0, (int)(6 * scale));
+            buttons.Margin = new Padding(0, (int)(16 * scale), 0, 0);
+            state.Margin = new Padding(0, (int)(10 * scale), 0, 0);
             submit.ForeColor = OnAccent(kioskAccent);
             restart.BackColor = kioskSurface;
             restart.ForeColor = kioskText;
-            restart.FlatAppearance.BorderColor = kioskMuted;
-            // The two buttons side by side exactly as wide as the PIN box; every text in one size under the title.
-            int half = (FieldWidth - 12) / 2;
+            restart.FlatAppearance.BorderColor = Blend(kioskSurface, kioskMuted, 0.3f);
+            restart.FlatAppearance.MouseOverBackColor = Blend(kioskSurface, kioskMuted, 0.15f);
+            // The two buttons side by side exactly as wide as the PIN box.
+            int half = (FieldWidth - (int)(12 * scale)) / 2;
             foreach (Button button in new[] { submit, restart })
             {
-                button.Font = new Font("Segoe UI Semibold", Font.Size);
+                button.Font = KioskFont(10, FontStyle.Bold);
                 button.Cursor = Cursors.Hand;
                 button.AutoSize = false;
-                button.Size = new Size(half, (int)(Font.Height * 2.2f));
+                button.Size = new Size(half, (int)(46 * scale));
                 button.Padding = Padding.Empty;
             }
-            submit.Margin = new Padding(0, 0, 12, 0);
+            submit.Margin = new Padding(0, 0, FieldWidth - 2 * half, 0);
             restart.Margin = Padding.Empty;
             buttons.WrapContents = false;
-            state.Font = new Font("Segoe UI", Font.Size * 0.85f);
-            providerStatus.Font = new Font("Segoe UI", Font.Size * 0.85f);
+            // "Przyłóż kartę" / "Wpisz PIN" repeat the line under the heading; the line under the buttons is for news only.
+            state.TextChanged += delegate { state.Visible = !IsInstruction(state.Text); };
+            state.Visible = !IsInstruction(state.Text);
+        }
+
+        private static bool IsInstruction(string text)
+        {
+            return String.IsNullOrEmpty(text) || text.StartsWith("Uruchamianie", StringComparison.Ordinal)
+                || text.StartsWith("Przyłóż kartę", StringComparison.Ordinal) || text.StartsWith("Wpisz PIN", StringComparison.Ordinal);
+        }
+
+        private static Color Blend(Color from, Color to, float amount)
+        {
+            return Color.FromArgb((int)(from.R + (to.R - from.R) * amount), (int)(from.G + (to.G - from.G) * amount), (int)(from.B + (to.B - from.B) * amount));
         }
 
         private static Color OnAccent(Color accent)
@@ -571,7 +602,7 @@ namespace FidoRun
                 box.BackColor = Color.FromArgb((kioskSurface.R * 2) / 3, (kioskSurface.G * 2) / 3, (kioskSurface.B * 2) / 3);
                 box.ForeColor = kioskText;
                 box.BorderStyle = BorderStyle.FixedSingle;
-                if (box.UseSystemPasswordChar) box.TextAlign = HorizontalAlignment.Center;
+                if (box.UseSystemPasswordChar) { box.TextAlign = HorizontalAlignment.Center; box.Font = KioskFont(20); }
                 return;
             }
             Button button = input as Button;
@@ -584,10 +615,11 @@ namespace FidoRun
                 button.ForeColor = kioskAccent;
                 button.FlatAppearance.BorderColor = kioskAccent;
                 button.Padding = new Padding(12, 4, 12, 4);
+                button.Font = KioskFont(10, FontStyle.Bold);
                 return;
             }
             input.ForeColor = type == 1 ? kioskText : kioskMuted;
-            input.Font = new Font("Segoe UI", Font.Size * 0.85f, type == 1 ? FontStyle.Bold : FontStyle.Regular);
+            input.Font = KioskFont(11, type == 1 ? FontStyle.Bold : FontStyle.Regular);
             CentreLabel(input as Label);
         }
 
@@ -882,14 +914,14 @@ namespace FidoRun
                         StyleField(input, field.Type);
                         input.Enabled = field.Interactive != 2 && options.Mode != "inspect";
                         if (field.Type == 1 || field.Type == 2 || field.Type == 6) input.Enabled = true;
-                        FlowLayoutPanel container = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Width = FieldWidth + 20, Margin = new Padding(3, 8, 3, 8) };
+                        FlowLayoutPanel container = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Width = FieldWidth + 20, Margin = Embedded ? new Padding(0, (int)(4 * scale), 0, (int)(4 * scale)) : new Padding(3, 8, 3, 8) };
                         if ((field.Type == 4 || field.Type == 5 || field.Type == 8) && !String.IsNullOrEmpty(field.Label))
                         {
                             Label caption2 = new Label { Text = field.Label, AutoSize = true };
                             if (Embedded)
                             {
                                 caption2.ForeColor = kioskMuted;
-                                caption2.Font = new Font("Segoe UI", Font.Size * 0.85f);
+                                caption2.Font = KioskFont(11);
                                 CentreLabel(caption2);
                             }
                             container.Controls.Add(caption2);
