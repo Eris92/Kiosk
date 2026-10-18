@@ -32,6 +32,9 @@ namespace FidoRun
         private static Action<string> logger;
         private static int clientId;
         private static IntPtr clientProcess;
+        // Every program started for the person, and everything those programs start (Edge's own processes), lives in
+        // this job; closing it ends them all, whoever can or cannot open their tokens.
+        private static IntPtr job;
         private static volatile bool stopping;
 
         internal static string PipeName(int client) { return "KioskFido-" + client; }
@@ -42,9 +45,13 @@ namespace FidoRun
             clientId = client;
             clientProcess = OpenProcess(0x0040 | 0x00100000 | 0x1000, false, (uint)client); // DUP_HANDLE | SYNCHRONIZE | QUERY_LIMITED
             if (clientProcess == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "The Kiosk process could not be opened.");
+            job = CreateJob();
             PipeSecurity security = new PipeSecurity();
             security.SetAccessRuleProtection(true, false);
             security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+            // This program's own account (LocalSystem from the service, an administrator otherwise) must be able to add pipe instances.
+            using (WindowsIdentity self = WindowsIdentity.GetCurrent())
+                security.AddAccessRule(new PipeAccessRule(self.User, PipeAccessRights.FullControl, AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(ClientUser(), PipeAccessRights.ReadWrite, AccessControlType.Allow));
             Thread server = new Thread(delegate() { Serve(security); }) { IsBackground = true, Name = "KioskBroker pipe" };
             server.Start();
@@ -180,6 +187,9 @@ namespace FidoRun
             IntPtr remoteProcess, remoteThread;
             try
             {
+                // Still suspended: the program and all its children stay in the job.
+                if (job != IntPtr.Zero && !AssignProcessToJobObject(job, process.Process))
+                    logger("KioskBroker=JobAssignFailed; Error=" + Marshal.GetLastWin32Error());
                 if (!DuplicateHandle(me, process.Process, clientProcess, out remoteProcess, 0, false, 2) ||  // DUPLICATE_SAME_ACCESS
                     !DuplicateHandle(me, process.Thread, clientProcess, out remoteThread, 0, false, 2))
                 {
@@ -201,6 +211,11 @@ namespace FidoRun
                 stopping = true;
                 if (retained != null)
                 {
+                    if (job != IntPtr.Zero)
+                    {
+                        bool ended = TerminateJobObject(job, 1);
+                        logger("KioskBroker=JobClosed; Ok=" + ended);
+                    }
                     try { WindowsLogon.CloseProgramsForSession(retained, logger); } catch { }
                     retained.Dispose();
                     retained = null;
@@ -212,6 +227,41 @@ namespace FidoRun
             Environment.Exit(0);
         }
 
+        private static IntPtr CreateJob()
+        {
+            IntPtr created = CreateJobObject(IntPtr.Zero, null);
+            if (created == IntPtr.Zero) { logger("KioskBroker=JobCreateFailed; Error=" + Marshal.GetLastWin32Error()); return IntPtr.Zero; }
+            JobExtendedLimits limits = new JobExtendedLimits();
+            limits.Basic.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: also when this program dies
+            if (!SetInformationJobObject(created, 9, ref limits, (uint)Marshal.SizeOf(typeof(JobExtendedLimits))))
+                logger("KioskBroker=JobLimitFailed; Error=" + Marshal.GetLastWin32Error());
+            return created;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobBasicLimits
+        {
+            public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass, SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct JobExtendedLimits
+        {
+            public JobBasicLimits Basic;
+            public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount;
+            public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(IntPtr job, int informationClass, ref JobExtendedLimits information, uint length);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateJobObject(IntPtr job, uint code);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint id);
         [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CloseHandle(IntPtr handle);
