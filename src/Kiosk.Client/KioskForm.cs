@@ -1063,7 +1063,7 @@ internal sealed partial class KioskForm : Form
     /// <summary>A Szybka pomoc page; in Punkt samoobsługowy with the card's sign-in while the card lies on the reader.</summary>
     private void ShowHelpPage(string title, string url)
     {
-        if (SelfService && OpenPageAsCardPerson(url)) return;
+        if (SelfService && OpenPageAsCardPerson(title, url)) return;
         helpBrowser?.Close();
         var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { Bounds = Screen.FromControl(this).Bounds };
         window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };

@@ -115,7 +115,7 @@ internal sealed class HelpBar : Control
 /// </summary>
 internal sealed class HelpBrowserForm : Form
 {
-    private static readonly string[] SignInDomains =
+    internal static readonly string[] SignInDomains =
     [
         "aka.ms", "microsoft.com", "microsoftonline.com", "microsoftonline-p.com", "live.com", "msauth.net", "msftauth.net",
         "windows.net", "office.com", "office365.com", "microsoftazuread-sso.com", "azure.com", "msidentity.com",
@@ -127,28 +127,31 @@ internal sealed class HelpBrowserForm : Form
     private readonly int idleSeconds;
     private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
 
-    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60)
+    /// <param name="windowsAccount">Punkt samoobsługowy, signed in with the card: this program runs as the person
+    /// (<see cref="CardPageHost"/>), the page signs in with their Windows account (SSO) and keeps <paramref name="profileFolder"/>.</param>
+    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60, bool windowsAccount = false, string? profileFolder = null)
     {
         this.idleSeconds = idleSeconds;
         this.url = url;
         Text = title;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
-        ShowInTaskbar = false;
-        TopMost = true;
+        // Hosted by the Kiosk (windowsAccount): an unowned window the Kiosk finds and keeps over its own screen.
+        ShowInTaskbar = windowsAccount;
+        TopMost = !windowsAccount;
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         var policy = new SitePolicy(true, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
-        browser = new BrowserView([], policy, null, windowsAccount: false, singlePage: true, profileFolder: null) { Dock = DockStyle.Fill };
+        browser = new BrowserView([], policy, null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder) { Dock = DockStyle.Fill };
         var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
         var heading = new Label
         {
-            Text = title + "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane", AutoSize = false, Dock = DockStyle.Fill,
+            Text = title + (windowsAccount ? "" : "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane"), AutoSize = false, Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
         };
-        var close = new Button { Text = "Zamknij", Dock = DockStyle.Right, Width = 140 };
+        var close = new Button { Text = windowsAccount ? "Wróć do Kiosku" : "Zamknij", Dock = DockStyle.Right, Width = windowsAccount ? 180 : 140 };
         KioskTheme.StyleButton(close, primary: true);
         close.Click += (_, _) => Close();
         header.Controls.Add(heading);

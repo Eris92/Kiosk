@@ -28,6 +28,8 @@ internal sealed class ApplicationView : Panel
     /// owned by the Kiosk and kept exactly over this view (same look, working keyboard).
     /// </summary>
     private bool overlay;
+    /// <summary>Kept as an overlay whatever its kind (a WebView2 page of another process takes no keyboard as a child).</summary>
+    internal bool AlwaysOverlay { get; init; }
     private IntPtr overlayOwner;
     private readonly System.Windows.Forms.Timer overlaySync = new() { Interval = 80 };
     private static bool overlaysHidden;
@@ -127,7 +129,7 @@ internal sealed class ApplicationView : Panel
     {
         var className = new StringBuilder(64);
         AppNative.GetClassName(window, className, className.Capacity);
-        if (className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
+        if (AlwaysOverlay || className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
         var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
         // Remove popup, caption, sizing frame, min/max boxes and the minimised state; make it a child.
         style = (style & ~(0x80000000L | 0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L)) | 0x40000000L;
@@ -217,7 +219,7 @@ internal sealed class ApplicationView : Panel
             if (windowLostAt == DateTime.MaxValue) windowLostAt = DateTime.UtcNow;
             var replacement = FindMainWindow();
             if (replacement != IntPtr.Zero) { try { Embed(replacement); } catch (Win32Exception) { } }
-            else if (job != null && ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
+            else if (untrackedProgram != null || job != null && ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
         }
         else if (!overlay && Visible && !AppNative.IsWindowVisible(HostedWindow))
             AppNative.ShowWindow(HostedWindow, 5); // An app hiding itself "to the tray" would be lost: the Kiosk has no tray.
@@ -283,6 +285,7 @@ internal sealed class ApplicationView : Panel
             if (untrackedBefore.Contains(window) || hostedWindows.Contains(window) || !AppNative.IsWindowVisible(window)) return true;
             if (AppNative.GetWindow(window, 4) != IntPtr.Zero || (AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true;
             AppNative.GetWindowThreadProcessId(window, out var pid);
+            if (pid == Environment.ProcessId) return true;   // The Kiosk's own windows, when the program is the Kiosk itself.
             try { using var process = System.Diagnostics.Process.GetProcessById((int)pid); if (process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase)) found.Add(window); }
             catch (ArgumentException) { }
             catch (InvalidOperationException) { }

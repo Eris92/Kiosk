@@ -19,6 +19,7 @@ internal static class Program
         }
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
+        if (args.Length == 2 && args[0] == CardPageHost.Argument) return CardPageHost.Run(args[1]);
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         if (args.Length >= 3 && args[0] == Updater.Argument) return Updater.Apply(args);
         if (Updater.IsCopy(args)) return Updater.CopyElevated(args[1]);

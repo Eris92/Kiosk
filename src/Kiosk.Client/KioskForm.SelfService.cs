@@ -77,7 +77,7 @@ internal sealed partial class KioskForm
         var key = reader.Snapshot(config.ReaderName);
         cardKey = key;
         PrepareCardSignIn();
-        if (cardPage is { View.Started: true } page && !page.View.Refresh()) CloseCardPage();   // Its Edge window was closed.
+        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Wróć do Kiosku" or its countdown closed it.
         if (cardLogon == null) return;
         if (key != null)
         {
@@ -108,33 +108,32 @@ internal sealed partial class KioskForm
         RefreshChrome();
     }
 
-    /// <summary>The page open in the person's Edge, inside the Kiosk window; null = the start screen.</summary>
-    private CardPage? cardPage;
+    /// <summary>The page open as the signed-in person, over the Kiosk's screen; null = the start screen.</summary>
+    private ApplicationView? cardPage;
 
-    /// <summary>A Szybka pomoc page in the signed-in person's own Edge (their account, SSO), inside the Kiosk window.</summary>
-    private bool OpenPageAsCardPerson(string url)
+    /// <summary>A Szybka pomoc page as the signed-in person (their account, SSO): a clean page inside the Kiosk.</summary>
+    private bool OpenPageAsCardPerson(string title, string url)
     {
         if (cardLogon == null) return false;
-        _ = OpenCardPageAsync(cardLogon, url);
+        _ = OpenCardPageAsync(cardLogon, title, url);
         return true;
     }
 
-    private async Task OpenCardPageAsync(UserLogon logon, string url)
+    private async Task OpenCardPageAsync(UserLogon logon, string title, string url)
     {
         CloseCardPage();
-        var edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe");
-        // The Kiosk's own Edge folder in the person's profile: their everyday Edge may still run in another
-        // (disconnected) Windows session of the same account, and would take the page into that invisible session.
-        var folder = logon.ProfileDirectory is { } profile ? "--user-data-dir=\"" + Path.Combine(profile, @"AppData\Local\Kiosk\Edge") + "\" " : "";
-        var entry = new ApplicationEntry { Name = "Strona", Path = edge, Arguments = folder + "--no-first-run --new-window \"" + url + "\"" };
-        var page = new CardPage(Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url);
-        page.CloseRequested += () => { if (cardPage == page) CloseCardPage(); };
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
+        var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds,
+            HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
+            logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null);
+        var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
+        var page = new ApplicationView { AlwaysOverlay = true };
         cardPage = page;
         surface.Controls.Add(page);
         ShowView(page);
         try
         {
-            await page.View.StartAsync(entry, logon);
+            await page.StartAsync(entry, logon);
             Audit.Write("selfservice_page_as_person");
         }
         catch (Exception ex)
@@ -146,7 +145,7 @@ internal sealed partial class KioskForm
         }
     }
 
-    /// <summary>Back to the start screen: the page's Edge window closes.</summary>
+    /// <summary>Back to the start screen: the page closes.</summary>
     private void CloseCardPage()
     {
         if (cardPage is not { } page) return;
@@ -171,31 +170,5 @@ internal sealed partial class KioskForm
             desktop.ShowSignIn(false);
             desktop.UpdateStatus("Logowanie kartą", notice ?? "Przygotowuję logowanie kartą…");
         }
-    }
-}
-
-/// <summary>A page of the signed-in person's Edge inside the Kiosk: a bar with "Wróć" over the Edge window.</summary>
-internal sealed class CardPage : Panel
-{
-    internal ApplicationView View { get; } = new();
-    internal event Action? CloseRequested;
-
-    internal CardPage(string title)
-    {
-        Dock = DockStyle.Fill;
-        BackColor = KioskTheme.Background;
-        var header = new Panel { Dock = DockStyle.Top, Height = LogicalToDeviceUnits(52), BackColor = KioskTheme.ShellBar };
-        var heading = new Label
-        {
-            Text = title, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
-        };
-        var back = new Button { Text = "Wróć do Kiosku", Dock = DockStyle.Right, Width = LogicalToDeviceUnits(180) };
-        KioskTheme.StyleButton(back, primary: true);
-        back.Click += (_, _) => CloseRequested?.Invoke();
-        header.Controls.Add(heading);
-        header.Controls.Add(back);
-        Controls.Add(View);
-        Controls.Add(header);
     }
 }
