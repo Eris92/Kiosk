@@ -1,11 +1,13 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot '..\out\client'),
+    [string]$OutputPath = '',
     # Release tag (build-N / vN) shown in Konfiguracja → Aktualizacja; empty = local "dev" build.
     [string]$Version = ''
 )
 $ErrorActionPreference = 'Stop'
+# $PSScriptRoot is empty in parameter defaults under "powershell -File" on Windows PowerShell 5.1.
+if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot '..\out\client' }
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install .NET 8 SDK or newer first.' }
 $project = Join-Path $PSScriptRoot '..\src\Kiosk.Client\Kiosk.Client.csproj'
 $versionArguments = if ($Version) { @("-p:InformationalVersion=$Version", '-p:IncludeSourceRevisionInInformationalVersion=false') } else { @() }
