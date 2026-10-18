@@ -49,6 +49,12 @@ internal sealed class FidoSignIn : IDisposable
         {
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
             if (listening.StartsWith("ERROR ", StringComparison.Ordinal)) { signIn.Dispose(); return new(null, listening[6..]); }
+            // Windows reads an NFC card only for the window in the foreground: hand it over (the Kiosk has it now).
+            if (listening.StartsWith("OK ", StringComparison.Ordinal) && long.TryParse(listening[3..], out var window) && window != 0)
+            {
+                if (brokerPid > 0) AllowSetForegroundWindow(brokerPid);
+                SetForegroundWindow(new IntPtr(window));
+            }
         }
         catch (Exception ex) { signIn.Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
         // Windows normally finds a card lying on the reader by itself; switching the card off and on while it talks to
@@ -183,6 +189,7 @@ internal sealed class FidoSignIn : IDisposable
 
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int process);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("advapi32.dll", SetLastError = true)]

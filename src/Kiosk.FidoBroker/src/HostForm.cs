@@ -100,6 +100,26 @@ namespace FidoRun
             catch (InvalidOperationException) { return false; }
         }
 
+        // Windows talks to an NFC card only for the window in the foreground (a retry clicked in a visible window
+        // worked, the same retry from a background window never reached the card).
+        private void TakeForeground(string reason)
+        {
+            BringToFront();
+            Activate();
+            SetForegroundWindow(Handle);
+            log.Write("PinFromClient=Foreground; Reason=" + reason + "; IsForeground=" + (GetForegroundWindow() == Handle));
+        }
+
+        internal void EnsureForeground(string reason)
+        {
+            if (closing || IsDisposed || !IsHandleCreated) return;
+            try { Invoke(new Action(delegate { if (GetForegroundWindow() != Handle) TakeForeground(reason); })); }
+            catch (InvalidOperationException) { }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+
         private int autoRetries;
         private DateTime lastAutoRetry;
 
@@ -123,6 +143,7 @@ namespace FidoRun
                         if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
                         autoRetries++;
                         lastAutoRetry = DateTime.UtcNow;
+                        TakeForeground("AutoRetry");
                         log.Write("PinFromClient=AutoRetry; Field=" + pair.Key + "; Attempt=" + autoRetries);
                         host.Command(fieldGeneration, pair.Key);
                         return true;
@@ -167,9 +188,9 @@ namespace FidoRun
                 StartPosition = FormStartPosition.Manual;
                 Bounds = Screen.PrimaryScreen.Bounds;
                 // FIDORUN_VISIBLE=1 (diagnostics): the native tile stays visible over the Kiosk.
-                Opacity = Environment.GetEnvironmentVariable("FIDORUN_VISIBLE") == "1" ? 1 : 0;
+                Opacity = Environment.GetEnvironmentVariable("FIDORUN_VISIBLE") == "1" ? 1 : 0.01;
                 KioskBroker.View = this;
-                Shown += delegate { BringToFront(); Activate(); };
+                Shown += delegate { KioskBroker.ViewHandle = Handle; TakeForeground("Shown"); };
             }
 
             // Wrap the two status labels to the window width instead of clipping/overflowing.

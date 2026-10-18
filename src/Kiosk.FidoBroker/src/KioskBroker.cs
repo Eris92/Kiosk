@@ -44,6 +44,7 @@ namespace FidoRun
         private static IntPtr job;
         private static string clientSid;
         internal static HostForm View;
+        internal static IntPtr ViewHandle;
         private static volatile bool stopping;
         private static volatile bool pinEntered;
 
@@ -198,7 +199,8 @@ namespace FidoRun
                 case "listening":
                     if (WaitHandle.WaitAny(new WaitHandle[] { listening, finished }, 40000) == WaitHandle.WaitTimeout)
                         return "ERROR Logowanie kartą nie wystartowało.";
-                    lock (gate) return finished.WaitOne(0) ? result : "OK";
+                    // The Kiosk (in the foreground) hands the foreground to this window: Windows reads the card only for it.
+                    lock (gate) return finished.WaitOne(0) ? result : "OK " + ViewHandle.ToInt64();
                 case "entered":
                     return pinEntered ? "OK 1" : "OK 0";
                 case "pin":
@@ -220,8 +222,10 @@ namespace FidoRun
             if (view == null) return "ERROR Logowanie kartą nie przyjmuje PIN-u z Kiosku.";
             // The native tile shows its PIN field once it has found the card.
             DateTime until = DateTime.UtcNow.AddSeconds(45);
+            int round = 0;
             while (!view.TryEnterPin(pin))
             {
+                if (++round % 8 == 0) view.EnsureForeground("Waiting");
                 view.TryAutoRetry();
                 if (finished.WaitOne(250)) lock (gate) return result;
                 if (DateTime.UtcNow > until) return "ERROR Karta nie odpowiada. Przyłóż ją jeszcze raz.";
