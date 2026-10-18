@@ -37,6 +37,8 @@ internal sealed class BrowserView : UserControl
     private readonly bool sharedFolder;
     /// <summary>Someone used the page (click, touch, key, scroll); only for <see cref="singlePage"/>.</summary>
     internal event Action? Activity;
+    /// <summary>Sites that get the Windows account's own sign-in (Negotiate) when <see cref="windowsAccount"/> is set.</summary>
+    internal static string[] IntegratedAuthHosts { get; set; } = [];
     private const string ActivityScript = """
         (() => {
           let last = 0;
@@ -182,6 +184,10 @@ internal sealed class BrowserView : UserControl
         // Per-session profile folder, separate from the user's installed browser; tabs share it.
         // Single sign-on with the Windows account (Entra ID PRT) only when that account is the person's own.
         var environmentOptions = new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = windowsAccount };
+        // Company sites with Windows sign-in (Kerberos / NTLM, e.g. RCP on IIS): the person's own account signs in by
+        // itself, like in their Edge, instead of a 401.
+        if (windowsAccount && IntegratedAuthHosts.Length > 0)
+            environmentOptions.AdditionalBrowserArguments = "--auth-server-allowlist=\"" + string.Join(",", IntegratedAuthHosts.Select(h => "*" + h)) + "\"";
         environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
         if (IsDisposed) return;
         await AddTabAsync(url);

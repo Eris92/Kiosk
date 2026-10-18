@@ -343,6 +343,7 @@ namespace FidoRun
             if (control.MaximumSize.Width > 0) control.MaximumSize = new Size((int)(control.MaximumSize.Width * ratio), 0);
             if (control.MinimumSize.Width > 0) control.MinimumSize = new Size((int)(control.MinimumSize.Width * ratio), 0);
             if (control is TextBox || control is ComboBox) control.Width = (int)(control.Width * ratio);
+            else if (!control.AutoSize && (control is Button || control is Label)) control.Size = new Size((int)(control.Width * ratio), (int)(control.Height * ratio));
             foreach (Control child in control.Controls) ScaleContent(child, ratio);
         }
 
@@ -537,12 +538,21 @@ namespace FidoRun
             restart.BackColor = kioskSurface;
             restart.ForeColor = kioskText;
             restart.FlatAppearance.BorderColor = kioskMuted;
-            restart.Padding = submit.Padding;
+            // The two buttons side by side exactly as wide as the PIN box; every text in one size under the title.
+            int half = (FieldWidth - 12) / 2;
             foreach (Button button in new[] { submit, restart })
             {
                 button.Font = new Font("Segoe UI Semibold", Font.Size);
                 button.Cursor = Cursors.Hand;
+                button.AutoSize = false;
+                button.Size = new Size(half, (int)(Font.Height * 2.2f));
+                button.Padding = Padding.Empty;
             }
+            submit.Margin = new Padding(0, 0, 12, 0);
+            restart.Margin = Padding.Empty;
+            buttons.WrapContents = false;
+            state.Font = new Font("Segoe UI", Font.Size * 0.85f);
+            providerStatus.Font = new Font("Segoe UI", Font.Size * 0.85f);
         }
 
         private static Color OnAccent(Color accent)
@@ -565,6 +575,8 @@ namespace FidoRun
                 return;
             }
             Button button = input as Button;
+            // The native "OK" repeats "Zaloguj", the tile's name repeats the title.
+            if (type == 9 || type == 6) { input.Visible = false; return; }
             if (button != null)
             {
                 button.FlatStyle = FlatStyle.Flat;
@@ -575,6 +587,17 @@ namespace FidoRun
                 return;
             }
             input.ForeColor = type == 1 ? kioskText : kioskMuted;
+            input.Font = new Font("Segoe UI", Font.Size * 0.85f, type == 1 ? FontStyle.Bold : FontStyle.Regular);
+            CentreLabel(input as Label);
+        }
+
+        private void CentreLabel(Label label)
+        {
+            if (label == null) return;
+            label.AutoSize = false;
+            label.TextAlign = ContentAlignment.MiddleCenter;
+            label.Width = FieldWidth;
+            label.Height = TextRenderer.MeasureText(label.Text ?? "", label.Font, new Size(FieldWidth, 0), TextFormatFlags.WordBreak).Height + 4;
         }
 
         private static void StylePrimary(Button button, Color accent)
@@ -863,7 +886,12 @@ namespace FidoRun
                         if ((field.Type == 4 || field.Type == 5 || field.Type == 8) && !String.IsNullOrEmpty(field.Label))
                         {
                             Label caption2 = new Label { Text = field.Label, AutoSize = true };
-                            if (Embedded) caption2.ForeColor = kioskMuted;
+                            if (Embedded)
+                            {
+                                caption2.ForeColor = kioskMuted;
+                                caption2.Font = new Font("Segoe UI", Font.Size * 0.85f);
+                                CentreLabel(caption2);
+                            }
                             container.Controls.Add(caption2);
                         }
                         container.Controls.Add(input);
