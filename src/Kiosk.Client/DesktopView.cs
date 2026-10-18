@@ -320,7 +320,7 @@ internal sealed class DesktopView : UserControl
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin;
-        int cardHeight = Scale(signingIn ? 500 : AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
+        int cardHeight = Scale(signingIn ? 560 : AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
         bool help = Help.Count > 0 && !AskingPin;
         var column = Help.Needed(true);

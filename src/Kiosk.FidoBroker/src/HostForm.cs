@@ -187,7 +187,8 @@ namespace FidoRun
         {
             this.options = options; this.log = log;
             pinScreen = options.PinScreen;
-            if (Embedded) scale = options.EmbedDpi / 96f;
+            // Inside the Kiosk's card the screen is smaller than full screen: 70 % of its full-screen size fits the card.
+            if (Embedded) scale = options.EmbedDpi / 96f * 0.7f;
             bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
             if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
             if (Hidden)
