@@ -113,7 +113,10 @@ internal sealed partial class KioskForm
         try
         {
             var edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe");
-            var (process, thread) = cardLogon.Start(edge, "\"" + edge + "\" --new-window --start-maximized --no-first-run \"" + url + "\"", Path.GetDirectoryName(edge), show: 3);
+            // The Kiosk's own Edge folder in the person's profile: their everyday Edge may still run in another
+            // (disconnected) Windows session of the same account, and would take the page into that invisible session.
+            var folder = cardLogon.ProfileDirectory is { } profile ? " --user-data-dir=\"" + Path.Combine(profile, @"AppData\Local\Kiosk\Edge") + "\"" : "";
+            var (process, thread) = cardLogon.Start(edge, "\"" + edge + "\"" + folder + " --new-window --start-maximized --no-first-run \"" + url + "\"", Path.GetDirectoryName(edge), show: 3);
             AppNative.ResumeThread(thread);
             AppNative.CloseHandle(thread);
             AppNative.CloseHandle(process);
