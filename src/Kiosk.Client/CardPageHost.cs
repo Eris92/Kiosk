@@ -13,7 +13,7 @@ internal static class CardPageHost
 {
     internal const string Argument = "--card-page";
 
-    internal sealed record Request(string Title, string Url, int Seconds, string[] Domains, string? Profile);
+    internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile);
 
     /// <summary>The command-line argument for <paramref name="request"/>: one token, nothing for a shell to split.</summary>
     internal static string Encode(Request request) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
@@ -23,6 +23,7 @@ internal static class CardPageHost
         Request request;
         try { request = JsonSerializer.Deserialize<Request>(Encoding.UTF8.GetString(Convert.FromBase64String(encoded)))!; }
         catch (Exception) { return 2; }
+        KioskTheme.SetAccent(request.Accent);   // The Kiosk's colours (Konfiguracja → Wygląd).
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return 2;
         using var form = new HelpBrowserForm(request.Title, request.Url, request.Domains, request.Seconds, windowsAccount: true, profileFolder: request.Profile)
         {

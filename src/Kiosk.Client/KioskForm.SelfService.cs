@@ -67,8 +67,8 @@ internal sealed partial class KioskForm
         try { ready = await Task.Run(logon.EnsureProfile); }
         catch (Exception ex) { ready = false; Audit.Write("profile_failed", ex.Message); }
         if (cardLogon != logon) return;
+        // Nothing opens by itself: the person chooses from Szybka pomoc.
         if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
-        else if (config.SelfServiceSignInUrl.Length > 0) ShowHelpPage("Logowanie kartą", config.SelfServiceSignInUrl);
         RefreshChrome();
     }
 
@@ -123,7 +123,7 @@ internal sealed partial class KioskForm
     {
         CloseCardPage();
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
-        var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds,
+        var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
             HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
             logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null);
         var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
