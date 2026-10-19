@@ -342,6 +342,12 @@ internal sealed class SettingsView : UserControl
         tabs.TabPages.Add(helpTab);
         helpActions.Columns.Add("Name", "Napis na przycisku");
         helpActions.Columns.Add("Action", "Akcja");
+        // "Konto" or "Konto/Hasło": the left column shows categories, a click opens their buttons and subcategories.
+        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Category", HeaderText = "Kategoria", ToolTipText = "Np. Konto albo Konto/Hasło (podkategoria). Puste: przycisk od razu na liście.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
         AddEnabledColumn(helpActions);
         // Punkt samoobsługowy: greyed out until someone signs in with the card.
         helpActions.Columns.Add(new DataGridViewCheckBoxColumn
@@ -352,7 +358,7 @@ internal sealed class SettingsView : UserControl
         });
         void AddHelpRow(HelpAction h)
         {
-            int row = helpActions.Rows.Add(h.Name, h.Action);
+            int row = helpActions.Rows.Add(h.Name, h.Action, h.CategoryPath);
             SetEnabled(helpActions, row, h.Enabled);
             helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
         }
@@ -361,7 +367,8 @@ internal sealed class SettingsView : UserControl
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
             " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +
-            " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk.", helpHeight: 80);
+            " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
+            "Kategoria grupuje przyciski: „Konto” albo „Konto/Hasło” dla podkategorii; kolejność kategorii jak na liście.", helpHeight: 96);
         var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
         helpDefaults.Click += (_, _) =>
         {
@@ -880,6 +887,7 @@ internal sealed class SettingsView : UserControl
                 .Select(r => new HelpAction
                 {
                     Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r),
+                    Category = string.Join("/", Cell(r, "Category").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0)),
                     SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,

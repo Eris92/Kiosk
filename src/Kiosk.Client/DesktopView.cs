@@ -200,6 +200,7 @@ internal sealed class DesktopView : UserControl
             button.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; FinishAsk(false); } };
         // Like the other help windows: a real mouse move, click or key anywhere on the desktop gives more time.
         HelpCountdown.Watch(this, () => { if (pinCountdown.Visible) pinCountdown.Restart(); });
+        Help.ContentChanged += ArrangeControls;   // A category opened: the column has another height.
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, askTitle, askText, askYes, askNo, signInPlace });

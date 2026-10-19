@@ -87,6 +87,12 @@ internal sealed record HelpAction
     /// </summary>
     public bool? SignedInOnly { get; init; }
     internal bool NeedsSignIn => SignedInOnly ?? DefaultNeedsSignIn(Action);
+    /// <summary>
+    /// Szybka pomoc folder: "Konto", or "Konto/Hasło" for a subcategory; empty = straight in the list.
+    /// The column shows the folders first, a folder opens its buttons and subfolders.
+    /// </summary>
+    public string Category { get; init; } = "";
+    internal string CategoryPath => string.Join("/", (Category ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
 
     internal static bool DefaultNeedsSignIn(string action)
     {
@@ -100,13 +106,13 @@ internal sealed record HelpAction
 
     internal static HelpAction[] Defaults =>
     [
-        new() { Name = "Pierwsze logowanie", Action = FirstSignIn },
-        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup" },
-        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr" },
         new() { Name = "SharePoint", Action = "https://www.microsoft365.com/launch/sharepoint" },
-        new() { Name = "Zmień PIN karty", Action = ChangePin },
-        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll },
-        new() { Name = "Resetuj kartę", Action = ResetCard },
+        new() { Name = "Pierwsze logowanie", Action = FirstSignIn, Category = "Konto" },
+        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Konto" },
+        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Konto" },
+        new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Karta" },
+        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Karta" },
+        new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Karta" },
     ];
 }
 

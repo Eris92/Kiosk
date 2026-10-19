@@ -9,6 +9,11 @@ namespace Kiosk.Client;
 internal sealed class HelpBar : Control
 {
     private HelpAction[] items = [];
+    /// <summary>One line of the column: a button, a category (folder) or "Wstecz".</summary>
+    private sealed record Entry(HelpAction? Item, string? Folder, string Text, bool Back = false);
+    private Entry[] entries = [];
+    /// <summary>The open category ("" = the top: categories and buttons without one).</summary>
+    private string folder = "";
     private readonly List<Rectangle> buttons = [];
     private int hover = -1;
 
@@ -16,12 +21,22 @@ internal sealed class HelpBar : Control
     internal int Count => items.Length;
     internal HelpAction[] Items => items;
     internal event Action<HelpAction>? ActionRequested;
+    /// <summary>A category opened or closed: the column has another size.</summary>
+    internal event Action? ContentChanged;
     private bool signedIn = true;
     /// <summary>Punkt samoobsługowy: nobody signed in with the card yet; buttons that need it are greyed out.</summary>
     internal bool SignedIn
     {
         get => signedIn;
-        set { if (signedIn == value) return; signedIn = value; hover = -1; Invalidate(); }
+        set
+        {
+            if (signedIn == value) return;
+            signedIn = value;
+            hover = -1;
+            // Someone else comes to the kiosk: the column starts from the top again.
+            if (folder.Length > 0) OpenFolder("");
+            Invalidate();
+        }
     }
     private bool busy;
     /// <summary>A question or the PIN field waits in the card: every button is greyed out until it is answered.</summary>
@@ -31,6 +46,11 @@ internal sealed class HelpBar : Control
         set { if (busy == value) return; busy = value; hover = -1; Invalidate(); }
     }
     private bool Available(HelpAction item) => !busy && (signedIn || !item.NeedsSignIn);
+    private bool Available(Entry entry) => entry.Item != null ? Available(entry.Item)
+        : !busy && (entry.Back || items.Any(i => InFolder(i, entry.Folder!) && Available(i)));
+
+    private static bool InFolder(HelpAction item, string path) =>
+        item.CategoryPath.Equals(path, StringComparison.OrdinalIgnoreCase) || item.CategoryPath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
 
     internal HelpBar()
     {
@@ -40,45 +60,107 @@ internal sealed class HelpBar : Control
         Cursor = Cursors.Hand;
     }
 
-    internal void SetItems(HelpAction[] actions) { items = actions; Invalidate(); }
+    internal void SetItems(HelpAction[] actions)
+    {
+        items = actions;
+        // The open category may be gone after Konfiguracja changed.
+        if (folder.Length > 0 && !items.Any(i => InFolder(i, folder))) folder = "";
+        Build();
+        Invalidate();
+    }
+
+    /// <summary>The lines of the open category, in the order of the list in Konfiguracja.</summary>
+    private void Build()
+    {
+        var list = new List<Entry>();
+        if (folder.Length > 0) list.Add(new Entry(null, folder.Contains('/') ? folder[..folder.LastIndexOf('/')] : "", "Wstecz", Back: true));
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            var path = item.CategoryPath;
+            if (path.Equals(folder, StringComparison.OrdinalIgnoreCase)) { list.Add(new Entry(item, null, item.Name)); continue; }
+            if (folder.Length > 0 && !path.StartsWith(folder + "/", StringComparison.OrdinalIgnoreCase)) continue;
+            var rest = folder.Length > 0 ? path[(folder.Length + 1)..] : path;
+            var name = rest.Split('/')[0];
+            if (seen.Add(name)) list.Add(new Entry(null, folder.Length > 0 ? folder + "/" + name : name, name));
+        }
+        entries = list.ToArray();
+    }
+
+    private void OpenFolder(string path)
+    {
+        folder = path;
+        hover = -1;
+        Build();
+        Invalidate();
+        ContentChanged?.Invoke();
+    }
 
     private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
     private int HeadingHeight => S(30);
     private int ButtonHeight => S(40);
     private int Gap => S(8);
+    private string Heading => folder.Length == 0 ? "Szybka pomoc" : folder.Replace("/", " › ");
 
-    private static string GlyphFor(HelpAction item) => item.Action.ToLowerInvariant() switch
+    private static string GlyphFor(Entry entry)
     {
-        HelpAction.ChangePin => "",   // key
-        HelpAction.Reenroll => "",    // person
-        HelpAction.FirstSignIn => "\uE77B",  // contact
-        HelpAction.ResetCard => "",   // restore
-        var a when a.Contains("mfa") || a.Contains("security") => "", // lock
-        _ => ""                        // globe
-    };
-
-    private int TextWidth(HelpAction item)
-    {
-        using var font = new Font("Segoe UI", 10);
-        return TextRenderer.MeasureText(item.Name, font).Width;
+        if (entry.Back) return "\uE72B";        // back arrow
+        if (entry.Item == null) return "\uE8B7";  // folder
+        return entry.Item.Action.ToLowerInvariant() switch
+        {
+            HelpAction.ChangePin => "\uE8D7",    // key
+            HelpAction.Reenroll => "\uE77B",     // person
+            HelpAction.FirstSignIn => "\uE77B",  // contact
+            HelpAction.ResetCard => "\uE777",    // restore
+            var a when a.Contains("mfa") || a.Contains("security") => "\uE72E", // lock
+            _ => "\uE774"                         // globe
+        };
     }
 
-    private int ButtonWidth(HelpAction item) => S(52) + TextWidth(item);
+    private int TextWidth(Entry entry)
+    {
+        using var font = new Font("Segoe UI", 10);
+        return TextRenderer.MeasureText(entry.Text, font).Width;
+    }
+
+    // Icon, text and, for a category, the arrow at the right.
+    private int ButtonWidth(Entry entry) => S(52) + TextWidth(entry) + (entry.Folder != null && !entry.Back ? S(24) : 0);
 
     /// <summary>The size the bar needs: the widest button in a column, or all buttons side by side.</summary>
     internal Size Needed(bool vertical)
     {
-        if (items.Length == 0) return Size.Empty;
+        if (entries.Length == 0) return Size.Empty;
         return vertical
-            ? new Size(items.Max(ButtonWidth), HeadingHeight + items.Length * ButtonHeight + (items.Length - 1) * Gap)
-            : new Size(items.Sum(ButtonWidth) + (items.Length - 1) * Gap, ButtonHeight);
+            ? new Size(ColumnWidth(), HeadingHeight + entries.Length * ButtonHeight + (entries.Length - 1) * Gap)
+            : new Size(entries.Sum(ButtonWidth) + (entries.Length - 1) * Gap, ButtonHeight);
+    }
+
+    /// <summary>
+    /// The same width in every category (the widest of them all), so the page beside the column does not move when
+    /// a category opens.
+    /// </summary>
+    private int ColumnWidth()
+    {
+        using var bold = new Font("Segoe UI", 10, FontStyle.Bold);
+        int width = ButtonWidth(new Entry(null, "", "Wstecz", Back: true));
+        foreach (var item in items)
+        {
+            width = Math.Max(width, ButtonWidth(new Entry(item, null, item.Name)));
+            var parts = item.CategoryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                width = Math.Max(width, ButtonWidth(new Entry(null, parts[i], parts[i])));
+                width = Math.Max(width, TextRenderer.MeasureText(string.Join(" › ", parts[..(i + 1)]), bold).Width + S(8));
+            }
+        }
+        return Math.Max(width, TextRenderer.MeasureText("Szybka pomoc", bold).Width + S(8));
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
         int index = buttons.FindIndex(b => b.Contains(e.Location));
-        if (index >= 0 && index < items.Length && !Available(items[index])) index = -1;
+        if (index >= 0 && index < entries.Length && !Available(entries[index])) index = -1;
         Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
         if (index != hover) { hover = index; Invalidate(); }
     }
@@ -89,13 +171,16 @@ internal sealed class HelpBar : Control
     {
         base.OnMouseClick(e);
         int index = buttons.FindIndex(b => b.Contains(e.Location));
-        if (index >= 0 && index < items.Length && Available(items[index])) ActionRequested?.Invoke(items[index]);
+        if (index < 0 || index >= entries.Length || !Available(entries[index])) return;
+        var entry = entries[index];
+        if (entry.Item != null) ActionRequested?.Invoke(entry.Item);
+        else OpenFolder(entry.Folder!);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         buttons.Clear();
-        if (items.Length == 0) return;
+        if (entries.Length == 0) return;
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var font = new Font("Segoe UI", 10);
@@ -103,15 +188,15 @@ internal sealed class HelpBar : Control
         if (Vertical)
         {
             using var heading = new Font("Segoe UI", 10, FontStyle.Bold);
-            TextRenderer.DrawText(g, "Szybka pomoc", heading, new Rectangle(S(4), 0, Width, HeadingHeight), KioskTheme.Muted,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(g, Heading, heading, new Rectangle(S(4), 0, Width, HeadingHeight), KioskTheme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             y = HeadingHeight;
         }
-        for (int i = 0; i < items.Length; i++)
+        for (int i = 0; i < entries.Length; i++)
         {
-            var item = items[i];
-            bool available = Available(item);
-            int width = Vertical ? Width - 1 : ButtonWidth(item);
+            var entry = entries[i];
+            bool available = Available(entry);
+            int width = Vertical ? Width - 1 : ButtonWidth(entry);
             var bounds = new Rectangle(x, y, width, ButtonHeight - 1);
             buttons.Add(bounds);
             using var path = KioskTheme.RoundedRectangle(bounds, S(10));
@@ -119,9 +204,13 @@ internal sealed class HelpBar : Control
             using (var fill = new SolidBrush(Color.FromArgb(i == hover ? 255 : available ? 215 : 110, i == hover ? KioskTheme.AccentSoft : KioskTheme.Surface)))
                 g.FillPath(fill, path);
             using (var border = new Pen(i == hover ? KioskTheme.AccentLine : available ? KioskTheme.Border : Color.FromArgb(120, KioskTheme.Border))) g.DrawPath(border, path);
-            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(10), bounds.Top, S(24), bounds.Height), GlyphFor(item), null, available ? KioskTheme.AccentLine : KioskTheme.Muted);
-            TextRenderer.DrawText(g, item.Name, font, new Rectangle(bounds.Left + S(42), bounds.Top, bounds.Width - S(48), bounds.Height), available ? KioskTheme.Text : KioskTheme.Muted,
+            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(10), bounds.Top, S(24), bounds.Height), GlyphFor(entry), null, available ? KioskTheme.AccentLine : KioskTheme.Muted);
+            bool category = entry.Folder != null && !entry.Back;
+            TextRenderer.DrawText(g, entry.Text, font, new Rectangle(bounds.Left + S(42), bounds.Top, bounds.Width - S(category ? 72 : 48), bounds.Height),
+                available ? KioskTheme.Text : KioskTheme.Muted,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+            if (category)
+                KioskIcons.Draw(g, new Rectangle(bounds.Right - S(30), bounds.Top, S(20), bounds.Height), "\uE76C", null, KioskTheme.Muted);   // chevron
             if (Vertical) y += ButtonHeight + Gap; else x += width + Gap;
         }
     }
