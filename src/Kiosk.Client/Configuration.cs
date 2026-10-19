@@ -122,6 +122,62 @@ internal sealed record HelpAction
     ];
 }
 
+/// <summary>
+/// Menu → Kategorie: a category of the left menu ("Pomoc") or a subcategory ("Pomoc/Konto"). The list's order is the
+/// order of the menu and of the panels; entries pick their category from this list.
+/// </summary>
+internal sealed record MenuCategory
+{
+    public string Name { get; init; } = "";
+    /// <summary>The category's icon by name (<see cref="TileIcons.Names"/>); empty = chosen from its name or first tile.</summary>
+    public string Icon { get; init; } = "";
+    internal string Path => Normalize(Name);
+
+    internal static string Normalize(string? name) => string.Join("/", (name ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
+
+    /// <summary>The list with every category the entries use (and their parents) added at the end, in the entries' order.</summary>
+    internal static MenuCategory[] Complete(MenuCategory[]? categories, IEnumerable<HelpAction>? items)
+    {
+        var list = (categories ?? []).Where(c => c != null && c.Path.Length > 0).GroupBy(c => c.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First() with { Name = g.Key }).ToList();
+        foreach (var path in (items ?? []).Where(i => i != null).Select(i => i.CategoryPath).Where(p => p.Length > 0))
+        {
+            var parts = path.Split('/');
+            for (int n = 1; n <= parts.Length; n++)
+            {
+                var part = string.Join("/", parts.Take(n));
+                if (!list.Any(c => c.Path.Equals(part, StringComparison.OrdinalIgnoreCase))) list.Add(new MenuCategory { Name = part });
+            }
+        }
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// The entries in the order the Kiosk shows them: without a category first, then by the category list (a category,
+    /// then its subcategories by their own place), and inside one category in the order of the list in Konfiguracja.
+    /// </summary>
+    internal static HelpAction[] Sort(IEnumerable<HelpAction> items, MenuCategory[] categories)
+    {
+        int Place(string path)
+        {
+            if (path.Length == 0) return -1;
+            int index = Array.FindIndex(categories, c => c.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+            return index < 0 ? int.MaxValue : index;
+        }
+        int[] Key(HelpAction item)
+        {
+            var parts = item.CategoryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length == 0 ? [-1] : Enumerable.Range(1, parts.Length).Select(n => Place(string.Join("/", parts.Take(n)))).ToArray();
+        }
+        var comparer = Comparer<int[]>.Create((a, b) =>
+        {
+            for (int i = 0; i < Math.Min(a.Length, b.Length); i++) if (a[i] != b[i]) return a[i].CompareTo(b[i]);
+            return a.Length.CompareTo(b.Length);
+        });
+        return items.Select((item, index) => (item, index)).OrderBy(x => Key(x.item), comparer).ThenBy(x => x.index).Select(x => x.item).ToArray();
+    }
+}
+
 internal static class Configuration
 {
     internal static Config Load(string path)

@@ -75,6 +75,7 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView idleScreens = Grid();
     private readonly DataGridView commands = Grid();
     private readonly DataGridView helpActions = Grid();
+    private readonly DataGridView menuCategories = Grid();
     private readonly DataGridView pageActions = Grid();
     private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
     private bool scaled;
@@ -342,12 +343,15 @@ internal sealed class SettingsView : UserControl
         tabs.TabPages.Add(helpTab);
         helpActions.Columns.Add("Name", "Napis na przycisku");
         helpActions.Columns.Add("Action", "Akcja");
-        // "Konto" or "Konto/Hasło": the left column shows categories, a click opens their buttons and subcategories.
-        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        // Chosen from the Kategorie tab: the left menu shows categories, a click opens their entries and subcategories.
+        var categoryColumn = new DataGridViewComboBoxColumn
         {
-            Name = "Category", HeaderText = "Kategoria", ToolTipText = "Np. Konto albo Konto/Hasło (podkategoria). Puste: przycisk od razu na liście.",
-            SortMode = DataGridViewColumnSortMode.NotSortable
-        });
+            Name = "Category", HeaderText = "Kategoria", ToolTipText = "Kategoria z zakładki „Kategorie”. Pusta: na stronie głównej, „Na skróty”.",
+            SortMode = DataGridViewColumnSortMode.NotSortable, FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.DropDownButton
+        };
+        helpActions.Columns.Add(categoryColumn);
+        // A value missing from the list (it is refreshed when the tab opens) must not stop the grid.
+        helpActions.DataError += (_, e) => e.ThrowException = false;
         // The tile in the self-service layout: the line under its name, its icon and the circle's colour.
         helpActions.Columns.Add(new DataGridViewTextBoxColumn
         {
@@ -374,25 +378,97 @@ internal sealed class SettingsView : UserControl
         });
         void AddHelpRow(HelpAction h)
         {
+            if (h.CategoryPath.Length > 0 && !categoryColumn.Items.Contains(h.CategoryPath)) categoryColumn.Items.Add(h.CategoryPath);
             int row = helpActions.Rows.Add(h.Name, h.Action, h.CategoryPath, h.Description, h.Icon, h.Color);
             SetEnabled(helpActions, row, h.Enabled);
             helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
         }
+        categoryColumn.Items.Add("");
         foreach (var h in config.HelpActions) AddHelpRow(h);
         SetupGridTab(helpTab, helpActions, "Przyciski „Menu” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
             " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +
             " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
-            "Kategoria grupuje przyciski: „Konto” albo „Konto/Hasło” dla podkategorii; kolejność kategorii jak na liście. " +
-            "W punkcie samoobsługowym każdy przycisk jest kafelkiem: kategorie są w lewym menu, opis, ikona i kolor zmieniają kafelek.", helpHeight: 110);
+            "Kategorię wybierasz z listy (tworzysz je w zakładce „Kategorie”). Kolejność w Kiosku: jak na tej liście, zmieniasz ją przyciskami „Wyżej” / „Niżej”. " +
+            "W punkcie samoobsługowym każdy przycisk jest kafelkiem: kategorie są w lewym menu, opis, ikona i kolor zmieniają kafelek.", helpHeight: 110, order: true);
         var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
         helpDefaults.Click += (_, _) =>
         {
             helpActions.Rows.Clear();
             foreach (var h in HelpAction.Defaults) AddHelpRow(h);
+            SyncCategories();
         };
         helpTab.Controls.Add(helpDefaults);
+
+        // Kategorie: created here, chosen in Menu; the order of this list is the order of the left menu.
+        var categoriesTab = new TabPage("Kategorie") { Padding = new Padding(12) };
+        tabs.TabPages.Insert(tabs.TabPages.IndexOf(helpTab) + 1, categoriesTab);
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Name", HeaderText = "Kategoria", ToolTipText = "Np. Pomoc, albo Pomoc/Konto dla podkategorii kategorii Pomoc",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Icon", HeaderText = "Ikona", ToolTipText = TileIcons.Names + ". Puste: dobrana do nazwy albo pierwszego kafelka.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions)) menuCategories.Rows.Add(c.Path, c.Icon);
+        List<string> CategoryPaths() => menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow)
+            .Select(r => MenuCategory.Normalize(Cell(r, "Name"))).Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        bool Under(string path, string category) => path.Equals(category, StringComparison.OrdinalIgnoreCase) || path.StartsWith(category + "/", StringComparison.OrdinalIgnoreCase);
+        // The entries' categories: the ones of this list, plus any an entry uses (added here so nothing is lost).
+        void SyncCategories()
+        {
+            var paths = CategoryPaths();
+            var used = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new HelpAction { Category = Cell(r, "Category") });
+            foreach (var missing in MenuCategory.Complete(paths.Select(p => new MenuCategory { Name = p }).ToArray(), used).Skip(paths.Count))
+            {
+                menuCategories.Rows.Add(missing.Path, "");
+                paths.Add(missing.Path);
+            }
+            categoryColumn.Items.Clear();
+            categoryColumn.Items.Add("");
+            foreach (var p in paths) categoryColumn.Items.Add(p);
+        }
+        // A renamed category takes its entries and subcategories with it.
+        string? renaming = null;
+        menuCategories.CellBeginEdit += (_, e) => renaming = e.ColumnIndex == menuCategories.Columns["Name"].Index
+            ? MenuCategory.Normalize(Convert.ToString(menuCategories.Rows[e.RowIndex].Cells["Name"].Value)) : null;
+        menuCategories.CellEndEdit += (_, e) =>
+        {
+            if (renaming is not { Length: > 0 } old || e.ColumnIndex != menuCategories.Columns["Name"].Index) return;
+            renaming = null;
+            var now = MenuCategory.Normalize(Convert.ToString(menuCategories.Rows[e.RowIndex].Cells["Name"].Value));
+            if (now.Length == 0 || now.Equals(old, StringComparison.Ordinal)) return;
+            string Moved(string path) => now + path[old.Length..];
+            foreach (DataGridViewRow r in menuCategories.Rows)
+                if (!r.IsNewRow && r.Index != e.RowIndex && Under(MenuCategory.Normalize(Cell(r, "Name")), old)) r.Cells["Name"].Value = Moved(MenuCategory.Normalize(Cell(r, "Name")));
+            var entries = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Under(Cell(r, "Category"), old)).ToList();
+            var paths = CategoryPaths();
+            categoryColumn.Items.Clear();
+            categoryColumn.Items.Add("");
+            foreach (var p in paths) categoryColumn.Items.Add(p);
+            foreach (var r in entries) r.Cells["Category"].Value = Moved(Cell(r, "Category"));
+        };
+        // A removed category: its subcategories go too, their entries move to the start page ("Na skróty").
+        SetupGridTab(categoriesTab, menuCategories, "Kategorie lewego menu w punkcie samoobsługowym i folderów Menu. Podkategoria: nazwa kategorii, ukośnik i nazwa, " +
+            "np. „Pomoc/Konto”. Kolejność na liście to kolejność w menu – zmieniasz ją przyciskami „Wyżej” / „Niżej”. Zmiana nazwy przenosi wpisy, " +
+            "usunięcie kategorii przenosi jej wpisy na stronę główną. Ikona: " + TileIcons.Names + ".", helpHeight: 96, order: true, removing: row =>
+        {
+            var path = MenuCategory.Normalize(Cell(row, "Name"));
+            if (path.Length == 0) return;
+            foreach (DataGridViewRow r in helpActions.Rows) if (!r.IsNewRow && Under(Cell(r, "Category"), path)) r.Cells["Category"].Value = "";
+            BeginInvoke(() =>
+            {
+                foreach (var r in menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Under(MenuCategory.Normalize(Cell(r, "Name")), path)).ToList())
+                    menuCategories.Rows.Remove(r);
+                SyncCategories();
+            });
+        });
+        SyncCategories();
+        tabs.Selected += (_, e) => { if (e.TabPage == helpTab) SyncCategories(); };
         showHelp.Checked = config.ShowHelp;
         showHelp.CheckedChanged += (_, _) => helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
         helpActions.Enabled = helpDefaults.Enabled = showHelp.Checked;
@@ -815,13 +891,37 @@ internal sealed class SettingsView : UserControl
         panel.Controls.Add(control, 1, row);
     }
 
-    private static void SetupGridTab(TabPage page, DataGridView grid, string help, int helpHeight = 48)
+    /// <param name="order">"Wyżej" / "Niżej" buttons: the list's order is the order on screen.</param>
+    /// <param name="removing">Called before a row is removed (the button or the Delete key).</param>
+    private static void SetupGridTab(TabPage page, DataGridView grid, string help, int helpHeight = 48, bool order = false, Action<DataGridViewRow>? removing = null)
     {
         var remove = new Button { Text = "Usuń wybrany wiersz", AutoSize = true, Dock = DockStyle.Bottom };
-        remove.Click += (_, _) => { if (grid.CurrentRow is { IsNewRow: false } row) grid.Rows.Remove(row); };
+        remove.Click += (_, _) => { if (grid.CurrentRow is { IsNewRow: false } row) { removing?.Invoke(row); grid.Rows.Remove(row); } };
+        if (removing != null) grid.UserDeletingRow += (_, e) => { if (e.Row is { IsNewRow: false } row) removing(row); };
         page.Controls.Add(grid);
         page.Controls.Add(new Label { Text = help, Dock = DockStyle.Top, Height = helpHeight, ForeColor = HelpText });
         page.Controls.Add(remove);
+        if (!order) return;
+        var moves = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, BackColor = Color.Transparent };
+        var up = new Button { Text = "↑ Wyżej", AutoSize = true, MinimumSize = new Size(120, 0) };
+        var down = new Button { Text = "↓ Niżej", AutoSize = true, MinimumSize = new Size(120, 0) };
+        up.Click += (_, _) => MoveRow(grid, -1);
+        down.Click += (_, _) => MoveRow(grid, 1);
+        moves.Controls.AddRange(new Control[] { up, down });
+        page.Controls.Add(moves);
+    }
+
+    /// <summary>Moves the selected row one place up (-1) or down (1); the new-row line stays last.</summary>
+    private static void MoveRow(DataGridView grid, int by)
+    {
+        if (grid.CurrentRow is not { IsNewRow: false } row) return;
+        grid.EndEdit();
+        int from = row.Index, to = from + by, last = grid.Rows.Count - (grid.AllowUserToAddRows ? 2 : 1);
+        if (to < 0 || to > last) return;
+        int column = grid.CurrentCell?.ColumnIndex ?? 0;
+        grid.Rows.RemoveAt(from);
+        grid.Rows.Insert(to, row);
+        grid.CurrentCell = row.Cells[column].Visible ? row.Cells[column] : row.Cells.Cast<DataGridViewCell>().First(c => c.Visible);
     }
 
     /// <summary>"Włączony": unticked entries stay in the list (so they need not be typed again) but Kiosk does not use them.</summary>
@@ -908,6 +1008,8 @@ internal sealed class SettingsView : UserControl
                     Description = Cell(r, "Description").Trim(), Icon = Cell(r, "Icon").Trim(), Color = Cell(r, "Color").Trim(),
                     SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
                 }).ToArray(),
+            MenuCategories = menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && MenuCategory.Normalize(Cell(r, "Name")).Length > 0)
+                .Select(r => new MenuCategory { Name = MenuCategory.Normalize(Cell(r, "Name")), Icon = Cell(r, "Icon") }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
             NewsSharePointCount = (int)newsSharePointCount.Value,

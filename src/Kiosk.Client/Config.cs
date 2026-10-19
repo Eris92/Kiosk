@@ -134,6 +134,8 @@ internal sealed record Config
     public bool NewsBarsOnScreens { get; init; }
     /// <summary>Szybka pomoc on the desktop, also on the lock screen (MFA, password reset, card PIN). Empty = none.</summary>
     public HelpAction[] HelpActions { get; init; } = HelpAction.Defaults;
+    /// <summary>Menu → Kategorie: the categories in the order of the left menu. Completed from the entries when loaded.</summary>
+    public MenuCategory[] MenuCategories { get; init; } = [];
     /// <summary>Off: no Szybka pomoc on the desktop at all; the buttons stay in the list for later.</summary>
     public bool ShowHelp { get; init; } = true;
     /// <summary>The Szybka pomoc page (opened without signing in) closes after this many seconds without activity.</summary>
@@ -175,7 +177,7 @@ internal sealed record Config
             Commands = Commands.Where(c => c.Enabled).ToArray(),
             PageActions = PageActions.Where(a => a.Enabled).ToArray(),
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
-            HelpActions = ShowHelp ? HelpActions.Where(h => h.Enabled).ToArray() : [],
+            HelpActions = ShowHelp ? MenuCategory.Sort(HelpActions.Where(h => h.Enabled), MenuCategories) : [],
         };
     }
 
@@ -198,6 +200,7 @@ internal sealed record Config
             EnableBrowser = applications?.Any(a => a.IsBuiltInBrowser) == true,
             // Version 4: automatic update is on by default (build-66 saved it switched off without asking).
             AutoUpdate = ConfigVersion < 4 || AutoUpdate,
+            MenuCategories = MenuCategory.Complete(MenuCategories, HelpActions),
             ConfigVersion = CurrentVersion,
             Server = null, Port = null, IdleSeconds = null
         };
@@ -245,6 +248,8 @@ internal sealed record Config
                 !(HelpAction.BuiltIn.Contains(help.Action, StringComparer.OrdinalIgnoreCase) ||
                   Uri.TryCreate(help.Action, UriKind.Absolute, out var helpUri) && helpUri.Scheme == Uri.UriSchemeHttps))
                 throw new InvalidDataException("Menu: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
+        foreach (var category in MenuCategories ?? throw new InvalidDataException("Lista kategorii nie może być null."))
+            if (category == null || category.Path.Length == 0) throw new InvalidDataException("Kategorie: każda kategoria potrzebuje nazwy.");
         foreach (var help in HelpActions)
             if (help.Color is { Length: > 0 } tileColor && !KioskTheme.IsColor(tileColor))
                 throw new InvalidDataException("Menu: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");

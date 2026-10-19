@@ -41,9 +41,24 @@ internal static class TileIcons
         _ => ""
     };
 
-    /// <summary>A category's icon: its name when it is one of the icons, otherwise its first tile's.</summary>
+    private static Dictionary<string, string> categoryIcons = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Menu → Kategorie: the icons chosen there, by the category's path and by its own name.</summary>
+    internal static void SetCategories(MenuCategory[] categories)
+    {
+        var icons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var category in categories)
+            if (ByName(category.Icon) is { } glyph)
+            {
+                icons[category.Path] = glyph;
+                icons.TryAdd(category.Path.Split('/')[^1], glyph);
+            }
+        categoryIcons = icons;
+    }
+
+    /// <summary>A category's icon: chosen in Kategorie, its name when it is one of the icons, otherwise its first tile's.</summary>
     internal static string ForCategory(string name, IEnumerable<HelpAction> inside) =>
-        ByName(name) ?? Plain(name) switch
+        categoryIcons.GetValueOrDefault(name) ?? ByName(name) ?? Plain(name) switch
         {
             var n when n.Contains("pomoc") => "",
             var n when n.Contains("incydent") || n.Contains("zglos") => "",

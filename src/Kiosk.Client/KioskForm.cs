@@ -796,6 +796,7 @@ internal sealed partial class KioskForm : Form
     {
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
+        TileIcons.SetCategories(config.MenuCategories);
         desktop.SetHelp(config.HelpActions);
         desktop.Help.SignedIn = !SelfService || cardLogon != null;
         desktop.Portal = SelfService;
