@@ -145,22 +145,15 @@ internal sealed class HelpBrowserForm : Form
         var policy = new SitePolicy(true, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
         browser = new BrowserView([], policy, null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder) { Dock = DockStyle.Fill };
-        var header = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = KioskTheme.ShellBar };
-        var heading = new Label
-        {
-            Text = title + (windowsAccount ? "" : "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane"), AutoSize = false, Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 0, 0), Font = new Font("Segoe UI", 11), ForeColor = KioskTheme.Text
-        };
-        var close = new Button { Text = windowsAccount ? "Wróć do Kiosku" : "Zamknij", Dock = DockStyle.Right, Width = windowsAccount ? 180 : 140 };
+        // One bar: ← → ⟳, the page's name and a large close button (no second bar above the browser's).
+        var close = new Button { Text = windowsAccount ? "Wróć do Kiosku" : "Zamknij" };
         KioskTheme.StyleButton(close, primary: true);
         close.Click += (_, _) => Close();
-        header.Controls.Add(heading);
-        header.Controls.Add(close);
+        browser.SetPageBar(title + (windowsAccount ? "" : "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane"), close);
         countdown.BackColor = KioskTheme.ShellBar;
         countdown.Expired += Close;
         Controls.Add(browser);
         Controls.Add(countdown);
-        Controls.Add(header);
         // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
         // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
         browser.Activity += Touched;

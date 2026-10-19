@@ -136,11 +136,28 @@ internal sealed class BrowserView : UserControl
 
     private new int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
 
+    private Label? pageTitle;
+    private Button? pageClose;
+
+    /// <summary>
+    /// One bar for a single page (Szybka pomoc, the card person's page): ← → ⟳, the page's name and a large
+    /// close button in the accent colour, instead of a second bar above the browser's own.
+    /// </summary>
+    internal void SetPageBar(string title, Button close)
+    {
+        pageTitle = new Label { Text = title, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI Semibold", 12), ForeColor = KioskTheme.Text, BackColor = KioskTheme.Taskbar };
+        pageClose = close;
+        close.Font = new Font("Segoe UI", 12, FontStyle.Bold);
+        toolbar.Controls.Add(pageTitle);
+        toolbar.Controls.Add(close);
+        if (IsHandleCreated) { toolbar.Height = Scale(64); ArrangeToolbar(); }
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         tabStrip.Height = Scale(44);
-        toolbar.Height = Scale(50);
+        toolbar.Height = Scale(pageClose != null ? 64 : 50);
         favorites.Height = Scale(40);
         ArrangeTabs();
         ArrangeToolbar();
@@ -148,11 +165,20 @@ internal sealed class BrowserView : UserControl
 
     private void ArrangeToolbar()
     {
-        int height = Scale(36), top = (toolbar.Height - height) / 2, gap = Scale(6), x = Scale(10);
+        int height = Scale(pageClose != null ? 44 : 36), top = (toolbar.Height - height) / 2, gap = Scale(6), x = Scale(10);
         foreach (var button in new[] { back, forward, reload })
         {
-            button.SetBounds(x, top, Scale(44), height);
-            x += Scale(44) + gap;
+            button.SetBounds(x, top, Scale(pageClose != null ? 52 : 44), height);
+            x += Scale(pageClose != null ? 52 : 44) + gap;
+        }
+        if (pageClose != null && pageTitle != null)
+        {
+            int closeWidth = Math.Max(Scale(220), TextRenderer.MeasureText(pageClose.Text, pageClose.Font).Width + Scale(40));
+            int closeHeight = Scale(48);
+            pageClose.SetBounds(toolbar.Width - Scale(10) - closeWidth, (toolbar.Height - closeHeight) / 2, closeWidth, closeHeight);
+            pageTitle.SetBounds(x + Scale(12), 0, Math.Max(0, pageClose.Left - x - Scale(24)), toolbar.Height);
+            favorites.Visible = false;
+            return;
         }
         if (policy.Restricted)
         {
