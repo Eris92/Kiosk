@@ -20,8 +20,8 @@ internal sealed partial class KioskForm
 
     /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
     private DateTime? cardAwaySince;
-    // Windows may ask to lift the card and tap it again, and resets it: that must not end the sign-in.
-    private const int CardReturnSeconds = 20;
+    /// <summary>Konfiguracja → Szybka pomoc: "Wyloguj po zdjęciu karty".</summary>
+    private int CardReturnSeconds => config.CardRemovedSeconds;
 
     /// <summary>Nobody signed in: the card sign-in screen is (re)started in the start screen and waits for a tap.</summary>
     private void PrepareCardSignIn()

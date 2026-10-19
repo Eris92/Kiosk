@@ -30,6 +30,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
     private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Kiosk: karta + PIN w Kiosku, aplikacje i przeglądarka jako ta osoba (SSO)", "Powłoka Windows: bez karty w Kiosku, liczy się konto zalogowane do Windows", "Punkt samoobsługowy: tylko ekran startowy z Szybką pomocą i Komunikatami, karta loguje raz (FIDO2), dopóki leży na czytniku" } };
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
+    private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
@@ -364,6 +365,12 @@ internal sealed class SettingsView : UserControl
         helpClose.Controls.Add(helpCloseSeconds);
         helpCloseSeconds.Value = Math.Clamp(config.HelpCloseSeconds, 5, 3600);
         helpTab.Controls.Add(helpClose);
+        // Punkt samoobsługowy: how soon taking the card away signs the person out.
+        var cardRemoved = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(0, 0, 0, 8), BackColor = Color.Transparent };
+        cardRemoved.Controls.Add(new Label { Text = "Wyloguj po zdjęciu karty z czytnika po (sekundy)", AutoSize = true, Margin = new Padding(0, 6, 0, 0) });
+        cardRemoved.Controls.Add(cardRemovedSeconds);
+        cardRemovedSeconds.Value = Math.Clamp(config.CardRemovedSeconds, 1, 300);
+        helpTab.Controls.Add(cardRemoved);
         helpTab.Controls.Add(showHelp);
 
         var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
@@ -881,6 +888,7 @@ internal sealed class SettingsView : UserControl
             ConfigSource = configSource.Text.Trim().Trim('"'),
             ShowHelp = showHelp.Checked,
             HelpCloseSeconds = (int)helpCloseSeconds.Value,
+            CardRemovedSeconds = (int)cardRemovedSeconds.Value,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry

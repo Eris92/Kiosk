@@ -24,6 +24,7 @@
   "AutoUpdate": true,
   "ShowHelp": true,
   "HelpCloseSeconds": 60,
+  "CardRemovedSeconds": 3,
   "BrandTitle": "Kiosk",
   "BrandSubtitle": "Twój pulpit pracy",
   "BrandLogo": "",
