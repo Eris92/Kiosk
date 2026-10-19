@@ -731,7 +731,7 @@ namespace FidoRun
                 // The Kiosk moves or the card place changes: the choice follows it.
                 Timer follow = new Timer { Interval = 300 };
                 follow.Tick += delegate { if (IsHandleCreated && Visible) dialog.Bounds = RectangleToScreen(ClientRectangle); };
-                dialog.Shown += delegate { follow.Start(); dialog.Activate(); };
+                dialog.Shown += delegate { follow.Start(); dialog.Activate(); log.Write("AccountChoice=Shown; Accounts=" + accounts.Count + "; InKiosk=True"); };
                 try { dialog.ShowDialog(); }
                 finally { follow.Dispose(); }
             }
