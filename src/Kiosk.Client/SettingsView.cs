@@ -28,8 +28,8 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
-    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Kiosk: karta + PIN w Kiosku, aplikacje i przeglądarka jako ta osoba (SSO)", "Powłoka Windows: bez karty w Kiosku, liczy się konto zalogowane do Windows", "Punkt samoobsługowy: tylko ekran startowy z Szybką pomocą i Komunikatami, karta loguje raz (FIDO2), dopóki leży na czytniku" } };
-    private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
+    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Kiosk: karta + PIN w Kiosku, aplikacje i przeglądarka jako ta osoba (SSO)", "Powłoka Windows: bez karty w Kiosku, liczy się konto zalogowane do Windows", "Punkt samoobsługowy: tylko ekran startowy z Menu i Komunikatami, karta loguje raz (FIDO2), dopóki leży na czytniku" } };
+    private readonly CheckBox showHelp = new() { Text = "Pokazuj Menu na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
@@ -63,7 +63,7 @@ internal sealed class SettingsView : UserControl
     private static readonly Color Card = Color.FromArgb(43, 43, 43);
     private const int RowHeight = 54;
     private const string CustomAccent = "Własny kolor…";
-    private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z listy: zakładki, dozwolone domeny i strony Szybkiej pomocy (także linki na nich)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
+    private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z listy: zakładki, dozwolone domeny i strony z Menu (także linki na nich)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
     private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” kartą i jej PIN-em (bez loginu i hasła): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
     private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };
@@ -273,7 +273,7 @@ internal sealed class SettingsView : UserControl
         SetupGridTab(pagesTab, pageActions, "Kiosk sam klika na stronach (strona startowa, ekrany, przeglądarka Kiosku). Adres: portal.firma.pl (z subdomenami) " +
             "albo https://portal.firma.pl/login (początek adresu). „Kliknij”: np. Akceptuj wszystkie;Accept all – przycisk z tym napisem jest klikany, gdy się pojawi. " +
             "„Zaloguj kontem wspólnym”: nazwa konta z " + SharedAccounts.FileName + " (obok client.json, skrypt Set-KioskSharedAccount.ps1) – Kiosk wpisuje login i hasło i klika przycisk logowania. " +
-            "„Dla”: Wszyscy, Kiosk (ekrany i ekran blokady, Szybka pomoc – gdy nikt nie pracuje) albo Użytkownicy (przeglądarka zalogowanej osoby).", helpHeight:  96);
+            "„Dla”: Wszyscy, Kiosk (ekrany i ekran blokady, Menu – gdy nikt nie pracuje) albo Użytkownicy (przeglądarka zalogowanej osoby).", helpHeight:  96);
         var choose = new Button { Text = "Wybierz plik EXE…", AutoSize = true, Dock = DockStyle.Bottom };
         choose.Click += (_, _) => ChooseExecutable();
         applications.Controls.Add(choose);
@@ -338,7 +338,7 @@ internal sealed class SettingsView : UserControl
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
             "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
 
-        var helpTab = new TabPage("Szybka pomoc") { Padding = new Padding(12) };
+        var helpTab = new TabPage("Menu") { Padding = new Padding(12) };
         tabs.TabPages.Add(helpTab);
         helpActions.Columns.Add("Name", "Napis na przycisku");
         helpActions.Columns.Add("Action", "Akcja");
@@ -379,7 +379,7 @@ internal sealed class SettingsView : UserControl
             helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
         }
         foreach (var h in config.HelpActions) AddHelpRow(h);
-        SetupGridTab(helpTab, helpActions, "Przyciski „Szybka pomoc” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
+        SetupGridTab(helpTab, helpActions, "Przyciski „Menu” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
             " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +

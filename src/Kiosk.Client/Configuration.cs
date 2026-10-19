@@ -113,12 +113,12 @@ internal sealed record HelpAction
     internal static HelpAction[] Defaults =>
     [
         new() { Name = "SharePoint", Action = "https://www.microsoft365.com/launch/sharepoint", Description = "Strony i dokumenty firmy", Icon = "dokument" },
-        new() { Name = "Pierwsze logowanie", Action = FirstSignIn, Category = "Szybka pomoc/Konto", Description = "Profil Windows i logowanie jednokrotne" },
-        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Szybka pomoc/Konto", Description = "Klucz zabezpieczeń i metody logowania" },
-        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Szybka pomoc/Konto", Description = "Nowe hasło do konta", Icon = "klucz" },
-        new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Szybka pomoc/Karta", Description = "Nowy PIN do logowania kartą" },
-        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Szybka pomoc/Karta", Description = "Np. po zmianie hasła" },
-        new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Szybka pomoc/Karta", Description = "Usuwa PIN i wszystkie klucze z karty" },
+        new() { Name = "Pierwsze logowanie", Action = FirstSignIn, Category = "Pomoc/Konto", Description = "Profil Windows i logowanie jednokrotne" },
+        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Pomoc/Konto", Description = "Klucz zabezpieczeń i metody logowania" },
+        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Pomoc/Konto", Description = "Nowe hasło do konta", Icon = "klucz" },
+        new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Pomoc/Karta", Description = "Nowy PIN do logowania kartą" },
+        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Pomoc/Karta", Description = "Np. po zmianie hasła" },
+        new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Pomoc/Karta", Description = "Usuwa PIN i wszystkie klucze z karty" },
     ];
 }
 

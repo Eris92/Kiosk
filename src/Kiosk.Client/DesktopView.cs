@@ -247,8 +247,10 @@ internal sealed partial class DesktopView : UserControl
     {
         // Only one of them is in the frame; nothing of another one stays under it (the icon showed through a question).
         bool page = pageContent != null && !AskingPin && !Asking;
-        bool signIn = signingIn && !AskingPin && !Asking && !page;
-        bool status = !signIn && !page && !Asking;
+        // In the portal the greeting is never shown and the sign-in only when asked for: computed once, so nothing is
+        // shown and hidden again in one pass (that made other elements blink).
+        bool signIn = signingIn && !AskingPin && !Asking && !page && (!portal || signInWanted);
+        bool status = !signIn && !page && !Asking && !portal;
         card.SuspendLayout();
         if (pageContent != null) pageContent.Visible = page;
         signInPlace.Visible = signIn;
@@ -408,7 +410,8 @@ internal sealed partial class DesktopView : UserControl
         int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
         int logoSize = Scale(76), textLeft = margin;
         // Visible reads false while the desktop itself is hidden, so the layout looks at the content.
-        if (logo.Image != null)
+        // The portal places these itself: moving them here first and back there made them blink on every change.
+        if (!portal && logo.Image != null)
         {
             // Wide logos keep their proportions up to three times their height.
             var image = logo.Image!;
@@ -418,10 +421,13 @@ internal sealed partial class DesktopView : UserControl
         }
         int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
         // Only a line under it: the line moves up to where the name would be.
-        brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
-        subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
-        clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
-        date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
+        if (!portal)
+        {
+            brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
+            subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
+            clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
+            date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
+        }
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin && !Asking;
@@ -434,7 +440,8 @@ internal sealed partial class DesktopView : UserControl
             cardHeight = place.Height;
             card.Bounds = place;
             if (page) { int inset = Scale(2); pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)); }
-            Help.Visible = News.Visible = false;
+            if (Help.Visible) Help.Visible = false;
+            if (News.Visible) News.Visible = false;
         }
         else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
         ArrangeCardInside(cardWidth, cardHeight, personRow);

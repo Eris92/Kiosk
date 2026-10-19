@@ -100,7 +100,7 @@ internal sealed class HelpBar : Control
     private int HeadingHeight => S(30);
     private int ButtonHeight => S(40);
     private int Gap => S(8);
-    private string Heading => folder.Length == 0 ? "Szybka pomoc" : folder.Replace("/", " › ");
+    private string Heading => folder.Length == 0 ? "Menu" : folder.Replace("/", " › ");
 
     private static string GlyphFor(Entry entry)
     {
@@ -153,7 +153,7 @@ internal sealed class HelpBar : Control
                 width = Math.Max(width, TextRenderer.MeasureText(string.Join(" › ", parts[..(i + 1)]), bold).Width + S(8));
             }
         }
-        return Math.Max(width, TextRenderer.MeasureText("Szybka pomoc", bold).Width + S(8));
+        return Math.Max(width, TextRenderer.MeasureText("Menu", bold).Width + S(8));
     }
 
     protected override void OnMouseMove(MouseEventArgs e)

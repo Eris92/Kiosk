@@ -437,9 +437,8 @@ internal sealed partial class DesktopView
         card.Visible = cardOn;
         Tiles.Visible = !cardOn;
         Tiles.Busy = Asking || AskingPin;
-        foreach (var c in new Control[] { heading, detail, hint, resume }) c.Visible = false;
-        signInPlace.Visible = signingIn && signInWanted && !page && !AskingPin && !Asking;
-        Help.Visible = News.Visible = false;
+        if (Help.Visible) Help.Visible = false;
+        if (News.Visible) News.Visible = false;
         UpdatePortalHeader();
     }
 

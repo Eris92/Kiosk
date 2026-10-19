@@ -1952,7 +1952,7 @@ internal sealed partial class KioskForm : Form
             if (spItems.Count != 1 || spItems[0].Action != "https://firma.sharepoint.com/sites/i/SitePages/a.aspx" || merged.Count != 3 ||
                 merged[0] != spItems[0] || merged[1] != items[0] || News.Merge(items, spItems, NewsOrdering.MineFirst)[0] != items[0])
                 throw new InvalidOperationException("SharePoint news were not merged with the folder's messages.");
-            if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Szybka pomoc is not on the desktop.");
+            if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Menu is not on the desktop.");
             desktop.SetNews(all, 8);
             if (desktop.News.Count != 2 || desktop.BarCount != 1) throw new InvalidOperationException("Company messages are not on the desktop.");
             var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));

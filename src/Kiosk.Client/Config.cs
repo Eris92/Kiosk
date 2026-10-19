@@ -240,18 +240,18 @@ internal sealed record Config
             throw new InvalidDataException("Konfigurację z serwera podaj jako pełną ścieżkę folderu, np. \\\\serwer\\kiosk albo C:\\KioskCentral.");
         if (NewsFolder == null || NewsFolder.Length > 0 && !Path.IsPathFullyQualified(NewsFolder))
             throw new InvalidDataException("Folder komunikatów podaj jako pełną ścieżkę, np. \\\\serwer\\kiosk\\komunikaty albo C:\\ProgramData\\Kiosk\\news.");
-        foreach (var help in HelpActions ?? throw new InvalidDataException("Lista Szybkiej pomocy nie może być null."))
+        foreach (var help in HelpActions ?? throw new InvalidDataException("Lista Menu nie może być null."))
             if (help == null || string.IsNullOrWhiteSpace(help.Name) ||
                 !(HelpAction.BuiltIn.Contains(help.Action, StringComparer.OrdinalIgnoreCase) ||
                   Uri.TryCreate(help.Action, UriKind.Absolute, out var helpUri) && helpUri.Scheme == Uri.UriSchemeHttps))
-                throw new InvalidDataException("Szybka pomoc: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
+                throw new InvalidDataException("Menu: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
         foreach (var help in HelpActions)
             if (help.Color is { Length: > 0 } tileColor && !KioskTheme.IsColor(tileColor))
-                throw new InvalidDataException("Szybka pomoc: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");
+                throw new InvalidDataException("Menu: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");
         if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
             throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
         if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");
-        if (HelpCloseSeconds is < 5 or > 3600) throw new InvalidDataException("Zamykanie okna Szybkiej pomocy: od 5 do 3600 sekund.");
+        if (HelpCloseSeconds is < 5 or > 3600) throw new InvalidDataException("Zamykanie okna Menu: od 5 do 3600 sekund.");
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");

@@ -100,9 +100,14 @@ internal static class Updater
         return Path.GetDirectoryName(exe)!;
     }
 
+    private static bool launched;
+
     /// <summary>Starts the downloaded copy, which installs itself once this process has exited. Close Kiosk right after.</summary>
     internal static void Launch(string newClient)
     {
+        // Ctrl+Alt+U and "Aktualizuj automatycznie" at the same time: one installer only (two Kiosks started after it).
+        if (launched) return;
+        launched = true;
         var target = AppContext.BaseDirectory.TrimEnd('\\');
         var arguments = new[] { Argument, Environment.ProcessId.ToString(), target }.Concat(Environment.GetCommandLineArgs().Skip(1));
         Process.Start(new ProcessStartInfo(Path.Combine(newClient, "Kiosk.Client.exe"))
