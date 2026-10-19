@@ -20,6 +20,12 @@ internal sealed partial class KioskForm
 
     /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
     private DateTime? cardAwaySince;
+    /// <summary>
+    /// The readers that held a card when the person signed in: the card on the NFC reader, or the USB key (its own
+    /// reader). The configured reader alone is not enough: with a USB key it holds nothing, and the person was signed
+    /// out right after signing in. Empty = the key has no reader (FIDO over HID only): nothing to watch.
+    /// </summary>
+    private string[] signInReaders = [];
     /// <summary>Konfiguracja → Szybka pomoc: "Wyloguj po zdjęciu karty".</summary>
     private int CardReturnSeconds => config.CardRemovedSeconds;
 
@@ -60,7 +66,9 @@ internal sealed partial class KioskForm
         cardLogon = logon;
         cardAwaySince = null;
         cardKey = reader.Snapshot(config.ReaderName);
+        signInReaders = reader.ReadersWithCard() ?? [];
         Audit.Write("selfservice_signed_in_with_card", logon.DisplayName);
+        Audit.Write("selfservice_card_watched", signInReaders.Length == 0 ? "(brak czytnika z kartą)" : string.Join(", ", signInReaders));
         notice = null;
         RefreshChrome();
         bool ready;
@@ -79,7 +87,16 @@ internal sealed partial class KioskForm
         PrepareCardSignIn();
         if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Wróć do Kiosku" or its countdown closed it.
         if (cardLogon == null) return;
-        if (key != null)
+        if (signInReaders.Length == 0)
+        {
+            // Windows resets the card while signing in; the first reader seen holding it afterwards is the one watched.
+            signInReaders = reader.ReadersWithCard() ?? [];
+            if (signInReaders.Length > 0) Audit.Write("selfservice_card_watched", string.Join(", ", signInReaders));
+            return;
+        }
+        var holding = reader.ReadersWithCard();
+        if (holding == null) return;   // The smart card service did not answer: no decision this tick.
+        if (holding.Intersect(signInReaders, StringComparer.Ordinal).Any())
         {
             if (cardAwaySince != null) { cardAwaySince = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
             return;
@@ -99,6 +116,7 @@ internal sealed partial class KioskForm
     {
         if (cardLogon == null) return;
         cardAwaySince = null;
+        signInReaders = [];
         helpBrowser?.Close();
         CloseCardPage();
         cardLogon.Dispose(); // Signs the person out of Windows here: their Edge closes with it.

@@ -231,6 +231,25 @@ internal sealed class CardReader : IDisposable
         // ATR is a change signal only, never an authenticated user identity.
         return card.Reader + ":" + (card.EventState >> 16) + ":" + Convert.ToHexString(card.Atr.AsSpan(0, checked((int)Math.Min(card.AtrLength, 36u))));
     }
+    /// <summary>
+    /// Every reader holding a card now, the configured one or not (a USB security key is its own reader, e.g.
+    /// "Yubico YubiKey OTP+FIDO+CCID 0", gone when the key is pulled out). The SIM slot never counts. Null = unknown.
+    /// </summary>
+    internal string[]? ReadersWithCard()
+    {
+        if (context == IntPtr.Zero && Native.SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context) != 0) { context = IntPtr.Zero; return null; }
+        uint size = 0;
+        int result = Native.SCardListReaders(context, null, null, ref size);
+        if (result == unchecked((int)0x8010002E)) return [];   // SCARD_E_NO_READERS_AVAILABLE: the last key was pulled out.
+        if (result != 0) { Reset(); return null; }
+        var names = new char[size];
+        if (Native.SCardListReaders(context, null, names, ref size) != 0) { Reset(); return null; }
+        var states = new string(names).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(n => new Native.ReaderState { Reader = n, Atr = new byte[36] }).ToArray();
+        if (states.Length == 0) return [];
+        if (Native.SCardGetStatusChange(context, 0, states, (uint)states.Length) != 0) { Reset(); return null; }
+        return MonitoredReaders(states, "").Where(s => IsUsableCard(s.EventState)).Select(s => s.Reader).ToArray();
+    }
     private void Reset() { if (context != IntPtr.Zero) Native.SCardReleaseContext(context); context = IntPtr.Zero; }
     public void Dispose() => Reset();
 }
