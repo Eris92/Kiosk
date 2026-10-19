@@ -694,8 +694,9 @@ namespace FidoRun
                     BackColor = kioskSurface, Margin = Padding.Empty, MaximumSize = new Size(0, Math.Max(100, dialog.Height - (int)(24 * scale)))
                 };
                 Label title = new Label { Text = "Wybierz konto", AutoSize = false, Width = width, Height = KioskFont(22, FontStyle.Bold).Height + (int)(4 * scale), Font = KioskFont(22, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(6 * scale)) };
-                Label hint = new Label { Text = "Na karcie jest kilka kont. Wybierz, na które się zalogować.", AutoSize = false, Width = width, ForeColor = kioskMuted, TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(14 * scale)) };
-                hint.Height = TextRenderer.MeasureText(hint.Text, hint.Font, new Size(width, 0), TextFormatFlags.WordBreak).Height + 4;
+                Label hint = new Label { Text = "Na karcie jest kilka kont. Wybierz, na które się zalogować.", AutoSize = false, Width = width, Font = KioskFont(11), ForeColor = kioskMuted, TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(14 * scale)) };
+                // Measured with its own font: a label not yet on the form would measure with the default 9 pt one and get cut.
+                hint.Height = TextRenderer.MeasureText(hint.Text, hint.Font, new Size(width, 0), TextFormatFlags.WordBreak).Height + (int)(6 * scale);
                 content.Controls.Add(title);
                 content.Controls.Add(hint);
                 Color tile = Blend(kioskSurface, kioskMuted, 0.08f), line = Blend(kioskSurface, kioskMuted, 0.3f);
