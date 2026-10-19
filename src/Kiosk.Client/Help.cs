@@ -167,7 +167,7 @@ internal sealed class HelpBrowserForm : Form
         policy.Trust(url);
         browser = new BrowserView([], policy, null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder) { Dock = DockStyle.Fill };
         // One bar: ← → ⟳, the page's name and a large close button (no second bar above the browser's).
-        var close = new Button { Text = windowsAccount ? "Wróć do Kiosku" : "Zamknij" };
+        var close = new Button { Text = "Zamknij" };   // The same word everywhere (signed in or guest).
         KioskTheme.StyleButton(close, primary: true);
         close.Click += (_, _) => Close();
         browser.SetPageBar(title + (windowsAccount ? "" : "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane"), close);

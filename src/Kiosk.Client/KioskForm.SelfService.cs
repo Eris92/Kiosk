@@ -133,7 +133,7 @@ internal sealed partial class KioskForm
         cardKey = key;
         PrepareCardSignIn();
         if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
-        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Wróć do Kiosku" or its countdown closed it.
+        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Zamknij" or its countdown closed it.
         if (cardLogon == null) return;
         if (signInReaders.Length == 0)
         {

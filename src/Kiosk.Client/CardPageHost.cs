@@ -6,7 +6,7 @@ namespace Kiosk.Client;
 /// <summary>
 /// Punkt samoobsługowy, signed in with the card: a Szybka pomoc page runs in this program started as the person
 /// (their Windows account, so the page signs in by itself, SSO). It is the same clean page as the guest window: no
-/// address bar, no tabs, only the page's own site and Microsoft sign-in, the countdown and "Wróć do Kiosku".
+/// address bar, no tabs, only the page's own site and Microsoft sign-in, the countdown and "Zamknij".
 /// The Kiosk keeps the window over its own screen (<see cref="ApplicationView"/>); closing it returns to the Kiosk.
 /// </summary>
 internal static class CardPageHost
