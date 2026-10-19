@@ -591,6 +591,14 @@ internal sealed partial class DesktopView : UserControl
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         if (Width <= 0 || Height <= 0) return;
+        if (portal)
+        {
+            // One plain background everywhere (the tiles and the pages lie on the same colour), a line after the left column.
+            e.Graphics.Clear(KioskTheme.Background);
+            using var line = new Pen(KioskTheme.Border);
+            if (portalSide > 0) e.Graphics.DrawLine(line, portalSide, 0, portalSide, Height);
+            return;
+        }
         using var background = new LinearGradientBrush(ClientRectangle, Color.FromArgb(21, 36, 59), KioskTheme.Background, 70f);
         e.Graphics.FillRectangle(background, ClientRectangle);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;

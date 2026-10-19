@@ -70,14 +70,8 @@ internal static class TileIcons
             _ => inside.Select(For).FirstOrDefault() ?? ""
         };
 
-    private static readonly Color[] palette =
-    [
-        Color.FromArgb(59, 130, 246), Color.FromArgb(34, 197, 94), Color.FromArgb(245, 158, 11), Color.FromArgb(139, 92, 246),
-        Color.FromArgb(239, 68, 68), Color.FromArgb(14, 165, 233), Color.FromArgb(236, 72, 153), Color.FromArgb(20, 184, 166)
-    ];
-
     internal static Color ColorFor(HelpAction item, int index) =>
-        KioskTheme.IsColor(item.Color) ? ColorTranslator.FromHtml(item.Color) : palette[index % palette.Length];
+        KioskTheme.IsColor(item.Color) ? ColorTranslator.FromHtml(item.Color) : KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.85);
 }
 
 /// <summary>Punkt samoobsługowy: the categories at the left ("Strona główna" first), one of them selected.</summary>
@@ -385,12 +379,14 @@ internal sealed class TileBoard : Panel
             tiles.Clear();
             hover = -1;
             width = Math.Max(S(300), width - S(4));
-            int pad = S(20), gap = S(12), header = S(64), tileHeight = S(112), y = 0, index = 0;
-            // As many columns as fit tiles of at least 300 px (96 DPI), at most four.
-            int columns = Math.Clamp((width - 2 * pad + gap) / (S(300) + gap), 1, 4);
-            int tileWidth = (width - 2 * pad - (columns - 1) * gap) / columns;
+            int pad = 0, gap = S(14), tileHeight = S(104), y = 0, index = 0;
+            // As many columns as fit tiles of at least 320 px (96 DPI), at most three, each at most 460 px wide.
+            int columns = Math.Clamp((width - 2 * pad + gap) / (S(320) + gap), 1, 3);
+            int tileWidth = Math.Min(S(460), (width - 2 * pad - (columns - 1) * gap) / columns);
             foreach (var panel in content)
             {
+                // The category's own tiles need no heading (the left column marks it); a subcategory gets one.
+                int header = panel.Title.Equals(board.category.Split('/')[^1], StringComparison.OrdinalIgnoreCase) ? 0 : S(52);
                 int rowsNeeded = (panel.Tiles.Count + columns - 1) / columns;
                 int height = header + rowsNeeded * tileHeight + (rowsNeeded - 1) * gap + pad;
                 panels.Add((new Rectangle(0, y, width, height), panel.Title, panel.Glyph));
@@ -456,12 +452,10 @@ internal sealed class TileBoard : Panel
             using var textFont = new Font("Segoe UI", 10);
             foreach (var panel in panels)
             {
-                using var path = KioskTheme.RoundedRectangle(panel.Bounds, S(16));
-                using (var fill = new SolidBrush(KioskTheme.Blend(KioskTheme.Background, KioskTheme.Surface, 0.6))) g.FillPath(fill, path);
-                using (var border = new Pen(KioskTheme.Border)) g.DrawPath(border, path);
-                KioskIcons.Draw(g, new Rectangle(panel.Bounds.Left + S(20), panel.Bounds.Top + S(14), S(34), S(36)), panel.Glyph, null, KioskTheme.AccentLine);
-                TextRenderer.DrawText(g, panel.Title, titleFont, new Rectangle(panel.Bounds.Left + S(66), panel.Bounds.Top + S(10), panel.Bounds.Width - S(86), S(44)),
-                    KioskTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+                // Only a heading on the background (no frame around the tiles); none for the category's own tiles.
+                if (panel.Title.Equals(board.category.Split('/')[^1], StringComparison.OrdinalIgnoreCase)) continue;
+                TextRenderer.DrawText(g, panel.Title, titleFont, new Rectangle(panel.Bounds.Left + S(2), panel.Bounds.Top + S(6), panel.Bounds.Width - S(4), S(38)),
+                    KioskTheme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             }
             for (int i = 0; i < tiles.Count; i++)
             {
@@ -511,6 +505,8 @@ internal sealed partial class DesktopView
     private readonly Label portalPerson = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, AutoEllipsis = true };
     private readonly Button account = new() { Text = "Zaloguj kartą" };
     private bool portal, signInWanted, portalSignedIn;
+    /// <summary>The left column's width (a line is drawn at its edge on the plain background).</summary>
+    private int portalSide;
     private string? portalNotice;
     private bool portalWarning;
     /// <summary>"Zaloguj kartą" / "Zakończ sesję" pressed.</summary>
@@ -554,10 +550,12 @@ internal sealed partial class DesktopView
             if (portal == value) return;
             portal = value;
             clock.TextAlign = date.TextAlign = value ? ContentAlignment.TopLeft : ContentAlignment.TopRight;
-            nav.Visible = portalTitle.Visible = portalLine.Visible = portalPerson.Visible = value;
-            account.Visible = value && portalSignedIn;
+            nav.Visible = value;
+            portalTitle.Visible = portalLine.Visible = false;
+            portalPerson.Visible = account.Visible = value && portalSignedIn;
             ApplyVisibility();
             ArrangeControls();
+            Invalidate();
         }
     }
 
@@ -609,8 +607,7 @@ internal sealed partial class DesktopView
             : "Pozycje z kłódką otworzysz po zalogowaniu kartą.");
         account.Text = portalSignedIn ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
         // Signed out, the card sign-in is on "Strona główna": the button only ends a session.
-        bool accountOn = portal && portalSignedIn && pageContent == null;
-        if (account.Visible != accountOn) account.Visible = accountOn;
+        if (account.Visible != (portal && portalSignedIn)) account.Visible = portal && portalSignedIn;
     }
 
     private string? pageTitleText;
@@ -637,6 +634,7 @@ internal sealed partial class DesktopView
     private Rectangle ArrangePortal(int bar, int cardWidth, int cardHeight, bool page)
     {
         int margin = Scale(24), side = Math.Min(Scale(270), Math.Max(Scale(200), Width / 5));
+        portalSide = side;
         // The left column: logo and name, the categories, the time at the bottom.
         int y = bar + Scale(22);
         if (logo.Image != null)
@@ -654,24 +652,21 @@ internal sealed partial class DesktopView
         y += Scale(20);
         clock.SetBounds(margin, Height - margin - Scale(84), side - margin, Scale(50));
         date.SetBounds(margin, Height - margin - Scale(32), side - margin, Scale(28));
-        nav.SetBounds(Scale(14), y, side - Scale(28), Math.Max(0, Math.Min(nav.Needed, clock.Top - Scale(16) - y)));
-        // The bar on top of the middle: title and line at the left, the person and the button at the right.
-        int left = side + Scale(8), right = Width - margin, barTop = bar + Scale(14), barHeight = Scale(64);
-        int buttonWidth = Math.Max(Scale(190), TextRenderer.MeasureText("Zakończ sesję", account.Font).Width + Scale(48));
-        account.SetBounds(right - buttonWidth, barTop + (barHeight - Scale(48)) / 2, buttonWidth, Scale(48));
-        int personWidth = portalSignedIn ? Math.Min(Scale(320), TextRenderer.MeasureText(portalPerson.Text, portalPerson.Font).Width + Scale(16)) : 0;
-        portalPerson.SetBounds(account.Left - Scale(12) - personWidth, barTop, personWidth, barHeight);
-        int titleWidth = Math.Max(0, portalPerson.Left - Scale(12) - left);
-        portalTitle.SetBounds(left, barTop, titleWidth, Scale(36));
-        portalLine.SetBounds(left, barTop + Scale(36), titleWidth, Scale(26));
-        var middle = new Rectangle(left, barTop + barHeight + Scale(16), Math.Max(Scale(200), right - left), 0);
+        // Signed in: the person and "Zakończ sesję" at the bottom of the left column, above the time.
+        int bottom = clock.Top - Scale(12);
+        account.SetBounds(Scale(14), bottom - Scale(48), side - Scale(28), Scale(48));
+        portalPerson.SetBounds(Scale(18), account.Top - Scale(34), side - Scale(36), Scale(30));
+        portalPerson.TextAlign = ContentAlignment.MiddleLeft;
+        if (portalSignedIn) bottom = portalPerson.Top - Scale(8);
+        nav.SetBounds(Scale(14), y, side - Scale(28), Math.Max(0, Math.Min(nav.Needed, bottom - Scale(8) - y)));
+        // No bar on top: the chosen category is marked in the left column, a page has its own bar.
+        foreach (var c in new Control[] { portalTitle, portalLine }) if (c.Visible) c.Visible = false;
+        if (portalPerson.Visible != portalSignedIn) portalPerson.Visible = portalSignedIn;
+        if (account.Visible != portalSignedIn) account.Visible = portalSignedIn;
+        int left = side + Scale(8), right = Width - margin;
+        var middle = new Rectangle(left, bar + margin, Math.Max(Scale(200), right - left), 0);
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
-        // An open page has its own bar (title, ←/→, Zamknij): the bar on top goes, the page takes its place up to the edges.
-        foreach (var c in new Control[] { portalTitle, portalLine, portalPerson })
-            if (c.Visible != !page) c.Visible = !page;
-        bool accountOn = !page && portalSignedIn;
-        if (account.Visible != accountOn) account.Visible = accountOn;
         if (page) return new Rectangle(left, bar, Width - left, Height - bar);
         cardWidth = Math.Min(cardWidth, middle.Width);
         bool news = false;
