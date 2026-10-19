@@ -135,8 +135,14 @@ internal sealed class NavBar : Control
     {
         base.OnMouseMove(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
+        if (index >= 0 && Locked(index)) index = -1;
+        Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
         if (index != hover) { hover = index; Invalidate(); }
     }
+
+    /// <summary>Signed out: what needs the card sign-in does nothing (grey with a padlock) until someone signs in.</summary>
+    private bool Locked(int index) => entries[index].NeedsSignIn && !signedIn;
+    internal bool SelectedLocked => Array.FindIndex(entries, e => e.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase)) is var i && i >= 0 && Locked(i);
 
     protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = -1; Invalidate(); }
 
@@ -144,11 +150,10 @@ internal sealed class NavBar : Control
     {
         base.OnMouseClick(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
-        if (index < 0) return;
+        if (index < 0 || Locked(index)) return;
         if (entries[index].Link is { } link)
         {
-            // Locked before signing in: the card sign-in comes up, the selection stays on what is open.
-            if (!(entries[index].NeedsSignIn && !signedIn)) Select(entries[index].Path);
+            Select(entries[index].Path);
             LinkRequested?.Invoke(link);
         }
         else SelectionRequested?.Invoke(entries[index].Path);
@@ -203,8 +208,6 @@ internal sealed class TileBoard : Panel
     private string category = "";
     private bool signedIn = true, busy;
     internal event Action<HelpAction>? ActionRequested;
-    /// <summary>A tile that needs the card sign-in was chosen before signing in.</summary>
-    internal event Action<HelpAction>? SignInNeeded;
 
     // Windows' own scroll bar is white: a thin one in the Kiosk's colours instead, plus the wheel and dragging the tiles.
     private readonly ScrollStrip strip;
@@ -242,9 +245,8 @@ internal sealed class TileBoard : Panel
     /// <summary>Opens an entry as a click on its tile would (the left menu's categories with their own action).</summary>
     internal void Run(HelpAction item)
     {
-        if (busy) return;
-        if (Available(item)) ActionRequested?.Invoke(item);
-        else if (item.NeedsSignIn) SignInNeeded?.Invoke(item);
+        // Signed out, a tile that needs the card does nothing: "Zaloguj kartą" at the top signs in.
+        if (!busy && Available(item)) ActionRequested?.Invoke(item);
     }
     internal void ShowCategory(string path) { category = path; offset = 0; Rebuild(); }
     internal bool SignedIn { get => signedIn; set { if (signedIn != value) { signedIn = value; canvas.Invalidate(); } } }
@@ -411,6 +413,7 @@ internal sealed class TileBoard : Panel
                 if (moved) { board.ScrollTo(pressOffset - dy); return; }
             }
             int index = tiles.FindIndex(t => t.Bounds.Contains(e.Location));
+            if (index >= 0 && !board.Available(tiles[index].Item)) index = -1;
             Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
             if (index != hover) { hover = index; Invalidate(); }
         }
@@ -463,7 +466,7 @@ internal sealed class TileBoard : Panel
             {
                 var (bounds, item, index) = tiles[i];
                 bool available = board.Available(item);
-                bool hot = i == hover && (available || item.NeedsSignIn);
+                bool hot = i == hover && available;
                 using var path = KioskTheme.RoundedRectangle(bounds, S(14));
                 using (var fill = new SolidBrush(hot ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.12) : KioskTheme.Surface)) g.FillPath(fill, path);
                 using (var border = new Pen(hot ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
@@ -534,12 +537,6 @@ internal sealed partial class DesktopView
             if (signInWanted) SignInWanted = false;
             UpdatePortalHeader();
         };
-        Tiles.SignInNeeded += _ =>
-        {
-            // A page left open would cover the sign-in.
-            if (pageContent != null) PageCloseRequested?.Invoke();
-            SignInWanted = true;
-        };
         nav.LinkRequested += item => Tiles.Run(item);
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
     }
@@ -590,6 +587,8 @@ internal sealed partial class DesktopView
         KioskTheme.StyleButton(account, primary: personName == null && !signInWanted);
         account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         Tiles.SignedIn = nav.SignedIn = personName != null;
+        // Signed out inside a category that needs the card: back to the start page.
+        if (personName == null && nav.SelectedLocked) { nav.Select(""); Tiles.ShowCategory(""); }
         if (personName != null && signInWanted) SignInWanted = false;
         UpdatePortalHeader();
         ArrangeControls();
