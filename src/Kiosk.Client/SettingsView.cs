@@ -414,7 +414,25 @@ internal sealed class SettingsView : UserControl
             Name = "Icon", HeaderText = "Ikona", ToolTipText = TileIcons.Names + ". Puste: dobrana do nazwy albo pierwszego kafelka.",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
-        foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions)) menuCategories.Rows.Add(c.Path, c.Icon);
+        // Like an entry of Menu: a category without entries opens its action at once.
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Action", HeaderText = "Akcja", ToolTipText = "Puste: kategoria pokazuje swoje kafelki. Adres https://… albo kiosk:…: kliknięcie kategorii bez wpisów od razu otwiera stronę.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Description", HeaderText = "Opis", ToolTipText = "Kategoria z akcją: linia pod nazwą jej kafelka", SortMode = DataGridViewColumnSortMode.NotSortable });
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Color", HeaderText = "Kolor", ToolTipText = "Kategoria z akcją: kolor koła kafelka #RRGGBB", SortMode = DataGridViewColumnSortMode.NotSortable });
+        menuCategories.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = "SignedInOnly", HeaderText = "Po zalogowaniu", ToolTipText = "Kategoria z akcją: działa dopiero po zalogowaniu kartą",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 110, MinimumWidth = 80, Resizable = DataGridViewTriState.False,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions))
+        {
+            int row = menuCategories.Rows.Add(c.Path, c.Icon, c.Action, c.Description, c.Color);
+            menuCategories.Rows[row].Cells["SignedInOnly"].Value = c.SignedInOnly ?? HelpAction.DefaultNeedsSignIn(c.Action ?? "");
+        }
         List<string> CategoryPaths() => menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow)
             .Select(r => MenuCategory.Normalize(Cell(r, "Name"))).Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         bool Under(string path, string category) => path.Equals(category, StringComparison.OrdinalIgnoreCase) || path.StartsWith(category + "/", StringComparison.OrdinalIgnoreCase);
@@ -425,7 +443,7 @@ internal sealed class SettingsView : UserControl
             var used = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new HelpAction { Category = Cell(r, "Category") });
             foreach (var missing in MenuCategory.Complete(paths.Select(p => new MenuCategory { Name = p }).ToArray(), used).Skip(paths.Count))
             {
-                menuCategories.Rows.Add(missing.Path, "");
+                menuCategories.Rows.Add(missing.Path, "", "", "", "");
                 paths.Add(missing.Path);
             }
             categoryColumn.Items.Clear();
@@ -455,7 +473,7 @@ internal sealed class SettingsView : UserControl
         // A removed category: its subcategories go too, their entries move to the start page ("Na skróty").
         SetupGridTab(categoriesTab, menuCategories, "Kategorie lewego menu w punkcie samoobsługowym i folderów Menu. Podkategoria: nazwa kategorii, ukośnik i nazwa, " +
             "np. „Pomoc/Konto”. Kolejność na liście to kolejność w menu – zmieniasz ją przyciskami „Wyżej” / „Niżej”. Zmiana nazwy przenosi wpisy, " +
-            "usunięcie kategorii przenosi jej wpisy na stronę główną. Ikona: " + TileIcons.Names + ".", helpHeight: 96, order: true, removing: row =>
+            "usunięcie kategorii przenosi jej wpisy na stronę główną. Akcja (jak w Menu): kategoria bez wpisów od razu otwiera tę stronę. Ikona: " + TileIcons.Names + ".", helpHeight: 96, order: true, removing: row =>
         {
             var path = MenuCategory.Normalize(Cell(row, "Name"));
             if (path.Length == 0) return;
@@ -1009,7 +1027,11 @@ internal sealed class SettingsView : UserControl
                     SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
                 }).ToArray(),
             MenuCategories = menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && MenuCategory.Normalize(Cell(r, "Name")).Length > 0)
-                .Select(r => new MenuCategory { Name = MenuCategory.Normalize(Cell(r, "Name")), Icon = Cell(r, "Icon") }).ToArray(),
+                .Select(r => new MenuCategory
+                {
+                    Name = MenuCategory.Normalize(Cell(r, "Name")), Icon = Cell(r, "Icon"), Action = Cell(r, "Action"), Description = Cell(r, "Description"),
+                    Color = Cell(r, "Color"), SignedInOnly = Cell(r, "Action").Length == 0 ? null : r.Cells["SignedInOnly"].Value is bool only ? only : null
+                }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
             NewsSharePointCount = (int)newsSharePointCount.Value,

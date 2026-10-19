@@ -177,7 +177,7 @@ internal sealed record Config
             Commands = Commands.Where(c => c.Enabled).ToArray(),
             PageActions = PageActions.Where(a => a.Enabled).ToArray(),
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
-            HelpActions = ShowHelp ? MenuCategory.Sort(HelpActions.Where(h => h.Enabled), MenuCategories) : [],
+            HelpActions = ShowHelp ? MenuCategory.Sort(HelpActions.Where(h => h.Enabled).Concat(MenuCategories.Select(c => c.Link).OfType<HelpAction>()), MenuCategories) : [],
         };
     }
 
@@ -250,6 +250,11 @@ internal sealed record Config
                 throw new InvalidDataException("Menu: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
         foreach (var category in MenuCategories ?? throw new InvalidDataException("Lista kategorii nie może być null."))
             if (category == null || category.Path.Length == 0) throw new InvalidDataException("Kategorie: każda kategoria potrzebuje nazwy.");
+            else if (category.Link is { } link && !(HelpAction.BuiltIn.Contains(link.Action, StringComparer.OrdinalIgnoreCase) ||
+                     Uri.TryCreate(link.Action, UriKind.Absolute, out var linkUri) && linkUri.Scheme == Uri.UriSchemeHttps))
+                throw new InvalidDataException("Kategorie: akcja kategorii „" + category.Path + "” to adres https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
+            else if (category.Color is { Length: > 0 } categoryColor && !KioskTheme.IsColor(categoryColor))
+                throw new InvalidDataException("Kategorie: kolor kategorii „" + category.Path + "” podaj jako #RRGGBB.");
         foreach (var help in HelpActions)
             if (help.Color is { Length: > 0 } tileColor && !KioskTheme.IsColor(tileColor))
                 throw new InvalidDataException("Menu: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");

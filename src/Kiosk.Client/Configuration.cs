@@ -98,6 +98,8 @@ internal sealed record HelpAction
     public string Icon { get; init; } = "";
     /// <summary>The tile's circle colour #RRGGBB; empty = a colour of the Kiosk's set by position.</summary>
     public string Color { get; init; } = "";
+    /// <summary>Set for a category with its own action (Menu → Kategorie): the category's path.</summary>
+    internal string? LinkPath { get; init; }
     internal string CategoryPath => string.Join("/", (Category ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
 
     internal static bool DefaultNeedsSignIn(string action)
@@ -131,7 +133,22 @@ internal sealed record MenuCategory
     public string Name { get; init; } = "";
     /// <summary>The category's icon by name (<see cref="TileIcons.Names"/>); empty = chosen from its name or first tile.</summary>
     public string Icon { get; init; } = "";
+    /// <summary>
+    /// Like an entry of Menu: https://… or kiosk:…; a click on the category opens it at once instead of its tiles
+    /// (when it has no entries). Empty = the category only groups entries.
+    /// </summary>
+    public string Action { get; init; } = "";
+    public string Description { get; init; } = "";
+    public string Color { get; init; } = "";
+    public bool? SignedInOnly { get; init; }
     internal string Path => Normalize(Name);
+
+    /// <summary>The category with an action as an entry of the menu: in its parent category, and opened from the left menu.</summary>
+    internal HelpAction? Link => (Action ?? "").Trim().Length == 0 ? null : new HelpAction
+    {
+        Name = Path.Split('/')[^1], Action = Action.Trim(), Description = Description ?? "", Icon = Icon ?? "", Color = Color ?? "",
+        SignedInOnly = SignedInOnly, Category = Path.Contains('/') ? Path[..Path.LastIndexOf('/')] : "", LinkPath = Path
+    };
 
     internal static string Normalize(string? name) => string.Join("/", (name ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
 
@@ -166,7 +183,7 @@ internal sealed record MenuCategory
         }
         int[] Key(HelpAction item)
         {
-            var parts = item.CategoryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var parts = (item.LinkPath ?? item.CategoryPath).Split('/', StringSplitOptions.RemoveEmptyEntries);
             return parts.Length == 0 ? [-1] : Enumerable.Range(1, parts.Length).Select(n => Place(string.Join("/", parts.Take(n)))).ToArray();
         }
         var comparer = Comparer<int[]>.Create((a, b) =>

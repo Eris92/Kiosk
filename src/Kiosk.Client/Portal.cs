@@ -79,11 +79,13 @@ internal static class TileIcons
 /// <summary>Punkt samoobsługowy: the categories at the left ("Strona główna" first), one of them selected.</summary>
 internal sealed class NavBar : Control
 {
-    private (string Path, string Text, string Glyph)[] entries = [];
+    private (string Path, string Text, string Glyph, HelpAction? Link)[] entries = [];
     private readonly List<Rectangle> rows = [];
     private int hover = -1;
     internal string Selected { get; private set; } = "";
     internal event Action<string>? SelectionRequested;
+    /// <summary>A category with its own action and no entries: the click opens it.</summary>
+    internal event Action<HelpAction>? LinkRequested;
 
     internal NavBar()
     {
@@ -98,9 +100,13 @@ internal sealed class NavBar : Control
 
     internal void SetItems(HelpAction[] items)
     {
-        var list = new List<(string, string, string)> { ("", "Strona główna", "") };
-        foreach (var top in items.Select(i => i.CategoryPath.Split('/')[0]).Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
-            list.Add((top, top, TileIcons.ForCategory(top, items.Where(i => TileBoard.InCategory(i, top)))));
+        var list = new List<(string, string, string, HelpAction?)> { ("", "Strona główna", "", null) };
+        foreach (var top in items.Select(i => (i.LinkPath ?? i.CategoryPath).Split('/')[0]).Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var inside = items.Where(i => TileBoard.InCategory(i, top)).ToList();
+            var link = inside.Count == 0 ? items.FirstOrDefault(i => top.Equals(i.LinkPath, StringComparison.OrdinalIgnoreCase)) : null;
+            list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link));
+        }
         entries = list.ToArray();
         if (!entries.Any(e => e.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase))) Selected = "";
         Invalidate();
@@ -123,7 +129,9 @@ internal sealed class NavBar : Control
     {
         base.OnMouseClick(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
-        if (index >= 0) SelectionRequested?.Invoke(entries[index].Path);
+        if (index < 0) return;
+        if (entries[index].Link is { } link) LinkRequested?.Invoke(link);
+        else SelectionRequested?.Invoke(entries[index].Path);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -180,6 +188,14 @@ internal sealed class TileBoard : Panel
         item.CategoryPath.Equals(path, StringComparison.OrdinalIgnoreCase) || item.CategoryPath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
 
     internal void SetItems(HelpAction[] actions) { items = actions; Rebuild(); }
+
+    /// <summary>Opens an entry as a click on its tile would (the left menu's categories with their own action).</summary>
+    internal void Run(HelpAction item)
+    {
+        if (busy) return;
+        if (Available(item)) ActionRequested?.Invoke(item);
+        else if (item.NeedsSignIn) SignInNeeded?.Invoke(item);
+    }
     internal void ShowCategory(string path) { category = path; AutoScrollPosition = Point.Empty; Rebuild(); }
     internal bool SignedIn { get => signedIn; set { if (signedIn != value) { signedIn = value; canvas.Invalidate(); } } }
     internal bool Busy { get => busy; set { if (busy != value) { busy = value; canvas.Invalidate(); } } }
@@ -279,10 +295,7 @@ internal sealed class TileBoard : Panel
         {
             base.OnMouseClick(e);
             int index = tiles.FindIndex(t => t.Bounds.Contains(e.Location));
-            if (index < 0 || board.busy) return;
-            var item = tiles[index].Item;
-            if (board.Available(item)) board.ActionRequested?.Invoke(item);
-            else if (item.NeedsSignIn) board.SignInNeeded?.Invoke(item);
+            if (index >= 0) board.Run(tiles[index].Item);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -375,6 +388,7 @@ internal sealed partial class DesktopView
             UpdatePortalHeader();
         };
         Tiles.SignInNeeded += _ => SignInWanted = true;
+        nav.LinkRequested += item => Tiles.Run(item);
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
     }
 
