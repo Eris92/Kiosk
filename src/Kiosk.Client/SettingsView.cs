@@ -341,7 +341,7 @@ internal sealed class SettingsView : UserControl
 
         var helpTab = new TabPage("Menu") { Padding = new Padding(12) };
         tabs.TabPages.Add(helpTab);
-        helpActions.Columns.Add("Name", "Napis na przycisku");
+        helpActions.Columns.Add("Name", "Nazwa");
         helpActions.Columns.Add("Action", "Akcja");
         // Chosen from the Kategorie tab: the left menu shows categories, a click opens their entries and subcategories.
         var categoryColumn = new DataGridViewComboBoxColumn
@@ -376,6 +376,8 @@ internal sealed class SettingsView : UserControl
             AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 110, MinimumWidth = 80, Resizable = DataGridViewTriState.False,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        // The same order and widths as Kategorie: name, category, action, description, icon, colour, sign-in.
+        LayOut(helpActions, "Enabled", "Name", "Category", "Action", "Description", "Icon", "Color", "SignedInOnly");
         void AddHelpRow(HelpAction h)
         {
             if (h.CategoryPath.Length > 0 && !categoryColumn.Items.Contains(h.CategoryPath)) categoryColumn.Items.Add(h.CategoryPath);
@@ -428,10 +430,18 @@ internal sealed class SettingsView : UserControl
             AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 110, MinimumWidth = 80, Resizable = DataGridViewTriState.False,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        menuCategories.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = "Bottom", HeaderText = "Dolna sekcja", ToolTipText = "Punkt samoobsługowy: kategoria w lewym menu w drugiej grupie, pod kreską (np. Szybka pomoc, Zgłoś incydent)",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        menuCategories.Columns["Name"].HeaderText = "Nazwa";
+        LayOut(menuCategories, "Name", "Action", "Description", "Icon", "Color", "SignedInOnly", "Bottom");
         foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions))
         {
             int row = menuCategories.Rows.Add(c.Path, c.Icon, c.Action, c.Description, c.Color);
             menuCategories.Rows[row].Cells["SignedInOnly"].Value = c.SignedInOnly ?? HelpAction.DefaultNeedsSignIn(c.Action ?? "");
+            menuCategories.Rows[row].Cells["Bottom"].Value = c.Bottom;
         }
         List<string> CategoryPaths() => menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow)
             .Select(r => MenuCategory.Normalize(Cell(r, "Name"))).Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -929,6 +939,27 @@ internal sealed class SettingsView : UserControl
         page.Controls.Add(moves);
     }
 
+    /// <summary>
+    /// Menu and Kategorie look alike: the columns in this order, names and texts share the width, icon, colour and the
+    /// switches are narrow and fixed (wide enough for their headers).
+    /// </summary>
+    private static void LayOut(DataGridView grid, params string[] order)
+    {
+        for (int i = 0; i < order.Length; i++)
+        {
+            var column = grid.Columns[order[i]];
+            column.DisplayIndex = i;
+            int? width = order[i] switch { "Enabled" => 48, "Icon" or "Color" => 120, "SignedInOnly" => 130, "Bottom" => 120, _ => null };
+            if (width is { } fixedWidth)
+            {
+                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                column.Width = column.MinimumWidth = fixedWidth;
+                column.Resizable = DataGridViewTriState.False;
+            }
+            else column.FillWeight = order[i] is "Action" or "Description" ? 150 : 100;
+        }
+    }
+
     /// <summary>Moves the selected row one place up (-1) or down (1); the new-row line stays last.</summary>
     private static void MoveRow(DataGridView grid, int by)
     {
@@ -1030,7 +1061,8 @@ internal sealed class SettingsView : UserControl
                 .Select(r => new MenuCategory
                 {
                     Name = MenuCategory.Normalize(Cell(r, "Name")), Icon = Cell(r, "Icon"), Action = Cell(r, "Action"), Description = Cell(r, "Description"),
-                    Color = Cell(r, "Color"), SignedInOnly = Cell(r, "Action").Length == 0 ? null : r.Cells["SignedInOnly"].Value is bool only ? only : null
+                    Color = Cell(r, "Color"), SignedInOnly = Cell(r, "Action").Length == 0 ? null : r.Cells["SignedInOnly"].Value is bool only ? only : null,
+                    Bottom = r.Cells["Bottom"].Value is true
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),

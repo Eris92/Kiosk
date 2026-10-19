@@ -42,6 +42,9 @@ internal static class TileIcons
     };
 
     private static Dictionary<string, string> categoryIcons = new(StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string> bottom = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Kategorie → "Dolna sekcja": the category is in the left menu's group under the line.</summary>
+    internal static bool InBottomGroup(string path) => bottom.Contains(path);
 
     /// <summary>Menu → Kategorie: the icons chosen there, by the category's path and by its own name.</summary>
     internal static void SetCategories(MenuCategory[] categories)
@@ -54,6 +57,7 @@ internal static class TileIcons
                 icons.TryAdd(category.Path.Split('/')[^1], glyph);
             }
         categoryIcons = icons;
+        bottom = new HashSet<string>(categories.Where(c => c.Bottom).Select(c => c.Path), StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>A category's icon: chosen in Kategorie, its name when it is one of the icons, otherwise its first tile's.</summary>
@@ -111,6 +115,9 @@ internal sealed class NavBar : Control
             bool needsSignIn = link != null ? link.NeedsSignIn : inside.Count > 0 && inside.All(i => i.NeedsSignIn);
             list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link, needsSignIn));
         }
+        // "Dolna sekcja": those categories after the others, under a line.
+        list = [.. list.Where(e => !TileIcons.InBottomGroup(e.Item1)), .. list.Where(e => TileIcons.InBottomGroup(e.Item1))];
+        firstBottom = list.FindIndex(e => TileIcons.InBottomGroup(e.Item1));
         entries = list.ToArray();
         if (!entries.Any(e => e.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase))) Selected = "";
         Invalidate();
@@ -118,7 +125,9 @@ internal sealed class NavBar : Control
 
     internal void Select(string path) { Selected = path; Invalidate(); }
 
-    internal int Needed => entries.Length * (RowHeight + S(4));
+    private int firstBottom = -1;
+    private int SeparatorHeight => S(25);
+    internal int Needed => entries.Length * (RowHeight + S(4)) + (firstBottom > 0 ? SeparatorHeight : 0);
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
@@ -149,6 +158,12 @@ internal sealed class NavBar : Control
         for (int i = 0; i < entries.Length; i++)
         {
             var entry = entries[i];
+            if (i == firstBottom && i > 0)
+            {
+                using var line = new Pen(KioskTheme.Border);
+                g.DrawLine(line, S(16), y + SeparatorHeight / 2 - S(2), Width - S(16), y + SeparatorHeight / 2 - S(2));
+                y += SeparatorHeight;
+            }
             var bounds = new Rectangle(0, y, Width - 1, RowHeight);
             rows.Add(bounds);
             bool selected = entry.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase);

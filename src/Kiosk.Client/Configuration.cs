@@ -141,6 +141,8 @@ internal sealed record MenuCategory
     public string Description { get; init; } = "";
     public string Color { get; init; } = "";
     public bool? SignedInOnly { get; init; }
+    /// <summary>Punkt samoobsługowy: in the left menu's second group, under a line (e.g. Szybka pomoc, Zgłoś incydent).</summary>
+    public bool Bottom { get; init; }
     internal string Path => Normalize(Name);
 
     /// <summary>The category with an action as an entry of the menu: in its parent category, and opened from the left menu.</summary>
