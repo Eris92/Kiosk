@@ -23,7 +23,14 @@ internal sealed class HelpBar : Control
         get => signedIn;
         set { if (signedIn == value) return; signedIn = value; hover = -1; Invalidate(); }
     }
-    private bool Available(HelpAction item) => signedIn || !item.NeedsSignIn;
+    private bool busy;
+    /// <summary>A question or the PIN field waits in the card: every button is greyed out until it is answered.</summary>
+    internal bool Busy
+    {
+        get => busy;
+        set { if (busy == value) return; busy = value; hover = -1; Invalidate(); }
+    }
+    private bool Available(HelpAction item) => !busy && (signedIn || !item.NeedsSignIn);
 
     internal HelpBar()
     {

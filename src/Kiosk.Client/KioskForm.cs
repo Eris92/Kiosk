@@ -1067,12 +1067,16 @@ internal sealed partial class KioskForm : Form
     {
         if (SelfService && OpenPageAsCardPerson(title, url)) return;
         helpBrowser?.Close();
-        // Part of the Kiosk's own window, over its screen: no separate window that opens elsewhere and moves into place.
-        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { TopLevel = false, TopMost = false, Dock = DockStyle.Fill };
-        window.FormClosed += (_, _) => { if (helpBrowser == window) { helpBrowser = null; RefreshChrome(); } };
+        // In the start screen's middle frame: no separate window over the screen.
+        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { TopLevel = false, TopMost = false };
+        window.FormClosed += (_, _) =>
+        {
+            if (desktop.Page == window) desktop.ShowPage(null);
+            if (helpBrowser == window) { helpBrowser = null; RefreshChrome(); }
+        };
         helpBrowser = window;
-        Controls.Add(window);
-        window.BringToFront();
+        if (visibleView != desktop) ShowView(desktop);
+        desktop.ShowPage(window);
         window.Show();
         window.Focus();
         window.Start();

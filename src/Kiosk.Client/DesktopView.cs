@@ -120,6 +120,9 @@ internal sealed class DesktopView : UserControl
     private TaskCompletionSource<bool>? askRequest;
     private bool askWarning;
     internal bool Asking => askRequest != null;
+    /// <summary>A Szybka pomoc page shown in the middle frame (the card grows to the free space beside Szybka pomoc).</summary>
+    private Control? pageContent;
+    internal Control? Page => pageContent;
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
@@ -240,16 +243,47 @@ internal sealed class DesktopView : UserControl
     /// </summary>
     private void ApplyVisibility()
     {
-        bool signIn = signingIn && !AskingPin && !Asking;
+        // Only one of them is in the frame; nothing of another one stays under it (the icon showed through a question).
+        bool page = pageContent != null && !AskingPin && !Asking;
+        bool signIn = signingIn && !AskingPin && !Asking && !page;
+        bool status = !signIn && !page && !Asking;
+        card.SuspendLayout();
+        if (pageContent != null) pageContent.Visible = page;
         signInPlace.Visible = signIn;
-        card.SignIn = signIn;
-        heading.Visible = !signIn && !Asking;
-        detail.Visible = !signIn && !Asking && !AskingPin;   // The PIN's own text takes its place.
-        resume.Visible = locked && !AskingPin && !Asking && !signingIn;
-        hint.Visible = !AskingPin && !Asking && !signingIn;
+        card.SignIn = !status || AskingPin;
+        heading.Visible = status;
+        detail.Visible = status && !AskingPin;   // The PIN's own text takes its place.
+        resume.Visible = status && locked && !AskingPin && !signingIn;
+        hint.Visible = status && !AskingPin && !signingIn;
         foreach (var c in new Control[] { askTitle, askText, askYes, askNo }) c.Visible = Asking;
         if (Asking) pinCountdown.Visible = true;
+        // Szybka pomoc stays where it is; while a question or the PIN waits it is greyed out.
+        Help.Busy = Asking || AskingPin;
+        card.ResumeLayout(false);
     }
+
+    /// <summary>
+    /// Shows <paramref name="content"/> (a help page) in the middle frame instead of opening a window over the screen;
+    /// null = back to the card. The previous content is only taken out: its owner closes it.
+    /// </summary>
+    internal void ShowPage(Control? content)
+    {
+        if (pageContent == content) return;
+        if (pageContent != null && !pageContent.IsDisposed) card.Controls.Remove(pageContent);
+        pageContent = content;
+        if (content != null)
+        {
+            content.Visible = false;
+            card.Controls.Add(content);
+            content.BringToFront();
+        }
+        ArrangeControls();
+        ApplyVisibility();
+        card.Invalidate();
+    }
+
+    /// <summary>The middle frame's page area on the screen (for a page drawn by another program over it).</summary>
+    internal Rectangle PageScreenArea => pageContent != null ? pageContent.RectangleToScreen(pageContent.ClientRectangle) : card.RectangleToScreen(card.ClientRectangle);
 
     /// <summary>
     /// A yes / no question in the card (Szybka pomoc): no separate window. Nobody answers for
@@ -386,7 +420,8 @@ internal sealed class DesktopView : UserControl
         bool personRow = person != null && !locked && !AskingPin && !Asking;
         int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
-        bool help = Help.Count > 0 && !AskingPin && !Asking;
+        bool help = Help.Count > 0;
+        bool page = pageContent != null && !AskingPin && !Asking;
         var column = Help.Needed(true);
         bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
@@ -397,7 +432,7 @@ internal sealed class DesktopView : UserControl
         int size = (int)banner, newsGap = Scale(20), bottom = Height;
         while (size > 0 && Height - (bar + Scale(125)) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
         int newsHeight = Scale(heights[size]);
-        bool news = News.Count > 0 && !AskingPin && !Asking && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
+        bool news = News.Count > 0 && !AskingPin && !Asking && !page && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
         News.Visible = news;
         if (news)
         {
@@ -407,7 +442,18 @@ internal sealed class DesktopView : UserControl
         }
         int top = Math.Max((bar + Scale(125)), (bottom - cardHeight - helpRow) / 2 + Scale(12));
         if (news) top = Math.Min(top, bottom - cardHeight - helpRow);
-        card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
+        if (page)
+        {
+            // The page takes the whole free space: beside the Szybka pomoc column, or above its row.
+            int left = helpColumn ? margin + column.Width + Scale(24) : margin;
+            top = bar + Scale(125);
+            cardWidth = Math.Max(Scale(240), Width - margin - left);
+            cardHeight = Math.Max(Scale(200), Height - top - margin - helpRow);
+            card.SetBounds(left, top, cardWidth, cardHeight);
+            int inset = Scale(10);
+            pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset));
+        }
+        else card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
         Help.Visible = help;
         if (helpColumn) Help.SetBounds(margin, (bar + Scale(125)), column.Width, column.Height);
         else if (help)
@@ -454,11 +500,15 @@ internal sealed class DesktopView : UserControl
         {
             int askWidth = Math.Min(Scale(440), textWidth), askLeft = (cardWidth - askWidth) / 2, askHalf = (askWidth - Scale(12)) / 2;
             askTitle.SetBounds(innerMargin, Scale(36), textWidth, Scale(60));
-            askText.SetBounds(innerMargin, Scale(104), textWidth, Scale(196));
+            // As high as its text: the buttons follow right under it.
+            int textHeight = Math.Min(Scale(196), TextRenderer.MeasureText(askText.Text, askText.Font, new Size(textWidth, 0), TextFormatFlags.WordBreak).Height + Scale(8));
+            askText.SetBounds(innerMargin, Scale(104), textWidth, textHeight);
+            int buttonsTop = askText.Bottom + Scale(24);
             // "Nie" on the right, as before; the default one is the accent button.
-            askYes.SetBounds(askLeft, Scale(314), askHalf, Scale(46));
-            askNo.SetBounds(askLeft + askHalf + Scale(12), Scale(314), askHalf, Scale(46));
-            pinCountdown.SetBounds(askLeft, Scale(372), askWidth, Scale(30));
+            askYes.SetBounds(askLeft, buttonsTop, askHalf, Scale(46));
+            askNo.SetBounds(askLeft + askHalf + Scale(12), buttonsTop, askHalf, Scale(46));
+            pinCountdown.SetBounds(askLeft, buttonsTop + Scale(58), askWidth, Scale(30));
+            card.Height = Math.Min(card.Height, pinCountdown.Bottom + Scale(30));
         }
     }
 
@@ -523,7 +573,7 @@ internal sealed class DesktopView : UserControl
         internal bool Locked { get; set; }
         internal string Initials { get; set; } = "";
         internal Rectangle Avatar { get; set; }
-        /// <summary>The card sign-in fills the card: no icon.</summary>
+        /// <summary>Something else fills the card (sign-in, question, page): no icon.</summary>
         internal bool SignIn { get; set; }
 
         internal StatusCard()

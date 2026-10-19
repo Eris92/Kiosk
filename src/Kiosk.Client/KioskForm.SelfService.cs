@@ -144,11 +144,13 @@ internal sealed partial class KioskForm
     {
         CloseCardPage();
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
+        helpBrowser?.Close();
         var page = new ApplicationView { AlwaysOverlay = true };
         cardPage = page;
-        surface.Controls.Add(page);
-        ShowView(page);
-        var area = page.ClientSize.Width > 0 ? page.RectangleToScreen(page.ClientRectangle) : surface.RectangleToScreen(surface.ClientRectangle);
+        // In the start screen's middle frame, like the guest page; the page's window is kept exactly over it.
+        if (visibleView != desktop) ShowView(desktop);
+        desktop.ShowPage(page);
+        var area = desktop.PageScreenArea;
         var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
             HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
             logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
@@ -157,6 +159,7 @@ internal sealed partial class KioskForm
         try
         {
             await page.StartAsync(entry, logon);
+            if (cardPage == page) page.BringToUser();
             Audit.Write("selfservice_page_as_person");
         }
         catch (Exception ex)
@@ -173,8 +176,7 @@ internal sealed partial class KioskForm
     {
         if (cardPage is not { } page) return;
         cardPage = null;
-        ShowView(desktop);
-        surface.Controls.Remove(page);
+        if (desktop.Page == page) desktop.ShowPage(null);
         page.Dispose();
     }
 
