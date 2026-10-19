@@ -794,6 +794,7 @@ internal sealed partial class KioskForm : Form
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         desktop.SetHelp(config.HelpActions);
+        desktop.Help.SignedIn = !SelfService || cardLogon != null;
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -1045,6 +1046,7 @@ internal sealed partial class KioskForm : Form
     private async Task RunHelpAsync(HelpAction item)
     {
         if (verifying || desktop.AskingPin) return;
+        if (!desktop.Help.SignedIn && item.NeedsSignIn) return;
         Audit.Write("help_action", item.Name + " " + item.Action);
         switch (item.Action.ToLowerInvariant())
         {

@@ -16,6 +16,14 @@ internal sealed class HelpBar : Control
     internal int Count => items.Length;
     internal HelpAction[] Items => items;
     internal event Action<HelpAction>? ActionRequested;
+    private bool signedIn = true;
+    /// <summary>Punkt samoobsługowy: nobody signed in with the card yet; buttons that need it are greyed out.</summary>
+    internal bool SignedIn
+    {
+        get => signedIn;
+        set { if (signedIn == value) return; signedIn = value; hover = -1; Invalidate(); }
+    }
+    private bool Available(HelpAction item) => signedIn || !item.NeedsSignIn;
 
     internal HelpBar()
     {
@@ -63,6 +71,8 @@ internal sealed class HelpBar : Control
     {
         base.OnMouseMove(e);
         int index = buttons.FindIndex(b => b.Contains(e.Location));
+        if (index >= 0 && index < items.Length && !Available(items[index])) index = -1;
+        Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
         if (index != hover) { hover = index; Invalidate(); }
     }
 
@@ -72,7 +82,7 @@ internal sealed class HelpBar : Control
     {
         base.OnMouseClick(e);
         int index = buttons.FindIndex(b => b.Contains(e.Location));
-        if (index >= 0 && index < items.Length) ActionRequested?.Invoke(items[index]);
+        if (index >= 0 && index < items.Length && Available(items[index])) ActionRequested?.Invoke(items[index]);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -93,15 +103,17 @@ internal sealed class HelpBar : Control
         for (int i = 0; i < items.Length; i++)
         {
             var item = items[i];
+            bool available = Available(item);
             int width = Vertical ? Width - 1 : ButtonWidth(item);
             var bounds = new Rectangle(x, y, width, ButtonHeight - 1);
             buttons.Add(bounds);
             using var path = KioskTheme.RoundedRectangle(bounds, S(10));
-            using (var fill = new SolidBrush(Color.FromArgb(i == hover ? 255 : 215, i == hover ? KioskTheme.AccentSoft : KioskTheme.Surface)))
+            // Greyed out until someone signs in with the card: dimmer tile, muted icon and text, no hover.
+            using (var fill = new SolidBrush(Color.FromArgb(i == hover ? 255 : available ? 215 : 110, i == hover ? KioskTheme.AccentSoft : KioskTheme.Surface)))
                 g.FillPath(fill, path);
-            using (var border = new Pen(i == hover ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
-            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(10), bounds.Top, S(24), bounds.Height), GlyphFor(item), null, KioskTheme.AccentLine);
-            TextRenderer.DrawText(g, item.Name, font, new Rectangle(bounds.Left + S(42), bounds.Top, bounds.Width - S(48), bounds.Height), KioskTheme.Text,
+            using (var border = new Pen(i == hover ? KioskTheme.AccentLine : available ? KioskTheme.Border : Color.FromArgb(120, KioskTheme.Border))) g.DrawPath(border, path);
+            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(10), bounds.Top, S(24), bounds.Height), GlyphFor(item), null, available ? KioskTheme.AccentLine : KioskTheme.Muted);
+            TextRenderer.DrawText(g, item.Name, font, new Rectangle(bounds.Left + S(42), bounds.Top, bounds.Width - S(48), bounds.Height), available ? KioskTheme.Text : KioskTheme.Muted,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             if (Vertical) y += ButtonHeight + Gap; else x += width + Gap;
         }

@@ -81,6 +81,18 @@ internal sealed record HelpAction
     public string Action { get; init; } = "";
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
+    /// <summary>
+    /// Punkt samoobsługowy: only for someone signed in with the card (greyed out before). Not set: MFA, password
+    /// reset and card reset work without signing in, everything else needs it.
+    /// </summary>
+    public bool? SignedInOnly { get; init; }
+    internal bool NeedsSignIn => SignedInOnly ?? DefaultNeedsSignIn(Action);
+
+    internal static bool DefaultNeedsSignIn(string action)
+    {
+        var a = action.Trim().ToLowerInvariant();
+        return !(a == ResetCard || a.Contains("mfa") || a.Contains("sspr") || a.Contains("passwordreset") || a.Contains("security-info") || a.Contains("mysignins"));
+    }
 
     internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty",
         FirstSignIn = "kiosk:pierwsze-logowanie";

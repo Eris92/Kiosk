@@ -343,7 +343,20 @@ internal sealed class SettingsView : UserControl
         helpActions.Columns.Add("Name", "Napis na przycisku");
         helpActions.Columns.Add("Action", "Akcja");
         AddEnabledColumn(helpActions);
-        foreach (var h in config.HelpActions) SetEnabled(helpActions, helpActions.Rows.Add(h.Name, h.Action), h.Enabled);
+        // Punkt samoobsługowy: greyed out until someone signs in with the card.
+        helpActions.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = "SignedInOnly", HeaderText = "Po zalogowaniu", ToolTipText = "Punkt samoobsługowy: przycisk działa dopiero po zalogowaniu kartą, wcześniej jest wyszarzony",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 110, MinimumWidth = 80, Resizable = DataGridViewTriState.False,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        void AddHelpRow(HelpAction h)
+        {
+            int row = helpActions.Rows.Add(h.Name, h.Action);
+            SetEnabled(helpActions, row, h.Enabled);
+            helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
+        }
+        foreach (var h in config.HelpActions) AddHelpRow(h);
         SetupGridTab(helpTab, helpActions, "Przyciski „Szybka pomoc” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
@@ -353,7 +366,7 @@ internal sealed class SettingsView : UserControl
         helpDefaults.Click += (_, _) =>
         {
             helpActions.Rows.Clear();
-            foreach (var h in HelpAction.Defaults) helpActions.Rows.Add(h.Name, h.Action);
+            foreach (var h in HelpAction.Defaults) AddHelpRow(h);
         };
         helpTab.Controls.Add(helpDefaults);
         showHelp.Checked = config.ShowHelp;
@@ -864,7 +877,11 @@ internal sealed class SettingsView : UserControl
             NewsFolder = newsFolder.Text.Trim().Trim('"'),
             NewsShow = (NewsDisplay)Math.Max(0, newsShow.SelectedIndex),
             HelpActions = helpActions.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && (Cell(r, "Name").Length > 0 || Cell(r, "Action").Length > 0))
-                .Select(r => new HelpAction { Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r) }).ToArray(),
+                .Select(r => new HelpAction
+                {
+                    Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r),
+                    SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
+                }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
             NewsSharePointCount = (int)newsSharePointCount.Value,
