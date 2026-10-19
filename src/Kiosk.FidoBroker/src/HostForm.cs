@@ -216,6 +216,9 @@ namespace FidoRun
                 TopMost = false;
                 WindowState = FormWindowState.Normal;
                 StartPosition = FormStartPosition.Manual;
+                // Not a top-level form: WinForms then never sets an owner on it, which for a child window replaces its
+                // parent with the desktop (it showed for a moment at the top of the screen before the timer put it back).
+                TopLevel = false;
                 KioskBroker.View = this;
             }
 
