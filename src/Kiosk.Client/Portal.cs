@@ -79,7 +79,10 @@ internal static class TileIcons
 /// <summary>Punkt samoobsługowy: the categories at the left ("Strona główna" first), one of them selected.</summary>
 internal sealed class NavBar : Control
 {
-    private (string Path, string Text, string Glyph, HelpAction? Link)[] entries = [];
+    private (string Path, string Text, string Glyph, HelpAction? Link, bool NeedsSignIn)[] entries = [];
+    private bool signedIn = true;
+    /// <summary>Before signing in, categories that only work after it are grey with a padlock.</summary>
+    internal bool SignedIn { get => signedIn; set { if (signedIn != value) { signedIn = value; Invalidate(); } } }
     private readonly List<Rectangle> rows = [];
     private int hover = -1;
     internal string Selected { get; private set; } = "";
@@ -100,12 +103,13 @@ internal sealed class NavBar : Control
 
     internal void SetItems(HelpAction[] items)
     {
-        var list = new List<(string, string, string, HelpAction?)> { ("", "Strona główna", "", null) };
+        var list = new List<(string, string, string, HelpAction?, bool)> { ("", "Strona główna", "", null, false) };
         foreach (var top in items.Select(i => (i.LinkPath ?? i.CategoryPath).Split('/')[0]).Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var inside = items.Where(i => TileBoard.InCategory(i, top)).ToList();
             var link = inside.Count == 0 ? items.FirstOrDefault(i => top.Equals(i.LinkPath, StringComparison.OrdinalIgnoreCase)) : null;
-            list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link));
+            bool needsSignIn = link != null ? link.NeedsSignIn : inside.Count > 0 && inside.All(i => i.NeedsSignIn);
+            list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link, needsSignIn));
         }
         entries = list.ToArray();
         if (!entries.Any(e => e.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase))) Selected = "";
@@ -154,9 +158,13 @@ internal sealed class NavBar : Control
                 using var fill = new SolidBrush(selected ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.28) : KioskTheme.Surface);
                 g.FillPath(fill, path);
             }
-            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(12), bounds.Top, S(26), bounds.Height), entry.Glyph, null, selected ? KioskTheme.Text : KioskTheme.AccentLine);
-            TextRenderer.DrawText(g, entry.Text, selected ? bold : font, new Rectangle(bounds.Left + S(50), bounds.Top, bounds.Width - S(56), bounds.Height),
-                KioskTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+            bool locked = entry.NeedsSignIn && !signedIn;
+            KioskIcons.Draw(g, new Rectangle(bounds.Left + S(12), bounds.Top, S(26), bounds.Height), entry.Glyph, null,
+                locked ? KioskTheme.Muted : selected ? KioskTheme.Text : KioskTheme.AccentLine);
+            TextRenderer.DrawText(g, entry.Text, selected ? bold : font, new Rectangle(bounds.Left + S(50), bounds.Top, bounds.Width - S(56) - (locked ? S(28) : 0), bounds.Height),
+                locked ? KioskTheme.Muted : KioskTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+            // Works only after the card sign-in: a padlock, so nobody wonders why nothing opens.
+            if (locked) KioskIcons.Draw(g, new Rectangle(bounds.Right - S(34), bounds.Top, S(18), bounds.Height), "", null, KioskTheme.Muted);
             y += RowHeight + S(4);
         }
     }
@@ -451,11 +459,14 @@ internal sealed class TileBoard : Panel
                 if (hasText)
                 {
                     // Before signing in: says why it is grey; a tap opens the card sign-in.
-                    var text = available || !item.NeedsSignIn ? item.Description : "Zaloguj się kartą, aby otworzyć";
+                    var text = available || !item.NeedsSignIn ? item.Description : "Po zalogowaniu kartą";
                     TextRenderer.DrawText(g, text, textFont, new Rectangle(textLeft, bounds.Top + S(50), textWidth, bounds.Height - S(58)), KioskTheme.Muted,
                         TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
                 }
-                KioskIcons.Draw(g, new Rectangle(bounds.Right - S(36), bounds.Top, S(22), bounds.Height), "", null, available ? KioskTheme.AccentLine : KioskTheme.Muted);
+                // A padlock instead of the arrow while the tile waits for the card sign-in.
+                bool locked = !available && item.NeedsSignIn && !board.signedIn;
+                KioskIcons.Draw(g, new Rectangle(bounds.Right - S(36), bounds.Top, S(22), bounds.Height), locked ? "" : "", null,
+                    available ? KioskTheme.AccentLine : KioskTheme.Muted);
             }
         }
     }
@@ -542,7 +553,8 @@ internal sealed partial class DesktopView
     internal void SetPortalState(string? personName, string? notice, bool warning = false)
     {
         // Called on every tick of the shell: only a change is drawn.
-        if (portalSignedIn == (personName != null) && portalPerson.Text == (personName ?? "") && portalNotice == notice && portalWarning == warning) return;
+        if (portalSignedIn == (personName != null) && portalPerson.Text == (personName ?? "") && portalNotice == notice && portalWarning == warning &&
+            Tiles.SignedIn == (personName != null) && nav.SignedIn == (personName != null)) return;
         portalSignedIn = personName != null;
         portalNotice = notice;
         portalWarning = warning;
@@ -550,7 +562,7 @@ internal sealed partial class DesktopView
         account.Text = personName != null ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
         KioskTheme.StyleButton(account, primary: personName == null && !signInWanted);
         account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-        Tiles.SignedIn = personName != null;
+        Tiles.SignedIn = nav.SignedIn = personName != null;
         if (personName != null && signInWanted) SignInWanted = false;
         UpdatePortalHeader();
         ArrangeControls();
@@ -563,7 +575,7 @@ internal sealed partial class DesktopView
         portalLine.ForeColor = portalNotice != null && portalWarning ? Color.FromArgb(255, 107, 107) : KioskTheme.Muted;
         portalLine.Text = portalNotice ?? (signInWanted && signingIn ? "Przyłóż kartę do czytnika i wpisz PIN."
             : portalSignedIn ? "Wybierz kafelek – strony otworzą się na Twoim koncie."
-            : "Wybierz kafelek. Szare kafelki działają po zalogowaniu kartą.");
+            : "Pozycje z kłódką otworzysz po zalogowaniu kartą.");
         account.Text = portalSignedIn ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
     }
 
