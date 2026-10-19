@@ -112,7 +112,9 @@ internal sealed class NavBar : Control
         {
             var inside = items.Where(i => TileBoard.InCategory(i, top)).ToList();
             var link = inside.Count == 0 ? items.FirstOrDefault(i => top.Equals(i.LinkPath, StringComparison.OrdinalIgnoreCase)) : null;
-            bool needsSignIn = link != null ? link.NeedsSignIn : inside.Count > 0 && inside.All(i => i.NeedsSignIn);
+            // Its own page that works without signing in keeps the category open, even when its tiles need it.
+            var own = items.FirstOrDefault(i => top.Equals(i.LinkPath, StringComparison.OrdinalIgnoreCase));
+            bool needsSignIn = (own == null || own.NeedsSignIn) && (inside.Count > 0 ? inside.All(i => i.NeedsSignIn) : own != null);
             list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link, needsSignIn));
         }
         // "Dolna sekcja": those categories after the others, under a line.
