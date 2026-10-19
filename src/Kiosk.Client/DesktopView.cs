@@ -276,6 +276,12 @@ internal sealed partial class DesktopView : UserControl
     internal void ShowPage(Control? content)
     {
         if (pageContent == content) return;
+        if (portal) Atomically(() => SwapPage(content));
+        else SwapPage(content);
+    }
+
+    private void SwapPage(Control? content)
+    {
         if (pageContent != null && !pageContent.IsDisposed) card.Controls.Remove(pageContent);
         pageContent = content;
         if (content != null)

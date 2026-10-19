@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 
 namespace Kiosk.Client;
 
@@ -543,7 +544,7 @@ internal sealed partial class DesktopView
         KioskTheme.StyleButton(account, primary: true);
         account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         account.Click += (_, _) => AccountRequested?.Invoke();
-        nav.SelectionRequested += path =>
+        nav.SelectionRequested += path => Atomically(() =>
         {
             // The open page first: closing it goes back to "Strona główna".
             if (pageContent != null) PageCloseRequested?.Invoke();
@@ -553,9 +554,32 @@ internal sealed partial class DesktopView
             // To or from "Strona główna": the card and the messages, or the tiles.
             ApplyVisibility();
             ArrangeControls();
-        };
+        });
         nav.LinkRequested += item => Tiles.Run(item);
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
+    }
+
+    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool RedrawWindow(IntPtr window, IntPtr area, IntPtr region, uint flags);
+    private int atomic;
+
+    /// <summary>
+    /// Makes <paramref name="change"/> appear in one step: nothing is drawn while elements are hidden and shown one after
+    /// another (the sign-in, then the messages, then the tiles looked like fading out), then the whole window at once.
+    /// </summary>
+    private void Atomically(Action change)
+    {
+        if (!IsHandleCreated || atomic > 0) { change(); return; }
+        atomic++;
+        SendMessage(Handle, 0x000B /* WM_SETREDRAW */, IntPtr.Zero, IntPtr.Zero);
+        try { change(); }
+        finally
+        {
+            atomic--;
+            SendMessage(Handle, 0x000B, (IntPtr)1, IntPtr.Zero);
+            // RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
+            RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0004 | 0x0080 | 0x0100);
+        }
     }
 
     /// <summary>Punkt samoobsługowy: the portal layout instead of the greeting card with Szybka pomoc beside it.</summary>
