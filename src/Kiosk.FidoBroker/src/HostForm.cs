@@ -652,6 +652,7 @@ namespace FidoRun
         {
             if(closing||IsDisposed)return -1;
             if(InvokeRequired)return (int)Invoke(new Func<int>(delegate{return ChooseKeyAccount(accounts);}));
+            if(Embedded)return ChooseKeyAccountInKiosk(accounts);
             using(var dialog=new Form {Text="Wybierz konto z karty",Width=560,Height=330,TopMost=Hidden||Embedded,
                 StartPosition=Hidden||Embedded?FormStartPosition.CenterScreen:FormStartPosition.CenterParent,FormBorderStyle=FormBorderStyle.FixedDialog,MinimizeBox=false,MaximizeBox=false})
             {
@@ -668,6 +669,76 @@ namespace FidoRun
                 return dialog.ShowDialog(this)==DialogResult.OK ? list.SelectedIndex : -1;
             }
         }
+        // Inside the Kiosk: the accounts on the card as the Kiosk's own tiles, over the sign-in card in the same place.
+        private int ChooseKeyAccountInKiosk(List<KeyAccount> accounts)
+        {
+            int chosen = -1;
+            int width = (int)(440 * scale);
+            using (Form dialog = new Form
+            {
+                Text = "Wybierz konto", FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual,
+                Bounds = RectangleToScreen(ClientRectangle), TopMost = true, ShowInTaskbar = false,
+                AutoScaleMode = AutoScaleMode.None, BackColor = kioskSurface, ForeColor = kioskText, Font = KioskFont(11), KeyPreview = true
+            })
+            {
+                TableLayoutPanel outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3, BackColor = kioskSurface };
+                outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                outer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                outer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                outer.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                FlowLayoutPanel content = new FlowLayoutPanel
+                {
+                    FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                    BackColor = kioskSurface, Margin = Padding.Empty, MaximumSize = new Size(0, Math.Max(100, dialog.Height - (int)(24 * scale)))
+                };
+                Label title = new Label { Text = "Wybierz konto", AutoSize = false, Width = width, Height = KioskFont(22, FontStyle.Bold).Height + (int)(4 * scale), Font = KioskFont(22, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(6 * scale)) };
+                Label hint = new Label { Text = "Na karcie jest kilka kont. Wybierz, na które się zalogować.", AutoSize = false, Width = width, ForeColor = kioskMuted, TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(14 * scale)) };
+                hint.Height = TextRenderer.MeasureText(hint.Text, hint.Font, new Size(width, 0), TextFormatFlags.WordBreak).Height + 4;
+                content.Controls.Add(title);
+                content.Controls.Add(hint);
+                Color tile = Blend(kioskSurface, kioskMuted, 0.08f), line = Blend(kioskSurface, kioskMuted, 0.3f);
+                for (int i = 0; i < accounts.Count; i++)
+                {
+                    int index = i;
+                    Button account = new Button
+                    {
+                        Text = accounts[i].Name, Width = width, Height = (int)(52 * scale), FlatStyle = FlatStyle.Flat, BackColor = tile, ForeColor = kioskText,
+                        Font = KioskFont(11, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding((int)(14 * scale), 0, 0, 0),
+                        Margin = new Padding(0, 0, 0, (int)(8 * scale)), Cursor = Cursors.Hand, AutoEllipsis = true, UseVisualStyleBackColor = false
+                    };
+                    account.FlatAppearance.BorderColor = line;
+                    account.FlatAppearance.MouseOverBackColor = Blend(kioskSurface, kioskAccent, 0.18f);
+                    account.FlatAppearance.MouseDownBackColor = Blend(kioskSurface, kioskAccent, 0.3f);
+                    account.MouseEnter += delegate { account.FlatAppearance.BorderColor = kioskAccent; };
+                    account.MouseLeave += delegate { account.FlatAppearance.BorderColor = line; };
+                    account.Click += delegate { chosen = index; dialog.DialogResult = DialogResult.OK; };
+                    content.Controls.Add(account);
+                }
+                Button cancel = new Button
+                {
+                    Text = "Anuluj", Width = width, Height = (int)(46 * scale), FlatStyle = FlatStyle.Flat, BackColor = kioskSurface, ForeColor = kioskText,
+                    Font = KioskFont(10, FontStyle.Bold), Margin = new Padding(0, (int)(8 * scale), 0, 0), Cursor = Cursors.Hand, DialogResult = DialogResult.Cancel, UseVisualStyleBackColor = false
+                };
+                cancel.FlatAppearance.BorderColor = line;
+                cancel.FlatAppearance.MouseOverBackColor = Blend(kioskSurface, kioskMuted, 0.15f);
+                content.Controls.Add(cancel);
+                if (content.MaximumSize.Height > 0) content.AutoScroll = true;
+                outer.Controls.Add(content, 1, 1);
+                dialog.Controls.Add(outer);
+                dialog.CancelButton = cancel;
+                // The Kiosk moves or the card place changes: the choice follows it.
+                Timer follow = new Timer { Interval = 300 };
+                follow.Tick += delegate { if (IsHandleCreated && Visible) dialog.Bounds = RectangleToScreen(ClientRectangle); };
+                dialog.Shown += delegate { follow.Start(); dialog.Activate(); };
+                try { dialog.ShowDialog(); }
+                finally { follow.Dispose(); }
+            }
+            log.Write("AccountChoice=" + (chosen >= 0 ? "Chosen; Index=" + chosen : "Cancelled") + "; Accounts=" + accounts.Count + "; InKiosk=True");
+            return chosen;
+        }
+
         private void AddLog(string line) { Post(delegate { trace.AppendText(line + Environment.NewLine); }); }
         public void StatusText(string message) { Post(delegate { state.Text = message; }); }
         public void ProviderFeedback(string message) { Post(delegate { providerFeedback.Text = message ?? ""; }); }
