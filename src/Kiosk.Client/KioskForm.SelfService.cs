@@ -141,14 +141,16 @@ internal sealed partial class KioskForm
     {
         CloseCardPage();
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
-        var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
-            HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
-            logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null);
-        var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
         var page = new ApplicationView { AlwaysOverlay = true };
         cardPage = page;
         surface.Controls.Add(page);
         ShowView(page);
+        var area = page.ClientSize.Width > 0 ? page.RectangleToScreen(page.ClientRectangle) : surface.RectangleToScreen(surface.ClientRectangle);
+        var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
+            HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
+            logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
+            [area.X, area.Y, area.Width, area.Height]);
+        var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
         try
         {
             await page.StartAsync(entry, logon);

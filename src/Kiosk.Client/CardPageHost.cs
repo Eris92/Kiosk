@@ -13,7 +13,7 @@ internal static class CardPageHost
 {
     internal const string Argument = "--card-page";
 
-    internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile);
+    internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile, int[]? Area = null);
 
     /// <summary>The command-line argument for <paramref name="request"/>: one token, nothing for a shell to split.</summary>
     internal static string Encode(Request request) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
@@ -31,7 +31,8 @@ internal static class CardPageHost
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return 2;
         using var form = new HelpBrowserForm(request.Title, request.Url, request.Domains, request.Seconds, windowsAccount: true, profileFolder: request.Profile)
         {
-            Bounds = Screen.PrimaryScreen!.Bounds
+            // Straight where the Kiosk shows it (its screen area, in pixels): no jump from the top of the screen to its place.
+            Bounds = request.Area is [var x, var y, var w, var h] && w > 0 && h > 0 ? new Rectangle(x, y, w, h) : Screen.PrimaryScreen!.Bounds
         };
         Application.Run(form);
         return 0;
