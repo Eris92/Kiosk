@@ -176,13 +176,33 @@ internal sealed class TileBoard : Panel
     /// <summary>A tile that needs the card sign-in was chosen before signing in.</summary>
     internal event Action<HelpAction>? SignInNeeded;
 
+    // Windows' own scroll bar is white: a thin one in the Kiosk's colours instead, plus the wheel and dragging the tiles.
+    private readonly ScrollStrip strip;
+    private int offset;
+
     internal TileBoard()
     {
-        AutoScroll = true;
         BackColor = KioskTheme.Background;
         canvas = new Canvas(this) { Location = Point.Empty };
+        strip = new ScrollStrip(this) { Visible = false };
+        Controls.Add(strip);
         Controls.Add(canvas);
     }
+
+    private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    private int Overflow => Math.Max(0, canvas.Height - ClientSize.Height);
+
+    /// <summary>Scrolls to <paramref name="value"/> pixels from the top (kept within the content).</summary>
+    private void ScrollTo(int value)
+    {
+        int clamped = Math.Clamp(value, 0, Overflow);
+        if (clamped == offset && canvas.Top == -offset) return;
+        offset = clamped;
+        canvas.Top = -offset;
+        strip.Invalidate();
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); ScrollTo(offset - e.Delta * S(120) / 120); }
 
     internal static bool InCategory(HelpAction item, string path) =>
         item.CategoryPath.Equals(path, StringComparison.OrdinalIgnoreCase) || item.CategoryPath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
@@ -196,7 +216,7 @@ internal sealed class TileBoard : Panel
         if (Available(item)) ActionRequested?.Invoke(item);
         else if (item.NeedsSignIn) SignInNeeded?.Invoke(item);
     }
-    internal void ShowCategory(string path) { category = path; AutoScrollPosition = Point.Empty; Rebuild(); }
+    internal void ShowCategory(string path) { category = path; offset = 0; Rebuild(); }
     internal bool SignedIn { get => signedIn; set { if (signedIn != value) { signedIn = value; canvas.Invalidate(); } } }
     internal bool Busy { get => busy; set { if (busy != value) { busy = value; canvas.Invalidate(); } } }
     private bool Available(HelpAction item) => !busy && (signedIn || !item.NeedsSignIn);
@@ -236,8 +256,78 @@ internal sealed class TileBoard : Panel
     private void Rebuild()
     {
         if (canvas == null) return;
-        canvas.Arrange(Panels(), ClientSize.Width);
+        var content = Panels();
+        canvas.Arrange(content, ClientSize.Width);
+        // Taller than the place: room at the right for the strip.
+        bool scroll = canvas.Height > ClientSize.Height;
+        if (scroll) canvas.Arrange(content, ClientSize.Width - S(16));
+        strip.SetBounds(ClientSize.Width - S(10), S(4), S(8), Math.Max(0, ClientSize.Height - S(8)));
+        strip.Visible = scroll;
+        offset = Math.Clamp(offset, 0, Overflow);
+        canvas.Top = -offset;
         canvas.Invalidate();
+        strip.Invalidate();
+    }
+
+    /// <summary>The thin scroll bar: the thumb in the cards' border colour, the accent while dragged; a click on the track pages.</summary>
+    private sealed class ScrollStrip : Control
+    {
+        private readonly TileBoard board;
+        private bool hover, dragging;
+        private int grabY, grabOffset;
+
+        internal ScrollStrip(TileBoard board)
+        {
+            this.board = board;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = KioskTheme.Background;
+        }
+
+        private Rectangle Thumb
+        {
+            get
+            {
+                int total = Math.Max(1, board.canvas.Height), view = board.ClientSize.Height;
+                int height = Math.Max(Width * 4, Height * view / total);
+                int top = board.Overflow == 0 ? 0 : (Height - height) * board.offset / board.Overflow;
+                return new Rectangle(0, top, Width, Math.Min(Height, height));
+            }
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; Invalidate(); }
+        protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); board.ScrollTo(board.offset - e.Delta * board.S(120) / 120); }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            var thumb = Thumb;
+            if (thumb.Contains(e.Location)) { dragging = true; grabY = e.Y; grabOffset = board.offset; Capture = true; Invalidate(); }
+            else board.ScrollTo(board.offset + (e.Y < thumb.Top ? -1 : 1) * board.ClientSize.Height * 9 / 10);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (!dragging) return;
+            int track = Math.Max(1, Height - Thumb.Height);
+            board.ScrollTo(grabOffset + (e.Y - grabY) * board.Overflow / track);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); dragging = false; Capture = false; Invalidate(); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(KioskTheme.Background);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var track = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), Width / 2))
+            using (var fill = new SolidBrush(KioskTheme.Surface)) g.FillPath(fill, track);
+            var thumb = Thumb;
+            using var path = KioskTheme.RoundedRectangle(new Rectangle(thumb.X, thumb.Y, thumb.Width - 1, thumb.Height - 1), Width / 2);
+            using var brush = new SolidBrush(dragging ? KioskTheme.AccentLine : hover ? KioskTheme.Blend(KioskTheme.Border, KioskTheme.Text, 0.25) : KioskTheme.Border);
+            g.FillPath(brush, path);
+        }
     }
 
     private sealed class Canvas : Control
@@ -284,6 +374,12 @@ internal sealed class TileBoard : Panel
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (pressed && board.Overflow > 0)
+            {
+                int dy = Cursor.Position.Y - pressY;
+                if (!moved && Math.Abs(dy) > S(10)) moved = true;
+                if (moved) { board.ScrollTo(pressOffset - dy); return; }
+            }
             int index = tiles.FindIndex(t => t.Bounds.Contains(e.Location));
             Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
             if (index != hover) { hover = index; Invalidate(); }
@@ -291,9 +387,27 @@ internal sealed class TileBoard : Panel
 
         protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = -1; Invalidate(); }
 
+        // A finger (or the mouse) moves the tiles up and down; a tile is opened only by a tap that did not move.
+        private int pressY, pressOffset;
+        private bool pressed, moved;
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            pressed = e.Button == MouseButtons.Left;
+            moved = false;
+            pressY = Cursor.Position.Y;
+            pressOffset = board.offset;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); pressed = false; }
+
+        protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); board.ScrollTo(board.offset - e.Delta * S(120) / 120); }
+
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
+            if (moved) return;
             int index = tiles.FindIndex(t => t.Bounds.Contains(e.Location));
             if (index >= 0) board.Run(tiles[index].Item);
         }
