@@ -284,6 +284,8 @@ internal sealed partial class DesktopView : UserControl
             card.Controls.Add(content);
             content.BringToFront();
         }
+        // A page closed (Zamknij, its time ran out, signing out): back to "Strona główna".
+        else if (portal && nav.Selected.Length > 0) { nav.Select(""); Tiles.ShowCategory(""); }
         ArrangeControls();
         ApplyVisibility();
         card.Invalidate();

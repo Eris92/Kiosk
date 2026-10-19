@@ -153,8 +153,9 @@ internal sealed class NavBar : Control
         if (index < 0 || Locked(index)) return;
         if (entries[index].Link is { } link)
         {
-            Select(entries[index].Path);
+            // After the old page closed (that selects "Strona główna").
             LinkRequested?.Invoke(link);
+            Select(entries[index].Path);
         }
         else SelectionRequested?.Invoke(entries[index].Path);
     }
@@ -531,9 +532,10 @@ internal sealed partial class DesktopView
         account.Click += (_, _) => AccountRequested?.Invoke();
         nav.SelectionRequested += path =>
         {
+            // The open page first: closing it goes back to "Strona główna".
+            if (pageContent != null) PageCloseRequested?.Invoke();
             nav.Select(path);
             Tiles.ShowCategory(path);
-            if (pageContent != null) PageCloseRequested?.Invoke();
             if (signInWanted) SignInWanted = false;
             // To or from "Strona główna": the card and the messages, or the tiles.
             ApplyVisibility();
