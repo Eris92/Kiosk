@@ -535,7 +535,9 @@ internal sealed partial class DesktopView
             Tiles.ShowCategory(path);
             if (pageContent != null) PageCloseRequested?.Invoke();
             if (signInWanted) SignInWanted = false;
-            UpdatePortalHeader();
+            // To or from "Strona główna": the card and the messages, or the tiles.
+            ApplyVisibility();
+            ArrangeControls();
         };
         nav.LinkRequested += item => Tiles.Run(item);
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
@@ -588,7 +590,7 @@ internal sealed partial class DesktopView
         account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         Tiles.SignedIn = nav.SignedIn = personName != null;
         // Signed out inside a category that needs the card: back to the start page.
-        if (personName == null && nav.SelectedLocked) { nav.Select(""); Tiles.ShowCategory(""); }
+        if (personName == null && nav.SelectedLocked) { nav.Select(""); Tiles.ShowCategory(""); ApplyVisibility(); }
         if (personName != null && signInWanted) SignInWanted = false;
         UpdatePortalHeader();
         ArrangeControls();
@@ -610,7 +612,9 @@ internal sealed partial class DesktopView
     internal void SetPageTitle(string? title) { pageTitleText = title; UpdatePortalHeader(); }
 
     /// <summary>In the portal the card is on screen only for the sign-in someone asked for, a question or the PIN.</summary>
-    private bool PortalCard => signingIn && signInWanted || AskingPin || Asking;
+    private bool PortalCard => signingIn && signInWanted || AskingPin || Asking || PortalHome;
+    /// <summary>"Strona główna": the start screen as before, the card (sign-in, PIN, greeting) in the middle and the messages under it.</summary>
+    private bool PortalHome => portal && nav.Selected.Length == 0;
 
     private void ApplyPortalVisibility(bool page)
     {
@@ -619,7 +623,7 @@ internal sealed partial class DesktopView
         Tiles.Visible = !cardOn;
         Tiles.Busy = Asking || AskingPin;
         if (Help.Visible) Help.Visible = false;
-        if (News.Visible) News.Visible = false;
+        if (!PortalHome && News.Visible) News.Visible = false;
         UpdatePortalHeader();
     }
 
@@ -659,6 +663,25 @@ internal sealed partial class DesktopView
         Tiles.Bounds = middle;
         if (page) return middle;
         cardWidth = Math.Min(cardWidth, middle.Width);
+        bool news = false;
+        if (PortalHome)
+        {
+            // The messages at the bottom of the middle when they fit under the card (the size from Konfiguracja, or smaller).
+            int[] heights = [132, 220, 320], widths = [980, 1200, 1400];
+            int size = (int)banner, gap = Scale(20);
+            while (size > 0 && middle.Height - cardHeight - Scale(heights[size]) - gap * 2 < 0) size--;
+            int newsHeight = Scale(heights[size]);
+            news = News.Count > 0 && !AskingPin && !Asking && middle.Height - cardHeight - newsHeight - gap * 2 >= 0;
+            if (news)
+            {
+                int newsWidth = Math.Min(Scale(widths[size]), middle.Width);
+                News.SetBounds(middle.Left + (middle.Width - newsWidth) / 2, middle.Bottom - newsHeight, newsWidth, newsHeight);
+                int room = News.Top - gap - middle.Top;
+                if (News.Visible != news) News.Visible = news;
+                return new Rectangle(middle.Left + (middle.Width - cardWidth) / 2, middle.Top + Math.Max(0, (room - cardHeight) / 2), cardWidth, cardHeight);
+            }
+        }
+        if (News.Visible != news) News.Visible = news;
         return new Rectangle(middle.Left + (middle.Width - cardWidth) / 2, middle.Top + Math.Max(0, (middle.Height - cardHeight) / 3), cardWidth, cardHeight);
     }
 }

@@ -249,8 +249,9 @@ internal sealed partial class DesktopView : UserControl
         bool page = pageContent != null && !AskingPin && !Asking;
         // In the portal the greeting is never shown and the sign-in only when asked for: computed once, so nothing is
         // shown and hidden again in one pass (that made other elements blink).
-        bool signIn = signingIn && !AskingPin && !Asking && !page && (!portal || signInWanted);
-        bool status = !signIn && !page && !Asking && !portal;
+        bool home = portal && nav.Selected.Length == 0;
+        bool signIn = signingIn && !AskingPin && !Asking && !page && (!portal || signInWanted || home);
+        bool status = !signIn && !page && !Asking && (!portal || home);
         card.SuspendLayout();
         if (pageContent != null) pageContent.Visible = page;
         signInPlace.Visible = signIn;
@@ -354,6 +355,7 @@ internal sealed partial class DesktopView : UserControl
         nav.SetItems(actions);
         Tiles.SetItems(actions);
         Tiles.ShowCategory(nav.Selected);
+        ApplyVisibility();
         ArrangeControls();
     }
 
@@ -441,7 +443,6 @@ internal sealed partial class DesktopView : UserControl
             card.Bounds = place;
             if (page) { int inset = Scale(2); pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)); }
             if (Help.Visible) Help.Visible = false;
-            if (News.Visible) News.Visible = false;
         }
         else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
         ArrangeCardInside(cardWidth, cardHeight, personRow);
