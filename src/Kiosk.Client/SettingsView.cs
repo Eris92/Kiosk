@@ -365,7 +365,7 @@ internal sealed class SettingsView : UserControl
         });
         helpActions.Columns.Add(new DataGridViewTextBoxColumn
         {
-            Name = "Color", HeaderText = "Kolor", ToolTipText = "Kafelek: kolor koła #RRGGBB, np. #2E7D32. Puste: kolor z zestawu Kiosku.",
+            Name = "Color", HeaderText = "Kolor", ToolTipText = "Kafelek: kolor koła. Kliknij, aby wybrać z palety albo wpisać #RRGGBB. Domyślny: kolor kategorii albo Kiosku.",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         AddEnabledColumn(helpActions);
@@ -423,7 +423,7 @@ internal sealed class SettingsView : UserControl
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Description", HeaderText = "Opis", ToolTipText = "Kategoria z akcją: linia pod nazwą jej kafelka", SortMode = DataGridViewColumnSortMode.NotSortable });
-        menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Color", HeaderText = "Kolor", ToolTipText = "Kategoria z akcją: kolor koła kafelka #RRGGBB", SortMode = DataGridViewColumnSortMode.NotSortable });
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Color", HeaderText = "Kolor", ToolTipText = "Kolor ikony kategorii w lewym menu i kafelków bez własnego koloru. Kliknij, aby wybrać z palety albo wpisać #RRGGBB.", SortMode = DataGridViewColumnSortMode.NotSortable });
         menuCategories.Columns.Add(new DataGridViewCheckBoxColumn
         {
             Name = "SignedInOnly", HeaderText = "Po zalogowaniu", ToolTipText = "Kategoria z akcją: działa dopiero po zalogowaniu kartą",
@@ -958,6 +958,8 @@ internal sealed class SettingsView : UserControl
             }
             else column.FillWeight = order[i] is "Action" or "Description" ? 150 : 100;
         }
+        // A swatch and a palette instead of typing #RRGGBB.
+        if (order.Contains("Color")) ColorPicker.Attach(grid, "Color");
     }
 
     /// <summary>Moves the selected row one place up (-1) or down (1); the new-row line stays last.</summary>
