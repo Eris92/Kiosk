@@ -92,6 +92,12 @@ internal sealed record HelpAction
     /// The column shows the folders first, a folder opens its buttons and subfolders.
     /// </summary>
     public string Category { get; init; } = "";
+    /// <summary>Punkt samoobsługowy: the line under the tile's name, e.g. "Naruszenie danych osobowych".</summary>
+    public string Description { get; init; } = "";
+    /// <summary>The tile's icon by name (<see cref="TileIcons.Names"/>); empty = chosen from the action.</summary>
+    public string Icon { get; init; } = "";
+    /// <summary>The tile's circle colour #RRGGBB; empty = a colour of the Kiosk's set by position.</summary>
+    public string Color { get; init; } = "";
     internal string CategoryPath => string.Join("/", (Category ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
 
     internal static bool DefaultNeedsSignIn(string action)
@@ -106,13 +112,13 @@ internal sealed record HelpAction
 
     internal static HelpAction[] Defaults =>
     [
-        new() { Name = "SharePoint", Action = "https://www.microsoft365.com/launch/sharepoint" },
-        new() { Name = "Pierwsze logowanie", Action = FirstSignIn, Category = "Konto" },
-        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Konto" },
-        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Konto" },
-        new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Karta" },
-        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Karta" },
-        new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Karta" },
+        new() { Name = "SharePoint", Action = "https://www.microsoft365.com/launch/sharepoint", Description = "Strony i dokumenty firmy", Icon = "dokument" },
+        new() { Name = "Pierwsze logowanie", Action = FirstSignIn, Category = "Szybka pomoc/Konto", Description = "Profil Windows i logowanie jednokrotne" },
+        new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Szybka pomoc/Konto", Description = "Klucz zabezpieczeń i metody logowania" },
+        new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Szybka pomoc/Konto", Description = "Nowe hasło do konta", Icon = "klucz" },
+        new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Szybka pomoc/Karta", Description = "Nowy PIN do logowania kartą" },
+        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Szybka pomoc/Karta", Description = "Np. po zmianie hasła" },
+        new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Szybka pomoc/Karta", Description = "Usuwa PIN i wszystkie klucze z karty" },
     ];
 }
 

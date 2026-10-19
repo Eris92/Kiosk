@@ -83,7 +83,7 @@ internal static class KioskTheme
 }
 
 /// <summary>The desktop shown between apps and while the card session is locked.</summary>
-internal sealed class DesktopView : UserControl
+internal sealed partial class DesktopView : UserControl
 {
     private readonly Label brand = new() { Text = "Kiosk", AutoSize = false };
     private readonly Label subtitle = new() { Text = "Twój pulpit pracy", AutoSize = false };
@@ -123,19 +123,6 @@ internal sealed class DesktopView : UserControl
     /// <summary>A Szybka pomoc page shown in the middle frame (the card grows to the free space beside Szybka pomoc).</summary>
     private Control? pageContent;
     internal Control? Page => pageContent;
-    /// <summary>Punkt samoobsługowy: the time and date at the bottom left, so pages get the whole height on the right.</summary>
-    internal bool ClockBottomLeft
-    {
-        get => clockBottomLeft;
-        set
-        {
-            if (clockBottomLeft == value) return;
-            clockBottomLeft = value;
-            clock.TextAlign = date.TextAlign = value ? ContentAlignment.TopLeft : ContentAlignment.TopRight;
-            ArrangeControls();
-        }
-    }
-    private bool clockBottomLeft;
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
@@ -205,6 +192,7 @@ internal sealed class DesktopView : UserControl
         resume.Click += (_, _) => ResumeRequested?.Invoke();
         card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, askTitle, askText, askYes, askNo, signInPlace });
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
+        InitPortal();
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -273,6 +261,8 @@ internal sealed class DesktopView : UserControl
         if (Asking) pinCountdown.Visible = true;
         // Szybka pomoc stays where it is; while a question or the PIN waits it is greyed out.
         Help.Busy = Asking || AskingPin;
+        if (portal) ApplyPortalVisibility(page);
+        else { card.Visible = true; Tiles.Visible = false; }
         card.ResumeLayout(false);
     }
 
@@ -359,6 +349,9 @@ internal sealed class DesktopView : UserControl
     {
         if (ReferenceEquals(Help.Items, actions)) return;
         Help.SetItems(actions);
+        nav.SetItems(actions);
+        Tiles.SetItems(actions);
+        Tiles.ShowCategory(nav.Selected);
         ArrangeControls();
     }
 
@@ -423,31 +416,37 @@ internal sealed class DesktopView : UserControl
             logo.SetBounds(margin, bar + Scale(24), logoWidth, logoSize);
             textLeft = margin + logoWidth + Scale(16);
         }
-        int textWidth0 = Math.Max(0, Width - (clockBottomLeft ? 0 : clockWidth) - margin - textLeft);
+        int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
         // Only a line under it: the line moves up to where the name would be.
         brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
         subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
-        int clockReserve = 0;   // Height kept free at the bottom left for the time.
-        if (clockBottomLeft)
-        {
-            clockReserve = Scale(100);
-            clock.SetBounds(margin, Height - margin - Scale(80), clockWidth, Scale(50));
-            date.SetBounds(margin, Height - margin - Scale(28), clockWidth, Scale(28));
-        }
-        else
-        {
-            clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
-            date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
-        }
+        clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
+        date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin && !Asking;
         int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
+        bool page = pageContent != null && !AskingPin && !Asking;
+        if (portal)
+        {
+            var place = ArrangePortal(bar, cardWidth, cardHeight, page);
+            cardWidth = place.Width;
+            cardHeight = place.Height;
+            card.Bounds = place;
+            if (page) { int inset = Scale(2); pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)); }
+            Help.Visible = News.Visible = false;
+        }
+        else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
+        ArrangeCardInside(cardWidth, cardHeight, personRow);
+    }
+
+    /// <summary>The desktop with the card in the middle, Szybka pomoc beside or under it and the messages at the bottom.</summary>
+    private void ArrangeDesktop(int bar, int margin, ref int cardWidth, ref int cardHeight, bool page)
+    {
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
         bool help = Help.Count > 0;
-        bool page = pageContent != null && !AskingPin && !Asking;
         var column = Help.Needed(true);
-        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) - clockReserve >= column.Height;
+        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
         Help.Vertical = helpColumn;
         // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
@@ -470,10 +469,7 @@ internal sealed class DesktopView : UserControl
         {
             // The page takes the whole free space: beside the Szybka pomoc column, or above its row.
             int left = helpColumn ? margin + column.Width + Scale(24) : margin;
-            // Up to the top of the screen when the time is not there: only the name and logo stay at the left.
-            top = bar + Scale(clockBottomLeft && helpColumn ? 24 : 125);
-            if (clockBottomLeft && helpColumn)
-                foreach (var label in new[] { brand, subtitle }) label.Width = Math.Max(0, left - Scale(16) - label.Left);
+            top = bar + Scale(125);
             cardWidth = Math.Max(Scale(240), Width - margin - left);
             cardHeight = Math.Max(Scale(200), Height - top - margin - helpRow);
             card.SetBounds(left, top, cardWidth, cardHeight);
@@ -489,6 +485,11 @@ internal sealed class DesktopView : UserControl
             int rowWidth = Math.Min(row.Width, Width - margin * 2);
             Help.SetBounds((Width - rowWidth) / 2, card.Bottom + Scale(16), rowWidth, row.Height);
         }
+    }
+
+    /// <summary>What is inside the card: the sign-in, the greeting, the PIN field or a question.</summary>
+    private void ArrangeCardInside(int cardWidth, int cardHeight, bool personRow)
+    {
         int innerMargin = Scale(30);
         signInPlace.SetBounds(innerMargin, Scale(24), Math.Max(0, cardWidth - innerMargin * 2), Math.Max(0, cardHeight - Scale(48)));
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);

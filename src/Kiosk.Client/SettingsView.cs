@@ -348,6 +348,22 @@ internal sealed class SettingsView : UserControl
             Name = "Category", HeaderText = "Kategoria", ToolTipText = "Np. Konto albo Konto/Hasło (podkategoria). Puste: przycisk od razu na liście.",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        // The tile in the self-service layout: the line under its name, its icon and the circle's colour.
+        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Description", HeaderText = "Opis", ToolTipText = "Kafelek: linia pod nazwą, np. „Naruszenie danych osobowych”",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Icon", HeaderText = "Ikona", ToolTipText = "Kafelek: " + TileIcons.Names + ". Puste: dobrana do akcji.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Color", HeaderText = "Kolor", ToolTipText = "Kafelek: kolor koła #RRGGBB, np. #2E7D32. Puste: kolor z zestawu Kiosku.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
         AddEnabledColumn(helpActions);
         // Punkt samoobsługowy: greyed out until someone signs in with the card.
         helpActions.Columns.Add(new DataGridViewCheckBoxColumn
@@ -358,7 +374,7 @@ internal sealed class SettingsView : UserControl
         });
         void AddHelpRow(HelpAction h)
         {
-            int row = helpActions.Rows.Add(h.Name, h.Action, h.CategoryPath);
+            int row = helpActions.Rows.Add(h.Name, h.Action, h.CategoryPath, h.Description, h.Icon, h.Color);
             SetEnabled(helpActions, row, h.Enabled);
             helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
         }
@@ -368,7 +384,8 @@ internal sealed class SettingsView : UserControl
             HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
             " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +
             " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
-            "Kategoria grupuje przyciski: „Konto” albo „Konto/Hasło” dla podkategorii; kolejność kategorii jak na liście.", helpHeight: 96);
+            "Kategoria grupuje przyciski: „Konto” albo „Konto/Hasło” dla podkategorii; kolejność kategorii jak na liście. " +
+            "W punkcie samoobsługowym każdy przycisk jest kafelkiem: kategorie są w lewym menu, opis, ikona i kolor zmieniają kafelek.", helpHeight: 110);
         var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
         helpDefaults.Click += (_, _) =>
         {
@@ -888,6 +905,7 @@ internal sealed class SettingsView : UserControl
                 {
                     Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r),
                     Category = string.Join("/", Cell(r, "Category").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0)),
+                    Description = Cell(r, "Description").Trim(), Icon = Cell(r, "Icon").Trim(), Color = Cell(r, "Color").Trim(),
                     SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,

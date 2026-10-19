@@ -245,6 +245,9 @@ internal sealed record Config
                 !(HelpAction.BuiltIn.Contains(help.Action, StringComparer.OrdinalIgnoreCase) ||
                   Uri.TryCreate(help.Action, UriKind.Absolute, out var helpUri) && helpUri.Scheme == Uri.UriSchemeHttps))
                 throw new InvalidDataException("Szybka pomoc: każdy przycisk potrzebuje nazwy i akcji https://… albo " + string.Join(", ", HelpAction.BuiltIn) + ".");
+        foreach (var help in HelpActions)
+            if (help.Color is { Length: > 0 } tileColor && !KioskTheme.IsColor(tileColor))
+                throw new InvalidDataException("Szybka pomoc: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");
         if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
             throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
         if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");

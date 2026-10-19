@@ -121,6 +121,9 @@ internal sealed partial class KioskForm : Form
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
+        desktop.Tiles.ActionRequested += item => _ = RunHelpAsync(item);
+        desktop.AccountRequested += PortalAccount;
+        desktop.PageCloseRequested += () => { helpBrowser?.Close(); CloseCardPage(); };
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
@@ -795,7 +798,7 @@ internal sealed partial class KioskForm : Form
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         desktop.SetHelp(config.HelpActions);
         desktop.Help.SignedIn = !SelfService || cardLogon != null;
-        desktop.ClockBottomLeft = SelfService;
+        desktop.Portal = SelfService;
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -1072,12 +1075,13 @@ internal sealed partial class KioskForm : Form
         var window = new HelpBrowserForm(title, url, HelpPageDomains(), config.HelpCloseSeconds, onlyListed: config.BrowserOnlyBookmarks) { TopLevel = false, TopMost = false };
         window.FormClosed += (_, _) =>
         {
-            if (desktop.Page == window) desktop.ShowPage(null);
+            if (desktop.Page == window) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
             if (helpBrowser == window) { helpBrowser = null; RefreshChrome(); }
         };
         helpBrowser = window;
         if (visibleView != desktop) ShowView(desktop);
         desktop.ShowPage(window);
+        desktop.SetPageTitle(title);
         window.Show();
         window.Focus();
         window.Start();
