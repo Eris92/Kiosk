@@ -591,21 +591,41 @@ internal sealed partial class DesktopView : UserControl
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         if (Width <= 0 || Height <= 0) return;
-        if (portal)
+        PaintBackdrop(e.Graphics, ClientSize, DeviceDpi);
+        // The portal: the same background everywhere (the tiles lie on it too), a line after the left column.
+        if (portal && portalSide > 0)
         {
-            // One plain background everywhere (the tiles and the pages lie on the same colour), a line after the left column.
-            e.Graphics.Clear(KioskTheme.Background);
             using var line = new Pen(KioskTheme.Border);
-            if (portalSide > 0) e.Graphics.DrawLine(line, portalSide, 0, portalSide, Height);
-            return;
+            e.Graphics.DrawLine(line, portalSide, 0, portalSide, Height);
         }
-        using var background = new LinearGradientBrush(ClientRectangle, Color.FromArgb(21, 36, 59), KioskTheme.Background, 70f);
-        e.Graphics.FillRectangle(background, ClientRectangle);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var accent = new Pen(Color.FromArgb(20, KioskTheme.AccentLine), Scale(1));
-        int ringSize = Scale(580);
-        e.Graphics.DrawEllipse(accent, Width - ringSize / 2, -ringSize / 2, ringSize, ringSize);
-        e.Graphics.DrawEllipse(accent, -ringSize / 2, Height - ringSize / 3, ringSize, ringSize);
+    }
+
+    /// <summary>The Kiosk's background (a navy gradient with two faint rings) for a window of <paramref name="size"/>.</summary>
+    private static void PaintBackdrop(Graphics g, Size size, int dpi)
+    {
+        var area = new Rectangle(Point.Empty, size);
+        using var background = new LinearGradientBrush(area, Color.FromArgb(21, 36, 59), KioskTheme.Background, 70f);
+        g.FillRectangle(background, area);
+        var smoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var accent = new Pen(Color.FromArgb(20, KioskTheme.AccentLine), Math.Max(1, dpi / 96f));
+        int ringSize = (int)Math.Round(580 * dpi / 96d);
+        g.DrawEllipse(accent, size.Width - ringSize / 2, -ringSize / 2, ringSize, ringSize);
+        g.DrawEllipse(accent, -ringSize / 2, size.Height - ringSize / 3, ringSize, ringSize);
+        g.SmoothingMode = smoothing;
+    }
+
+    /// <summary>Paints the window's background under <paramref name="control"/> (one of its children), so it lies on the same background.</summary>
+    internal static void PaintBackdrop(Graphics g, Control control)
+    {
+        Control? view = control.Parent;
+        while (view != null && view is not DesktopView) view = view.Parent;
+        if (view == null || view.Width <= 0 || view.Height <= 0) { g.Clear(KioskTheme.Background); return; }
+        var at = view.PointToClient(control.PointToScreen(Point.Empty));
+        var state = g.Save();
+        g.TranslateTransform(-at.X, -at.Y);
+        PaintBackdrop(g, view.ClientSize, view.DeviceDpi);
+        g.Restore(state);
     }
 
     protected override void Dispose(bool disposing)

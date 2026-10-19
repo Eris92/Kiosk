@@ -168,7 +168,8 @@ internal sealed class NavBar : Control
             if (i == firstBottom && i > 0)
             {
                 using var line = new Pen(KioskTheme.Border);
-                g.DrawLine(line, S(16), y + SeparatorHeight / 2 - S(2), Width - S(16), y + SeparatorHeight / 2 - S(2));
+                // As wide as the entries' highlight, so everything in the column keeps the same distance from its edges.
+                g.DrawLine(line, 0, y + SeparatorHeight / 2 - S(2), Width - 1, y + SeparatorHeight / 2 - S(2));
                 y += SeparatorHeight;
             }
             var bounds = new Rectangle(0, y, Width - 1, RowHeight);
@@ -217,6 +218,8 @@ internal sealed class TileBoard : Panel
         Controls.Add(canvas);
     }
 
+    protected override void OnPaintBackground(PaintEventArgs e) => DesktopView.PaintBackdrop(e.Graphics, this);
+
     private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
     private int Overflow => Math.Max(0, canvas.Height - ClientSize.Height);
 
@@ -227,6 +230,8 @@ internal sealed class TileBoard : Panel
         if (clamped == offset && canvas.Top == -offset) return;
         offset = clamped;
         canvas.Top = -offset;
+        // The background stays put while the tiles move over it.
+        canvas.Invalidate();
         strip.Invalidate();
     }
 
@@ -346,7 +351,7 @@ internal sealed class TileBoard : Panel
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(KioskTheme.Background);
+            DesktopView.PaintBackdrop(g, this);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using (var track = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), Width / 2))
             using (var fill = new SolidBrush(KioskTheme.Surface)) g.FillPath(fill, track);
@@ -445,7 +450,7 @@ internal sealed class TileBoard : Panel
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(KioskTheme.Background);
+            DesktopView.PaintBackdrop(g, this);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using var titleFont = new Font("Segoe UI Semibold", 14);
             using var nameFont = new Font("Segoe UI Semibold", 13);
@@ -663,7 +668,8 @@ internal sealed partial class DesktopView
         foreach (var c in new Control[] { portalTitle, portalLine }) if (c.Visible) c.Visible = false;
         if (portalPerson.Visible != portalSignedIn) portalPerson.Visible = portalSignedIn;
         if (account.Visible != portalSignedIn) account.Visible = portalSignedIn;
-        int left = side + Scale(8), right = Width - margin;
+        // The tiles as far from the line as the left column's entries are.
+        int left = side + Scale(14), right = Width - margin;
         var middle = new Rectangle(left, bar + margin, Math.Max(Scale(200), right - left), 0);
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
