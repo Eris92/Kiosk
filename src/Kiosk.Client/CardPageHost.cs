@@ -13,7 +13,7 @@ internal static class CardPageHost
 {
     internal const string Argument = "--card-page";
 
-    internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile, int[]? Area = null);
+    internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile, int[]? Area = null, bool OnlyListed = true);
 
     /// <summary>The command-line argument for <paramref name="request"/>: one token, nothing for a shell to split.</summary>
     internal static string Encode(Request request) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
@@ -29,7 +29,7 @@ internal static class CardPageHost
         BrowserView.IntegratedAuthHosts = request.Domains.Where(d => d.Length > 0 && !HelpBrowserForm.SignInDomains.Contains(d, StringComparer.OrdinalIgnoreCase))
             .Where(d => d.All(c => char.IsLetterOrDigit(c) || c == '.' || c == '-')).ToArray();
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return 2;
-        using var form = new HelpBrowserForm(request.Title, request.Url, request.Domains, request.Seconds, windowsAccount: true, profileFolder: request.Profile)
+        using var form = new HelpBrowserForm(request.Title, request.Url, request.Domains, request.Seconds, windowsAccount: true, profileFolder: request.Profile, onlyListed: request.OnlyListed)
         {
             // Straight where the Kiosk shows it (its screen area, in pixels): no jump from the top of the screen to its place.
             Bounds = request.Area is [var x, var y, var w, var h] && w > 0 && h > 0 ? new Rectangle(x, y, w, h) : Screen.PrimaryScreen!.Bounds

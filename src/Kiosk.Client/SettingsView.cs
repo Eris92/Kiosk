@@ -63,7 +63,7 @@ internal sealed class SettingsView : UserControl
     private static readonly Color Card = Color.FromArgb(43, 43, 43);
     private const int RowHeight = 54;
     private const string CustomAccent = "Własny kolor…";
-    private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
+    private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z listy: zakładki, dozwolone domeny i strony Szybkiej pomocy (także linki na nich)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
     private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” kartą i jej PIN-em (bez loginu i hasła): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
     private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };

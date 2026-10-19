@@ -147,6 +147,7 @@ internal sealed class BrowserView : UserControl
     {
         pageTitle = new Label { Text = title, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI Semibold", 12), ForeColor = KioskTheme.Text, BackColor = KioskTheme.Taskbar };
         pageClose = close;
+        addressBox.Visible = go.Visible = false;   // A single page never has an address bar, whatever sites it may open.
         close.Font = new Font("Segoe UI", 12, FontStyle.Bold);
         toolbar.Controls.Add(pageTitle);
         toolbar.Controls.Add(close);

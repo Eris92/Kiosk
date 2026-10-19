@@ -795,6 +795,7 @@ internal sealed partial class KioskForm : Form
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         desktop.SetHelp(config.HelpActions);
         desktop.Help.SignedIn = !SelfService || cardLogon != null;
+        desktop.ClockBottomLeft = SelfService;
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
@@ -1068,7 +1069,7 @@ internal sealed partial class KioskForm : Form
         if (SelfService && OpenPageAsCardPerson(title, url)) return;
         helpBrowser?.Close();
         // In the start screen's middle frame: no separate window over the screen.
-        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { TopLevel = false, TopMost = false };
+        var window = new HelpBrowserForm(title, url, HelpPageDomains(), config.HelpCloseSeconds, onlyListed: config.BrowserOnlyBookmarks) { TopLevel = false, TopMost = false };
         window.FormClosed += (_, _) =>
         {
             if (desktop.Page == window) desktop.ShowPage(null);
@@ -1081,6 +1082,11 @@ internal sealed partial class KioskForm : Form
         window.Focus();
         window.Start();
     }
+
+    /// <summary>Sites a Szybka pomoc page may open with "tylko strony z listy": the allowed domains and the bookmarks' sites.</summary>
+    private IEnumerable<string> HelpPageDomains() =>
+        config.BrowserAllowedDomains.Concat(config.Bookmarks.Where(b => b.Enabled)
+            .Select(b => Uri.TryCreate(b.Url, UriKind.Absolute, out var u) ? u.Host : "").Where(h => h.Length > 0));
 
     /// <summary>
     /// The reader holding the card: the one from Konfiguracja, or in Punkt samoobsługowy the only reader holding one

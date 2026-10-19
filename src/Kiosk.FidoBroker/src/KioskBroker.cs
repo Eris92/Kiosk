@@ -111,6 +111,22 @@ namespace FidoRun
         // The native tile asked for the card or its PIN, or is ready for input.
         internal static void ProviderListening() { listening.Set(); }
 
+        // "wait" answers "ERROR UNKNOWN_KEY <Windows' text>": the Kiosk then sets up the card (PIN, registration)
+        // instead of leaving Windows' "this security key is probably unknown" on the screen.
+        internal const string UnknownKey = "UNKNOWN_KEY ";
+
+        // Windows' own text from the native tile; no status code says it, so the words of its message (Polish or English).
+        internal static void ProviderMessage(string text)
+        {
+            if (View == null || String.IsNullOrEmpty(text)) return;   // Only in the Kiosk's broker mode.
+            string lower = text.ToLowerInvariant();
+            bool unknown = lower.Contains("nieznany") || lower.Contains("nie jest rozpoznawany") || lower.Contains("unknown") ||
+                lower.Contains("isn't recognized") || lower.Contains("not recognized") || lower.Contains("isn't registered");
+            if (!unknown || Completed) return;
+            if (logger != null) logger("KioskBroker=UnknownKey");
+            Failed(UnknownKey + text);
+        }
+
         internal static bool Completed { get { return finished.WaitOne(0); } }
 
         // Never the Kiosk's own account: when the person signed in with the card is also the Windows user the Kiosk runs

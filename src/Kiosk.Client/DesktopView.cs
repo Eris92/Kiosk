@@ -123,6 +123,19 @@ internal sealed class DesktopView : UserControl
     /// <summary>A Szybka pomoc page shown in the middle frame (the card grows to the free space beside Szybka pomoc).</summary>
     private Control? pageContent;
     internal Control? Page => pageContent;
+    /// <summary>Punkt samoobsługowy: the time and date at the bottom left, so pages get the whole height on the right.</summary>
+    internal bool ClockBottomLeft
+    {
+        get => clockBottomLeft;
+        set
+        {
+            if (clockBottomLeft == value) return;
+            clockBottomLeft = value;
+            clock.TextAlign = date.TextAlign = value ? ContentAlignment.TopLeft : ContentAlignment.TopRight;
+            ArrangeControls();
+        }
+    }
+    private bool clockBottomLeft;
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
@@ -409,12 +422,22 @@ internal sealed class DesktopView : UserControl
             logo.SetBounds(margin, bar + Scale(24), logoWidth, logoSize);
             textLeft = margin + logoWidth + Scale(16);
         }
-        int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
+        int textWidth0 = Math.Max(0, Width - (clockBottomLeft ? 0 : clockWidth) - margin - textLeft);
         // Only a line under it: the line moves up to where the name would be.
         brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
         subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
-        clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
-        date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
+        int clockReserve = 0;   // Height kept free at the bottom left for the time.
+        if (clockBottomLeft)
+        {
+            clockReserve = Scale(100);
+            clock.SetBounds(margin, Height - margin - Scale(80), clockWidth, Scale(50));
+            date.SetBounds(margin, Height - margin - Scale(28), clockWidth, Scale(28));
+        }
+        else
+        {
+            clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
+            date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
+        }
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin && !Asking;
@@ -423,7 +446,7 @@ internal sealed class DesktopView : UserControl
         bool help = Help.Count > 0;
         bool page = pageContent != null && !AskingPin && !Asking;
         var column = Help.Needed(true);
-        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
+        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) - clockReserve >= column.Height;
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
         Help.Vertical = helpColumn;
         // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
@@ -446,7 +469,10 @@ internal sealed class DesktopView : UserControl
         {
             // The page takes the whole free space: beside the Szybka pomoc column, or above its row.
             int left = helpColumn ? margin + column.Width + Scale(24) : margin;
-            top = bar + Scale(125);
+            // Up to the top of the screen when the time is not there: only the name and logo stay at the left.
+            top = bar + Scale(clockBottomLeft && helpColumn ? 24 : 125);
+            if (clockBottomLeft && helpColumn)
+                foreach (var label in new[] { brand, subtitle }) label.Width = Math.Max(0, left - Scale(16) - label.Left);
             cardWidth = Math.Max(Scale(240), Width - margin - left);
             cardHeight = Math.Max(Scale(200), Height - top - margin - helpRow);
             card.SetBounds(left, top, cardWidth, cardHeight);

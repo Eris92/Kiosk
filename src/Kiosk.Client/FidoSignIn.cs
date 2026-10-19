@@ -31,6 +31,9 @@ internal sealed class FidoSignIn : IDisposable
 
     internal sealed record Outcome(FidoSignIn? SignIn, string Message);
 
+    /// <summary>The sign-in ended because Windows does not know the card (FidoRun's KioskBroker.UnknownKey).</summary>
+    internal const string UnknownKey = "UNKNOWN_KEY ";
+
     /// <summary>
     /// Starts Windows' card sign-in inside the Kiosk window <paramref name="place"/> and waits until it listens for a
     /// card: Windows reads only a card that arrives while it listens, never one already lying on the reader.

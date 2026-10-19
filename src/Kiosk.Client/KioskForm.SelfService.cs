@@ -34,7 +34,7 @@ internal sealed partial class KioskForm
     /// <summary>Nobody signed in: the card sign-in screen is (re)started in the start screen and waits for a tap.</summary>
     private void PrepareCardSignIn()
     {
-        if (cardLogon != null || signInScreen != null) return;
+        if (cardLogon != null || signInScreen != null || registeringCard) return;
         if (signInStarting != null)
         {
             if (!signInStarting.IsCompleted) return;
@@ -58,6 +58,13 @@ internal sealed partial class KioskForm
         if (signInScreen == screen) signInScreen = null;
         if (outcome.SignIn is not { } signIn)
         {
+            if (outcome.Message.StartsWith(FidoSignIn.UnknownKey, StringComparison.Ordinal))
+            {
+                // A new or reset card: no account knows it. PIN, then registration, instead of the bare error.
+                Audit.Write("selfservice_card_unknown", outcome.Message[FidoSignIn.UnknownKey.Length..]);
+                _ = RegisterUnknownCardAsync();
+                return;
+            }
             // A fresh sign-in screen follows on the next tick.
             Audit.Write("selfservice_card_signin_failed", outcome.Message);
             notice = "Nie udało się zalogować kartą: " + outcome.Message;
@@ -80,6 +87,44 @@ internal sealed partial class KioskForm
         // Nothing opens by itself: the person chooses from Szybka pomoc.
         if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
         RefreshChrome();
+    }
+
+    /// <summary>The card sign-in waits (no listening for a card) while the Kiosk itself talks to an unknown card.</summary>
+    private bool registeringCard;
+
+    /// <summary>
+    /// Windows does not know the tapped card (new, or reset): the card gets a PIN if it has none, then the person
+    /// chooses whether to register it; yes opens "Skonfiguruj MFA" in the middle frame to add it as a security key.
+    /// </summary>
+    private async Task RegisterUnknownCardAsync()
+    {
+        registeringCard = true;
+        verifying = true;
+        try
+        {
+            var readerName = PresentReader();
+            if (readerName == null)
+            {
+                // Windows read it with a tap: the card may already be off the reader.
+                notice = "Ta karta nie jest jeszcze zarejestrowana. Przyłóż ją ponownie, aby ją skonfigurować.";
+                RefreshChrome();
+                var until = DateTime.UtcNow.AddSeconds(20);
+                while ((readerName = PresentReader()) == null && DateTime.UtcNow < until) await Task.Delay(200);
+                notice = null;
+            }
+            if (readerName == null) { ShowHelpResult("Karta nie wróciła do czytnika. Przyłóż ją, aby spróbować ponownie."); return; }
+            var pin = await EnsureCardPinAsync(readerName, config.HelpCloseSeconds);
+            var register = await desktop.AskAsync("Zarejestrować kartę?",
+                (pin != null ? "PIN karty jest ustawiony. " : "") + "Ta karta nie jest jeszcze przypisana do żadnego konta. Zarejestrować ją teraz?\n\n" +
+                "Otworzy się „Skonfiguruj MFA”: zaloguj się swoim kontem i dodaj klucz zabezpieczeń – tę kartę.", config.HelpCloseSeconds);
+            Audit.Write(register ? "card_register_started" : "card_register_declined");
+            if (!register) { ShowHelpResult("Karta nie została zarejestrowana. Logowanie nią zadziała po dodaniu jej w „Skonfiguruj MFA”."); return; }
+            var mfa = config.HelpActions.FirstOrDefault(h => h.Action.Contains("mfa", StringComparison.OrdinalIgnoreCase) ||
+                h.Action.Contains("security-info", StringComparison.OrdinalIgnoreCase) || h.Action.Contains("mysecurityinfo", StringComparison.OrdinalIgnoreCase));
+            ShowHelpPage(mfa?.Name ?? "Skonfiguruj MFA", mfa?.Action ?? "https://aka.ms/mysecurityinfo");
+        }
+        catch (Exception ex) { Audit.Write("card_register_failed", ex.Message); ShowHelpResult("Nie udało się przygotować karty: " + ex.Message); }
+        finally { registeringCard = false; verifying = false; cardKey = reader.Snapshot(config.ReaderName); RefreshChrome(); }
     }
 
     private void SelfServiceTick()
@@ -152,9 +197,9 @@ internal sealed partial class KioskForm
         desktop.ShowPage(page);
         var area = desktop.PageScreenArea;
         var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
-            HelpBrowserForm.SignInDomains.Concat(config.BrowserAllowedDomains).Append(host).ToArray(),
+            HelpBrowserForm.SignInDomains.Concat(HelpPageDomains()).Append(host).ToArray(),
             logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
-            [area.X, area.Y, area.Width, area.Height]);
+            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks);
         var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
         try
         {

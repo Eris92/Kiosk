@@ -1,7 +1,8 @@
 name: Build Windows client
 on:
   push:
-    branches: [main, kiosk-explorer]
+    # The test branch too: Konfiguracja → Aktualizacja (Ctrl+Alt+U) on the test PCs gets every pushed version.
+    branches: [main, kiosk-explorer, claude/project-thread-gr3tx0]
     tags: ['v*']
   pull_request:
   workflow_dispatch:

@@ -148,7 +148,9 @@ internal sealed class HelpBrowserForm : Form
 
     /// <param name="windowsAccount">Punkt samoobsługowy, signed in with the card: this program runs as the person
     /// (<see cref="CardPageHost"/>), the page signs in with their Windows account (SSO) and keeps <paramref name="profileFolder"/>.</param>
-    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60, bool windowsAccount = false, string? profileFolder = null)
+    /// <param name="onlyListed">Konfiguracja → Przeglądarka "tylko strony z listy": links to other sites are blocked;
+    /// off, links on the page (a SharePoint page pointing elsewhere) open any site.</param>
+    internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60, bool windowsAccount = false, string? profileFolder = null, bool onlyListed = true)
     {
         this.idleSeconds = idleSeconds;
         this.url = url;
@@ -161,7 +163,7 @@ internal sealed class HelpBrowserForm : Form
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
-        var policy = new SitePolicy(true, [], SignInDomains.Concat(extraDomains).Append(host));
+        var policy = new SitePolicy(onlyListed, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
         browser = new BrowserView([], policy, null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder) { Dock = DockStyle.Fill };
         // One bar: ← → ⟳, the page's name and a large close button (no second bar above the browser's).

@@ -375,7 +375,7 @@ namespace FidoRun
         {
             if (generation != 0 && !IsCurrentCredential(generation)) return;
             log.Write("NativeStatusMessage: " + TraceLog.DisplayText(message));
-            if (options.Broker) KioskBroker.ProviderListening();
+            if (options.Broker) { KioskBroker.ProviderListening(); KioskBroker.ProviderMessage(message); }
             view.StatusText(message);
         }
 
@@ -397,6 +397,7 @@ namespace FidoRun
             if (options.Broker) KioskBroker.ProviderListening();
             if (!String.IsNullOrEmpty(accessibility) && !String.Equals(label, accessibility, StringComparison.Ordinal))
                 log.Write("NativeBioFeedbackAccessibility: " + TraceLog.DisplayText(accessibility));
+            if (options.Broker) KioskBroker.ProviderMessage(display);
             view.ProviderFeedback(display);
             return Status.Ok;
         }
@@ -786,7 +787,7 @@ namespace FidoRun
         public int OnCreatingWindow(out IntPtr window) { window = owner; return Status.Ok; }
         public int SetFieldState(ICredentialProviderCredential credential, uint id, int value) { host.UpdateField(generation, id, "state", null, value); return Status.Ok; }
         public int SetFieldInteractiveState(ICredentialProviderCredential credential, uint id, int value) { host.UpdateField(generation, id, "interactive", null, value); return Status.Ok; }
-        public int SetFieldString(ICredentialProviderCredential credential, uint id, string value) { host.UpdateField(generation, id, "text", value, 0); return Status.Ok; }
+        public int SetFieldString(ICredentialProviderCredential credential, uint id, string value) { KioskBroker.ProviderMessage(value); host.UpdateField(generation, id, "text", value, 0); return Status.Ok; }
         public int SetFieldCheckbox(ICredentialProviderCredential credential, uint id, bool value, string label) { host.UpdateField(generation, id, "checkbox", label, value ? 1 : 0); return Status.Ok; }
         public int SetFieldBitmap(ICredentialProviderCredential credential, uint id, IntPtr bitmap) { return Status.Ok; }
         public int SetFieldBitmapBuffer(ICredentialProviderCredential credential, uint id, uint bytes, IntPtr buffer)
