@@ -94,7 +94,7 @@ internal sealed partial class KioskForm : Form
         localConfig = loaded?.Local;
         notice = loaded?.Problem;
         identifyCard = IdentifyPresentCard;
-        cardPresent = () => reader.Snapshot(this.config.ReaderName) != null;
+        cardPresent = () => PresentReader() != null;
         Text = "Kiosk";
         // Full-screen shell: no title bar with minimize / maximize / close, in test mode too.
         FormBorderStyle = FormBorderStyle.None;
@@ -1073,18 +1073,29 @@ internal sealed partial class KioskForm : Form
         window.Show(this);
     }
 
+    /// <summary>
+    /// The reader holding the card: the one from Konfiguracja, or in Punkt samoobsługowy the only reader holding one
+    /// (a USB key is its own reader, and the NFC reader from Konfiguracja may not be plugged in). Null = no card.
+    /// </summary>
+    private string? PresentReader()
+    {
+        if (reader.Snapshot(config.ReaderName) != null && reader.ActiveReader.Length > 0) return reader.ActiveReader;
+        if (!SelfService) return null;
+        return reader.ReadersWithCard() is [var only] ? only : null;
+    }
+
     private bool CardForHelp(out string readerName)
     {
-        readerName = reader.ActiveReader;
-        if (cardPresent() && !string.IsNullOrEmpty(readerName)) return true;
-        notice = "Przyłóż kartę do czytnika i wybierz to jeszcze raz.";
-        if (current != null) current.Notice = notice;
+        readerName = PresentReader() ?? "";
+        if (readerName.Length > 0) return true;
+        ShowHelpResult("Przyłóż kartę do czytnika (albo włóż klucz) i wybierz to jeszcze raz.");
         return false;
     }
 
     private void ShowHelpResult(string text)
     {
         notice = text;
+        noticeUntil = DateTime.UtcNow.AddSeconds(10);   // Punkt samoobsługowy: shown in place of the sign-in for a while.
         if (current != null) current.Notice = text;
         RefreshChrome();
     }
@@ -1200,7 +1211,7 @@ internal sealed partial class KioskForm : Form
                 while (cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
                 while (!cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
                 if (!cardPresent()) { ShowHelpResult("Reset karty anulowany: karta nie wróciła do czytnika."); return; }
-                readerName = reader.ActiveReader;
+                readerName = PresentReader() ?? readerName;
                 answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
             }
             Audit.Write(answer.Code == 0 ? "card_reset" : "card_reset_failed", answer.Code + " " + answer.Message);

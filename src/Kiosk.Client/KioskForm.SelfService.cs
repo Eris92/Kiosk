@@ -17,6 +17,8 @@ internal sealed partial class KioskForm
     private FidoSignIn? signInScreen;
     private Task<FidoSignIn?>? signInStarting;
     private DateTime signInFailedAt;
+    /// <summary>A Szybka pomoc result (card reset, PIN change…) is shown in the card instead of the sign-in until then.</summary>
+    private DateTime noticeUntil;
 
     /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
     private DateTime? cardAwaySince;
@@ -85,6 +87,7 @@ internal sealed partial class KioskForm
         var key = reader.Snapshot(config.ReaderName);
         cardKey = key;
         PrepareCardSignIn();
+        if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
         if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Wróć do Kiosku" or its countdown closed it.
         if (cardLogon == null) return;
         if (signInReaders.Length == 0)
@@ -184,7 +187,7 @@ internal sealed partial class KioskForm
             desktop.UpdateStatus(name, notice ?? "Wybierz zadanie z Szybkiej pomocy – strony otworzą się na Twoim koncie. " +
                 "Zabierz kartę z czytnika, aby się wylogować.", person: name);
         }
-        else if (signInScreen != null) desktop.ShowSignIn(true);
+        else if (signInScreen != null && !(notice != null && DateTime.UtcNow < noticeUntil)) desktop.ShowSignIn(true);
         else
         {
             desktop.ShowSignIn(false);
