@@ -143,7 +143,12 @@ internal sealed class NavBar : Control
         base.OnMouseClick(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
         if (index < 0) return;
-        if (entries[index].Link is { } link) { Select(entries[index].Path); LinkRequested?.Invoke(link); }
+        if (entries[index].Link is { } link)
+        {
+            // Locked before signing in: the card sign-in comes up, the selection stays on what is open.
+            if (!(entries[index].NeedsSignIn && !signedIn)) Select(entries[index].Path);
+            LinkRequested?.Invoke(link);
+        }
         else SelectionRequested?.Invoke(entries[index].Path);
     }
 
@@ -527,7 +532,12 @@ internal sealed partial class DesktopView
             if (signInWanted) SignInWanted = false;
             UpdatePortalHeader();
         };
-        Tiles.SignInNeeded += _ => SignInWanted = true;
+        Tiles.SignInNeeded += _ =>
+        {
+            // A page left open would cover the sign-in.
+            if (pageContent != null) PageCloseRequested?.Invoke();
+            SignInWanted = true;
+        };
         nav.LinkRequested += item => Tiles.Run(item);
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
     }
