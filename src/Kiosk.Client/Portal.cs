@@ -667,7 +667,8 @@ internal sealed partial class DesktopView
         var middle = new Rectangle(left, bar + margin, Math.Max(Scale(200), right - left), 0);
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
-        if (page) return new Rectangle(left, bar, Width - left, Height - bar);
+        // A page starts right after the left column's line: no gap, no second line.
+        if (page) return new Rectangle(side + 1, bar, Width - side - 1, Height - bar);
         cardWidth = Math.Min(cardWidth, middle.Width);
         bool news = false;
         if (PortalHome)

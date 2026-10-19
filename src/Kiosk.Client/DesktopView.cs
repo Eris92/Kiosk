@@ -443,7 +443,7 @@ internal sealed partial class DesktopView : UserControl
             cardWidth = place.Width;
             cardHeight = place.Height;
             card.Bounds = place;
-            if (page) { int inset = Scale(2); pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)); }
+            if (page) pageContent!.SetBounds(0, 0, cardWidth, cardHeight);
             if (Help.Visible) Help.Visible = false;
         }
         else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
