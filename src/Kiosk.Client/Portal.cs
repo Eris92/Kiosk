@@ -552,7 +552,8 @@ internal sealed partial class DesktopView
             if (portal == value) return;
             portal = value;
             clock.TextAlign = date.TextAlign = value ? ContentAlignment.TopLeft : ContentAlignment.TopRight;
-            nav.Visible = portalTitle.Visible = portalLine.Visible = portalPerson.Visible = account.Visible = value;
+            nav.Visible = portalTitle.Visible = portalLine.Visible = portalPerson.Visible = value;
+            account.Visible = value && portalSignedIn;
             ApplyVisibility();
             ArrangeControls();
         }
@@ -605,6 +606,9 @@ internal sealed partial class DesktopView
             : portalSignedIn ? "Wybierz kafelek – strony otworzą się na Twoim koncie."
             : "Pozycje z kłódką otworzysz po zalogowaniu kartą.");
         account.Text = portalSignedIn ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
+        // Signed out, the card sign-in is on "Strona główna": the button only ends a session.
+        bool accountOn = portal && portalSignedIn;
+        if (account.Visible != accountOn) account.Visible = accountOn;
     }
 
     private string? pageTitleText;
