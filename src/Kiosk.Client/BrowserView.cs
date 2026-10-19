@@ -158,6 +158,7 @@ internal sealed class BrowserView : UserControl
         base.OnHandleCreated(e);
         tabStrip.Height = Scale(44);
         toolbar.Height = Scale(pageClose != null ? 64 : 50);
+        message.Height = Scale(30);   // 26 px fixed cut the text in half on a 240 DPI screen.
         favorites.Height = Scale(40);
         ArrangeTabs();
         ArrangeToolbar();

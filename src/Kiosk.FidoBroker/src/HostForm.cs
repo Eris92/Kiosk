@@ -617,8 +617,12 @@ namespace FidoRun
                 button.BackColor = kioskSurface;
                 button.ForeColor = kioskAccent;
                 button.FlatAppearance.BorderColor = kioskAccent;
-                button.Padding = new Padding(12, 4, 12, 4);
                 button.Font = KioskFont(10, FontStyle.Bold);
+                // A provider link ("Spróbuj ponownie" after an error) as wide and high as the Kiosk's own buttons.
+                button.AutoSize = false;
+                button.Size = new Size(FieldWidth, (int)(46 * scale));
+                button.TextAlign = ContentAlignment.MiddleCenter;
+                button.Cursor = Cursors.Hand;
                 return;
             }
             input.ForeColor = type == 1 ? kioskText : kioskMuted;
