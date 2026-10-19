@@ -134,7 +134,7 @@ internal sealed class NavBar : Control
         base.OnMouseClick(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
         if (index < 0) return;
-        if (entries[index].Link is { } link) LinkRequested?.Invoke(link);
+        if (entries[index].Link is { } link) { Select(entries[index].Path); LinkRequested?.Invoke(link); }
         else SelectionRequested?.Invoke(entries[index].Path);
     }
 
