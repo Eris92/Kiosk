@@ -320,11 +320,12 @@ internal sealed class BrowserView : UserControl
                 var deferral = e.GetDeferral();
                 string host = Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ? uri.Host : e.Uri;
                 Audit.Write("browser_sign_in_asked", host);
-                BeginInvoke(() =>
+                BeginInvoke(async () =>
                 {
                     try
                     {
-                        var typed = HelpSignIn.Ask(FindForm(), host, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
+                        // Over this page, in the same window.
+                        var typed = await HelpSignIn.AskAsync(this, host, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
                         if (typed is { } credentials) { e.Response.UserName = credentials.User; e.Response.Password = credentials.Password; }
                         else e.Cancel = true;
                     }

@@ -113,6 +113,13 @@ internal sealed class DesktopView : UserControl
     private readonly HelpCountdown pinCountdown = new() { Visible = false };
     private bool locked;
     internal bool AskingPin => pinRequest != null;
+    // Szybka pomoc questions (Resetuj kartę…) asked right in the card, instead of a separate window over the Kiosk.
+    private readonly Label askTitle = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, Visible = false };
+    private readonly Label askText = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter, Visible = false };
+    private readonly Button askYes = new() { Visible = false }, askNo = new() { Visible = false };
+    private TaskCompletionSource<bool>? askRequest;
+    private bool askWarning;
+    internal bool Asking => askRequest != null;
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
@@ -166,12 +173,20 @@ internal sealed class DesktopView : UserControl
             if (pinCardPresent?.Invoke() == false) FinishPin(false); // Card taken away.
         };
         pinBox.TextChanged += (_, _) => pinCountdown.Restart();
-        pinCountdown.Expired += () => FinishPin(false);
+        pinCountdown.Expired += () => { FinishPin(false); FinishAsk(false); };
+        askTitle.Font = new Font("Segoe UI", 18, FontStyle.Bold);
+        askText.Font = new Font("Segoe UI", 11);
+        askText.ForeColor = KioskTheme.Muted;
+        foreach (var label in new[] { askTitle, askText }) label.BackColor = KioskTheme.Surface;
+        askYes.Click += (_, _) => FinishAsk(true);
+        askNo.Click += (_, _) => FinishAsk(false);
+        foreach (var button in new[] { askYes, askNo })
+            button.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; FinishAsk(false); } };
         // Like the other help windows: a real mouse move, click or key anywhere on the desktop gives more time.
         HelpCountdown.Watch(this, () => { if (pinCountdown.Visible) pinCountdown.Restart(); });
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, signInPlace });
+        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, askTitle, askText, askYes, askNo, signInPlace });
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
@@ -184,6 +199,8 @@ internal sealed class DesktopView : UserControl
         KioskTheme.StyleButton(resume, primary: true);
         KioskTheme.StyleButton(pinOk, primary: true);
         KioskTheme.StyleButton(pinCancel);
+        KioskTheme.StyleButton(askYes, primary: !askWarning);
+        KioskTheme.StyleButton(askNo, primary: askWarning);
         Invalidate(true);
     }
 
@@ -201,9 +218,8 @@ internal sealed class DesktopView : UserControl
         heading.Text = title;
         detail.Text = description;
         hint.Text = locked ? "Twoje aplikacje czekają na wznowienie sesji." : "Aplikacje i połączenia znajdziesz w menu na dole.";
-        resume.Visible = locked && !AskingPin && !signingIn;
-        hint.Visible = !AskingPin && !signingIn;
         card.Locked = locked;
+        ApplyVisibility();
         ArrangeControls();
         card.Invalidate();
     }
@@ -213,13 +229,61 @@ internal sealed class DesktopView : UserControl
     {
         if (signingIn == show) return;
         signingIn = show;
-        signInPlace.Visible = show;
-        foreach (var c in new Control[] { heading, detail }) c.Visible = !show;
-        resume.Visible = locked && !AskingPin && !show;
-        hint.Visible = !AskingPin && !show;
-        card.SignIn = show;
+        ApplyVisibility();
         ArrangeControls();
         card.Invalidate();
+    }
+
+    /// <summary>
+    /// One screen at a time in the card: a question, the PIN field, the card sign-in or the greeting. A PIN asked
+    /// while the sign-in waits for a tap (a new PIN after a card reset) hides the sign-in instead of drawing over it.
+    /// </summary>
+    private void ApplyVisibility()
+    {
+        bool signIn = signingIn && !AskingPin && !Asking;
+        signInPlace.Visible = signIn;
+        card.SignIn = signIn;
+        heading.Visible = !signIn && !Asking;
+        detail.Visible = !signIn && !Asking && !AskingPin;   // The PIN's own text takes its place.
+        resume.Visible = locked && !AskingPin && !Asking && !signingIn;
+        hint.Visible = !AskingPin && !Asking && !signingIn;
+        foreach (var c in new Control[] { askTitle, askText, askYes, askNo }) c.Visible = Asking;
+        if (Asking) pinCountdown.Visible = true;
+    }
+
+    /// <summary>
+    /// A yes / no question in the card (Szybka pomoc): no separate window. Nobody answers for
+    /// <paramref name="idleSeconds"/>: "no". With <paramref name="warning"/> "no" is the default and drawn in the accent.
+    /// </summary>
+    internal Task<bool> AskAsync(string title, string text, int idleSeconds, bool warning = false)
+    {
+        askRequest?.TrySetResult(false);
+        askRequest = new TaskCompletionSource<bool>();
+        askWarning = warning;
+        askTitle.Text = title;
+        askText.Text = text;
+        askYes.Text = warning ? "Tak, wykonaj" : "Tak";
+        askNo.Text = "Nie";
+        KioskTheme.StyleButton(askYes, primary: !warning);
+        KioskTheme.StyleButton(askNo, primary: warning);
+        pinCountdown.Start(Math.Max(5, idleSeconds));
+        ApplyVisibility();
+        ArrangeControls();
+        card.Invalidate();
+        (warning ? askNo : askYes).Focus();   // A dangerous step is never the default.
+        return askRequest.Task;
+    }
+
+    private void FinishAsk(bool yes)
+    {
+        if (askRequest == null) return;
+        var request = askRequest;
+        askRequest = null;
+        if (!AskingPin) { pinCountdown.Stop(); pinCountdown.Visible = false; }
+        ApplyVisibility();
+        ArrangeControls();
+        card.Invalidate();
+        request.TrySetResult(yes);
     }
 
     /// <summary>The desktop corner from Konfiguracja: name, line under it and logo; empty ones are hidden.</summary>
@@ -319,10 +383,10 @@ internal sealed class DesktopView : UserControl
         date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
-        bool personRow = person != null && !locked && !AskingPin;
-        int cardHeight = Scale(signingIn ? 440 : AskingPin ? 470 : locked ? 370 : personRow ? 270 : 324);
+        bool personRow = person != null && !locked && !AskingPin && !Asking;
+        int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
         // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
-        bool help = Help.Count > 0 && !AskingPin;
+        bool help = Help.Count > 0 && !AskingPin && !Asking;
         var column = Help.Needed(true);
         bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
         int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
@@ -333,7 +397,7 @@ internal sealed class DesktopView : UserControl
         int size = (int)banner, newsGap = Scale(20), bottom = Height;
         while (size > 0 && Height - (bar + Scale(125)) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
         int newsHeight = Scale(heights[size]);
-        bool news = News.Count > 0 && !AskingPin && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
+        bool news = News.Count > 0 && !AskingPin && !Asking && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
         News.Visible = news;
         if (news)
         {
@@ -379,12 +443,23 @@ internal sealed class DesktopView : UserControl
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
         int pinWidth = Math.Min(Scale(360), textWidth);
         int pinLeft = (cardWidth - pinWidth) / 2;
-        pinPrompt.SetBounds(innerMargin, Scale(262), textWidth, Scale(30));
+        // In the place of the text under the heading, wrapped (a long one was cut off on one line).
+        pinPrompt.SetBounds(innerMargin, Scale(186), textWidth, Scale(104));
         pinBox.SetBounds(pinLeft, Scale(300), pinWidth, pinBox.PreferredHeight);
         int half = (pinWidth - Scale(12)) / 2;
         pinOk.SetBounds(pinLeft, Scale(385), half, Scale(46));
         pinCancel.SetBounds(pinLeft + half + Scale(12), Scale(385), half, Scale(46));
         pinCountdown.SetBounds(pinLeft, Scale(436), pinWidth, Scale(30));
+        if (Asking)
+        {
+            int askWidth = Math.Min(Scale(440), textWidth), askLeft = (cardWidth - askWidth) / 2, askHalf = (askWidth - Scale(12)) / 2;
+            askTitle.SetBounds(innerMargin, Scale(36), textWidth, Scale(60));
+            askText.SetBounds(innerMargin, Scale(104), textWidth, Scale(196));
+            // "Nie" on the right, as before; the default one is the accent button.
+            askYes.SetBounds(askLeft, Scale(314), askHalf, Scale(46));
+            askNo.SetBounds(askLeft + askHalf + Scale(12), Scale(314), askHalf, Scale(46));
+            pinCountdown.SetBounds(askLeft, Scale(372), askWidth, Scale(30));
+        }
     }
 
     /// <summary>
@@ -400,7 +475,7 @@ internal sealed class DesktopView : UserControl
         pinCardPresent = cardPresent;
         pinPrompt.Text = message;
         foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = true;
-        resume.Visible = hint.Visible = false;
+        ApplyVisibility();
         ArrangeControls();
         card.Invalidate();
         pinBox.Clear();
@@ -419,8 +494,7 @@ internal sealed class DesktopView : UserControl
         pinRequest = null;
         foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel, pinCountdown }) c.Visible = false;
         pinCountdown.Stop();
-        resume.Visible = locked;
-        hint.Visible = true;
+        ApplyVisibility();
         ArrangeControls();
         card.Invalidate();
         request.TrySetResult(value);
@@ -440,7 +514,7 @@ internal sealed class DesktopView : UserControl
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { clockTimer.Dispose(); pinWatch.Dispose(); pinRequest?.TrySetResult(null); KioskTheme.Changed -= OnThemeChanged; }
+        if (disposing) { clockTimer.Dispose(); pinWatch.Dispose(); pinRequest?.TrySetResult(null); askRequest?.TrySetResult(false); KioskTheme.Changed -= OnThemeChanged; }
         base.Dispose(disposing);
     }
 

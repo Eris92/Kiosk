@@ -676,12 +676,13 @@ namespace FidoRun
         private int ChooseKeyAccountInKiosk(List<KeyAccount> accounts)
         {
             int chosen = -1;
+            bool done = false;
             int width = (int)(440 * scale);
-            using (Form dialog = new Form
+            // A panel over the sign-in in this same window, not a window of its own: nothing opens or moves on the screen.
+            using (Panel dialog = new Panel
             {
-                Text = "Wybierz konto", FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual,
-                Bounds = RectangleToScreen(ClientRectangle), TopMost = true, ShowInTaskbar = false,
-                AutoScaleMode = AutoScaleMode.None, BackColor = kioskSurface, ForeColor = kioskText, Font = KioskFont(11), KeyPreview = true
+                Bounds = ClientRectangle, Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = kioskSurface, ForeColor = kioskText, Font = KioskFont(11)
             })
             {
                 TableLayoutPanel outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3, BackColor = kioskSurface };
@@ -694,7 +695,7 @@ namespace FidoRun
                 FlowLayoutPanel content = new FlowLayoutPanel
                 {
                     FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                    BackColor = kioskSurface, Margin = Padding.Empty, MaximumSize = new Size(0, Math.Max(100, dialog.Height - (int)(24 * scale)))
+                    BackColor = kioskSurface, Margin = Padding.Empty, MaximumSize = new Size(0, Math.Max(100, ClientSize.Height - (int)(24 * scale)))
                 };
                 Label title = new Label { Text = "Wybierz konto", AutoSize = false, Width = width, Height = KioskFont(22, FontStyle.Bold).Height + (int)(4 * scale), Font = KioskFont(22, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(6 * scale)) };
                 Label hint = new Label { Text = "Na karcie jest kilka kont. Wybierz, na które się zalogować.", AutoSize = false, Width = width, Font = KioskFont(11), ForeColor = kioskMuted, TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 0, 0, (int)(14 * scale)) };
@@ -717,28 +718,39 @@ namespace FidoRun
                     account.FlatAppearance.MouseDownBackColor = Blend(kioskSurface, kioskAccent, 0.3f);
                     account.MouseEnter += delegate { account.FlatAppearance.BorderColor = kioskAccent; };
                     account.MouseLeave += delegate { account.FlatAppearance.BorderColor = line; };
-                    account.Click += delegate { chosen = index; dialog.DialogResult = DialogResult.OK; };
+                    account.Click += delegate { chosen = index; done = true; };
+                    account.KeyDown += delegate (object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Escape) done = true; };
                     content.Controls.Add(account);
                 }
                 Button cancel = new Button
                 {
                     Text = "Anuluj", Width = width, Height = (int)(46 * scale), FlatStyle = FlatStyle.Flat, BackColor = kioskSurface, ForeColor = kioskText,
-                    Font = KioskFont(10, FontStyle.Bold), Margin = new Padding(0, (int)(8 * scale), 0, 0), Cursor = Cursors.Hand, DialogResult = DialogResult.Cancel, UseVisualStyleBackColor = false
+                    Font = KioskFont(10, FontStyle.Bold), Margin = new Padding(0, (int)(8 * scale), 0, 0), Cursor = Cursors.Hand, UseVisualStyleBackColor = false
                 };
+                cancel.Click += delegate { done = true; };
+                cancel.KeyDown += delegate (object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Escape) done = true; };
                 cancel.FlatAppearance.BorderColor = line;
                 cancel.FlatAppearance.MouseOverBackColor = Blend(kioskSurface, kioskMuted, 0.15f);
                 content.Controls.Add(cancel);
                 if (content.MaximumSize.Height > 0) content.AutoScroll = true;
                 outer.Controls.Add(content, 1, 1);
                 dialog.Controls.Add(outer);
-                dialog.CancelButton = cancel;
-                // The Kiosk moves or the card place changes: the choice follows it.
-                Timer follow = new Timer { Interval = 300 };
-                follow.Tick += delegate { if (IsHandleCreated && Visible) dialog.Bounds = RectangleToScreen(ClientRectangle); };
-                dialog.Shown += delegate { follow.Start(); dialog.Activate(); log.Write("AccountChoice=Shown; Accounts=" + accounts.Count + "; InKiosk=True"); };
-                try { dialog.ShowDialog(); }
-                finally { follow.Dispose(); }
+                Controls.Add(dialog);
+                dialog.BringToFront();
+                if (content.Controls.Count > 2) content.Controls[2].Focus();
+                log.Write("AccountChoice=Shown; Accounts=" + accounts.Count + "; InKiosk=True");
+                // The credential provider waits for the answer on this thread: the window keeps working meanwhile.
+                try
+                {
+                    while (!done && !closing && !IsDisposed)
+                    {
+                        Application.DoEvents();
+                        if (!done) System.Threading.Thread.Sleep(15);
+                    }
+                }
+                finally { if (!IsDisposed) Controls.Remove(dialog); }
             }
+            FocusPin();
             log.Write("AccountChoice=" + (chosen >= 0 ? "Chosen; Index=" + chosen : "Cancelled") + "; Accounts=" + accounts.Count + "; InKiosk=True");
             return chosen;
         }

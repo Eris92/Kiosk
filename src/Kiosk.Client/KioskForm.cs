@@ -1051,7 +1051,7 @@ internal sealed partial class KioskForm : Form
         switch (item.Action.ToLowerInvariant())
         {
             case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
-            case HelpAction.Reenroll: ForgetCard(); break;
+            case HelpAction.Reenroll: await ForgetCardAsync(); break;
             case HelpAction.ResetCard: await ResetCardAsync(); break;
             case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
             default:
@@ -1067,10 +1067,15 @@ internal sealed partial class KioskForm : Form
     {
         if (SelfService && OpenPageAsCardPerson(title, url)) return;
         helpBrowser?.Close();
-        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { Bounds = Screen.FromControl(this).Bounds };
-        window.FormClosed += (_, _) => { if (helpBrowser == window) helpBrowser = null; };
+        // Part of the Kiosk's own window, over its screen: no separate window that opens elsewhere and moves into place.
+        var window = new HelpBrowserForm(title, url, config.BrowserAllowedDomains, config.HelpCloseSeconds) { TopLevel = false, TopMost = false, Dock = DockStyle.Fill };
+        window.FormClosed += (_, _) => { if (helpBrowser == window) { helpBrowser = null; RefreshChrome(); } };
         helpBrowser = window;
-        window.Show(this);
+        Controls.Add(window);
+        window.BringToFront();
+        window.Show();
+        window.Focus();
+        window.Start();
     }
 
     /// <summary>
@@ -1136,7 +1141,7 @@ internal sealed partial class KioskForm : Form
         bool confirmed;
         try
         {
-            confirmed = HelpConfirm.Ask(this, "Pierwsze logowanie", "Za chwilę pojawi się ekran logowania Windows. Zaloguj się swoim kontem (kartą, Windows Hello albo hasłem). " +
+            confirmed = await desktop.AskAsync("Pierwsze logowanie", "Za chwilę pojawi się ekran logowania Windows. Zaloguj się swoim kontem (kartą, Windows Hello albo hasłem). " +
                 "Windows przygotuje Twój profil i logowanie jednokrotne, a potem sam wróci do Kiosku – to może potrwać kilka minut. Kontynuować?", config.HelpCloseSeconds);
         }
         finally { verifying = false; }
@@ -1151,7 +1156,7 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>Szybka pomoc → Skonfiguruj kartę od nowa: Kiosk forgets the account saved for this card.</summary>
-    private void ForgetCard()
+    private async Task ForgetCardAsync()
     {
         if (!CardForHelp(out _)) return;
         var id = (identifyCard() ?? UncertifiedCard()).Id;
@@ -1161,7 +1166,7 @@ internal sealed partial class KioskForm : Form
         bool confirmed;
         try
         {
-            confirmed = HelpConfirm.Ask(this, "Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
+            confirmed = await desktop.AskAsync("Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
                 "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", config.HelpCloseSeconds);
         }
         finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
@@ -1190,10 +1195,10 @@ internal sealed partial class KioskForm : Form
         bool confirmed;
         try
         {
-            confirmed = HelpConfirm.Ask(this, "Resetuj kartę", "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
+            confirmed = await desktop.AskAsync("Resetuj kartę", "Reset usuwa z karty PIN i WSZYSTKIE klucze FIDO2 – także te do logowania do Windows, Microsoft 365 i innych stron. " +
                 "Tego nie można cofnąć. Potem ustawisz nowy PIN, a klucz logowania dodasz ponownie (np. przez „Skonfiguruj MFA”).\n\nZresetować kartę?",
                 config.HelpCloseSeconds, warning: true) &&
-                HelpConfirm.Ask(this, "Resetuj kartę", "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", config.HelpCloseSeconds, warning: true);
+                await desktop.AskAsync("Resetuj kartę", "Na pewno? Wszystkie klucze na tej karcie zostaną usunięte.", config.HelpCloseSeconds, warning: true);
         }
         finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
         if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }

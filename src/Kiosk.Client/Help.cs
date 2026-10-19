@@ -176,157 +176,129 @@ internal sealed class HelpBrowserForm : Form
 
     private void Touched() => countdown.Restart();
 
-    protected override async void OnShown(EventArgs e)
+    private bool started;
+
+    protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        Start();
+    }
+
+    /// <summary>Starts the page and its countdown (once). Inside the Kiosk's window (TopLevel = false) the Kiosk calls it.</summary>
+    internal async void Start()
+    {
+        if (started) return;
+        started = true;
         countdown.Start(idleSeconds);
         try { await browser.InitializeAsync(url); }
         catch (Exception ex)
         {
             Audit.Write("help_browser_error", ex.Message);
-            MessageBox.Show(this, "Nie udało się otworzyć strony: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            Close();
+            // In the page's place, no message window: the countdown or the close button returns to the Kiosk.
+            var error = new Label
+            {
+                Text = "Nie udało się otworzyć strony: " + ex.Message, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 13), BackColor = KioskTheme.Background, ForeColor = KioskTheme.Text
+            };
+            Controls.Add(error);
+            error.BringToFront();
+            browser.SendToBack();
         }
     }
 
-}
-
-/// <summary>
-/// A yes / no question for Szybka pomoc, drawn like the rest of the Kiosk (no title bar). Nobody answers, moves the mouse
-/// or presses a key for the help time set in Konfiguracja: it answers "no" by itself. The bar shows the time left.
-/// </summary>
-internal sealed class HelpConfirm : Form
-{
-    private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
-
-    private HelpConfirm(string title, string text, int idleSeconds, bool warning)
-    {
-        Text = title;
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.CenterParent;
-        ShowInTaskbar = false;
-        TopMost = true;
-        KeyPreview = true;
-        BackColor = KioskTheme.Surface;
-        ForeColor = KioskTheme.Text;
-        // Sizes below are for 96 DPI: scaled to the screen's DPI like the fonts (on a 240 DPI screen the text was cut off).
-        SuspendLayout();
-        AutoScaleDimensions = new SizeF(96F, 96F);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        Font = new Font("Segoe UI", 10.5f);
-        ClientSize = new Size(600, 290);
-        Padding = new Padding(1);
-        var heading = new Label { Text = title, Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
-        var message = new Label { Text = text, Dock = DockStyle.Fill, Padding = new Padding(24, 10, 24, 8) };
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Color.Transparent };
-        var no = new Button { Text = "Nie", Width = 140, Height = 40, DialogResult = DialogResult.No };
-        var yes = new Button { Text = warning ? "Tak, wykonaj" : "Tak", Width = 160, Height = 40, DialogResult = DialogResult.Yes };
-        KioskTheme.StyleButton(no, primary: warning);
-        KioskTheme.StyleButton(yes, primary: !warning);
-        buttons.Controls.Add(no);
-        buttons.Controls.Add(yes);
-        countdown.BackColor = KioskTheme.Surface;
-        countdown.Padding = new Padding(24, 0, 24, 10);
-        Controls.Add(message);
-        Controls.Add(heading);
-        Controls.Add(buttons);
-        Controls.Add(countdown);
-        AcceptButton = warning ? no : yes; // A dangerous step is never the default.
-        CancelButton = no;
-        Paint += (_, e) => { using var border = new Pen(KioskTheme.Border); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); };
-        HelpCountdown.Watch(this, countdown.Restart);
-        countdown.Expired += () => DialogResult = DialogResult.No;
-        Shown += (_, _) => countdown.Start(idleSeconds);
-        ResumeLayout(false);
-    }
-
-    internal static bool Ask(IWin32Window owner, string title, string text, int idleSeconds, bool warning = false)
-    {
-        using var dialog = new HelpConfirm(title, text, idleSeconds, warning);
-        return dialog.ShowDialog(owner) == DialogResult.Yes;
-    }
 }
 
 /// <summary>
 /// A site's own sign-in (login and password) when the Windows account's sign-in did not get the person in, like the
-/// window a normal Edge shows. Drawn like the rest of the Kiosk; nobody types for the help time: it cancels by itself.
-/// The password is handed to the page only, never kept or written anywhere.
+/// prompt a normal Edge shows. A panel over the page in the same window (no window of its own that jumps into place);
+/// nobody types for the help time: it cancels by itself. The password is handed to the page only, never kept anywhere.
 /// </summary>
-internal sealed class HelpSignIn : Form
+internal sealed class HelpSignIn : Panel
 {
-    private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
+    private readonly HelpCountdown countdown = new();
     private readonly TextBox user = new() { BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox password = new() { BorderStyle = BorderStyle.FixedSingle, UseSystemPasswordChar = true };
+    private readonly Label heading = new() { Text = "Zaloguj się", AutoSize = false, Font = new Font("Segoe UI", 16, FontStyle.Bold) };
+    private readonly Label message = new() { AutoSize = false, ForeColor = KioskTheme.Muted, Font = new Font("Segoe UI", 11) };
+    private readonly Label userCaption = new() { Text = "Użytkownik", AutoSize = false, Font = new Font("Segoe UI", 11), TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label passwordCaption = new() { Text = "Hasło", AutoSize = false, Font = new Font("Segoe UI", 11), TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Button ok = new() { Text = "Zaloguj" }, cancel = new() { Text = "Anuluj" };
+    private readonly TaskCompletionSource<(string User, string Password)?> answer = new();
 
-    private HelpSignIn(string host, string userName, int idleSeconds)
+    private HelpSignIn(string host, string userName)
     {
-        Text = "Logowanie";
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.CenterParent;
-        ShowInTaskbar = false;
-        TopMost = true;
-        KeyPreview = true;
         BackColor = KioskTheme.Surface;
         ForeColor = KioskTheme.Text;
-        // Sizes below are for 96 DPI: scaled to the screen's DPI like the fonts (on a 240 DPI screen the text was cut off).
-        SuspendLayout();
-        AutoScaleDimensions = new SizeF(96F, 96F);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        Font = new Font("Segoe UI", 10.5f);
-        ClientSize = new Size(600, 380);
-        Padding = new Padding(1);
-        var heading = new Label { Text = "Zaloguj się", Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
-        var message = new Label { Text = "Strona " + host + " prosi o login i hasło Windows.", Dock = DockStyle.Top, Height = 40, Padding = new Padding(24, 8, 24, 0), ForeColor = KioskTheme.Muted };
-        var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(24, 8, 24, 0) };
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        message.Text = "Strona " + host + " prosi o login i hasło Windows.";
         foreach (var box in new[] { user, password })
         {
             box.BackColor = KioskTheme.Background;
             box.ForeColor = KioskTheme.Text;
-            box.Font = new Font("Segoe UI", 12f);
-            box.Dock = DockStyle.Fill;
-            box.Margin = new Padding(0, 6, 0, 6);
+            box.Font = new Font("Segoe UI", 13f);
+            box.KeyDown += (_, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Finish(true); }
+                else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; Finish(false); }
+            };
         }
-        fields.Controls.Add(new Label { Text = "Użytkownik", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 0) }, 0, 0);
-        fields.Controls.Add(user, 1, 0);
-        fields.Controls.Add(new Label { Text = "Hasło", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 16, 0) }, 0, 1);
-        fields.Controls.Add(password, 1, 1);
         user.Text = userName;
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 64, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Color.Transparent };
-        var cancel = new Button { Text = "Anuluj", Width = 140, Height = 40, DialogResult = DialogResult.Cancel };
-        var ok = new Button { Text = "Zaloguj", Width = 160, Height = 40, DialogResult = DialogResult.OK };
         KioskTheme.StyleButton(cancel);
         KioskTheme.StyleButton(ok, primary: true);
-        buttons.Controls.Add(cancel);
-        buttons.Controls.Add(ok);
+        ok.Click += (_, _) => Finish(true);
+        cancel.Click += (_, _) => Finish(false);
         countdown.BackColor = KioskTheme.Surface;
-        countdown.Padding = new Padding(24, 0, 24, 10);
-        Controls.Add(fields);
-        Controls.Add(message);
-        Controls.Add(heading);
-        Controls.Add(buttons);
-        Controls.Add(countdown);
-        AcceptButton = ok;
-        CancelButton = cancel;
+        countdown.Expired += () => Finish(false);
+        Controls.AddRange(new Control[] { heading, message, userCaption, user, passwordCaption, password, ok, cancel, countdown });
         Paint += (_, e) => { using var border = new Pen(KioskTheme.Border); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); };
-        HelpCountdown.Watch(this, countdown.Restart);
-        countdown.Expired += () => DialogResult = DialogResult.Cancel;
-        Shown += (_, _) =>
-        {
-            countdown.Start(idleSeconds);
-            (user.TextLength == 0 ? user : password).Focus();
-        };
-        FormClosed += (_, _) => password.Clear();
-        ResumeLayout(false);
     }
 
-    /// <summary>The login and password typed, or null when cancelled.</summary>
-    internal static (string User, string Password)? Ask(IWin32Window? owner, string host, string userName, int idleSeconds)
+    private int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96.0);
+
+    private void Arrange()
     {
-        using var dialog = new HelpSignIn(host, userName, idleSeconds);
-        if (dialog.ShowDialog(owner) != DialogResult.OK || dialog.user.TextLength == 0) return null;
-        return (dialog.user.Text.Trim(), dialog.password.Text);
+        // Sizes for 96 DPI, scaled to the screen like the fonts (at 240 DPI fixed sizes cut the text off).
+        if (Parent == null) return;
+        int width = Math.Min(Scale(600), Parent.ClientSize.Width - Scale(24)), height = Math.Min(Scale(400), Parent.ClientSize.Height - Scale(24));
+        SetBounds((Parent.ClientSize.Width - width) / 2, (Parent.ClientSize.Height - height) / 2, width, height);
+        int margin = Scale(28), inner = width - 2 * margin, caption = Scale(120), field = inner - caption;
+        heading.SetBounds(margin, Scale(22), inner, Scale(40));
+        message.SetBounds(margin, Scale(66), inner, Scale(52));
+        userCaption.SetBounds(margin, Scale(130), caption, Scale(36));
+        user.SetBounds(margin + caption, Scale(130), field, Scale(36));
+        passwordCaption.SetBounds(margin, Scale(182), caption, Scale(36));
+        password.SetBounds(margin + caption, Scale(182), field, Scale(36));
+        int button = (inner - Scale(12)) / 2;
+        ok.SetBounds(margin, Scale(250), button, Scale(46));
+        cancel.SetBounds(margin + button + Scale(12), Scale(250), button, Scale(46));
+        countdown.SetBounds(margin, Scale(316), inner, Scale(30));
+    }
+
+    private void Finish(bool accepted)
+    {
+        if (answer.Task.IsCompleted) return;
+        var typed = accepted && user.TextLength > 0 ? (user.Text.Trim(), password.Text) : ((string, string)?)null;
+        password.Clear();
+        countdown.Stop();
+        var parent = Parent;
+        if (parent != null) { parent.Resize -= OnParentResize; parent.Controls.Remove(this); }
+        answer.TrySetResult(typed);
+        Dispose();
+    }
+
+    private void OnParentResize(object? sender, EventArgs e) => Arrange();
+
+    /// <summary>The login and password typed, or null when cancelled.</summary>
+    internal static Task<(string User, string Password)?> AskAsync(Control parent, string host, string userName, int idleSeconds)
+    {
+        var panel = new HelpSignIn(host, userName);
+        parent.Controls.Add(panel);
+        panel.BringToFront();
+        panel.Arrange();
+        parent.Resize += panel.OnParentResize;
+        HelpCountdown.Watch(panel, panel.countdown.Restart);
+        panel.countdown.Start(idleSeconds);
+        (panel.user.TextLength == 0 ? panel.user : panel.password).Focus();
+        return panel.answer.Task;
     }
 }
 
