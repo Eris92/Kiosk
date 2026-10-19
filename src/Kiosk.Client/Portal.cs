@@ -607,7 +607,7 @@ internal sealed partial class DesktopView
             : "Pozycje z kłódką otworzysz po zalogowaniu kartą.");
         account.Text = portalSignedIn ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
         // Signed out, the card sign-in is on "Strona główna": the button only ends a session.
-        bool accountOn = portal && portalSignedIn;
+        bool accountOn = portal && portalSignedIn && pageContent == null;
         if (account.Visible != accountOn) account.Visible = accountOn;
     }
 
@@ -665,7 +665,12 @@ internal sealed partial class DesktopView
         var middle = new Rectangle(left, barTop + barHeight + Scale(16), Math.Max(Scale(200), right - left), 0);
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
-        if (page) return middle;
+        // An open page has its own bar (title, ←/→, Zamknij): the bar on top goes, the page takes its place up to the edges.
+        foreach (var c in new Control[] { portalTitle, portalLine, portalPerson })
+            if (c.Visible != !page) c.Visible = !page;
+        bool accountOn = !page && portalSignedIn;
+        if (account.Visible != accountOn) account.Visible = accountOn;
+        if (page) return new Rectangle(left, bar, Width - left, Height - bar);
         cardWidth = Math.Min(cardWidth, middle.Width);
         bool news = false;
         if (PortalHome)
