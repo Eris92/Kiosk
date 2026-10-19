@@ -209,8 +209,11 @@ internal sealed class HelpConfirm : Form
         KeyPreview = true;
         BackColor = KioskTheme.Surface;
         ForeColor = KioskTheme.Text;
-        Font = new Font("Segoe UI", 10.5f);
+        // Sizes below are for 96 DPI: scaled to the screen's DPI like the fonts (on a 240 DPI screen the text was cut off).
+        SuspendLayout();
+        AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 10.5f);
         ClientSize = new Size(600, 290);
         Padding = new Padding(1);
         var heading = new Label { Text = title, Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
@@ -234,6 +237,7 @@ internal sealed class HelpConfirm : Form
         HelpCountdown.Watch(this, countdown.Restart);
         countdown.Expired += () => DialogResult = DialogResult.No;
         Shown += (_, _) => countdown.Start(idleSeconds);
+        ResumeLayout(false);
     }
 
     internal static bool Ask(IWin32Window owner, string title, string text, int idleSeconds, bool warning = false)
@@ -264,8 +268,11 @@ internal sealed class HelpSignIn : Form
         KeyPreview = true;
         BackColor = KioskTheme.Surface;
         ForeColor = KioskTheme.Text;
-        Font = new Font("Segoe UI", 10.5f);
+        // Sizes below are for 96 DPI: scaled to the screen's DPI like the fonts (on a 240 DPI screen the text was cut off).
+        SuspendLayout();
+        AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 10.5f);
         ClientSize = new Size(600, 380);
         Padding = new Padding(1);
         var heading = new Label { Text = "Zaloguj się", Dock = DockStyle.Top, Height = 52, Padding = new Padding(24, 18, 24, 0), Font = new Font("Segoe UI", 14, FontStyle.Bold) };
@@ -311,6 +318,7 @@ internal sealed class HelpSignIn : Form
             (user.TextLength == 0 ? user : password).Focus();
         };
         FormClosed += (_, _) => password.Clear();
+        ResumeLayout(false);
     }
 
     /// <summary>The login and password typed, or null when cancelled.</summary>
