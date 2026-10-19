@@ -609,8 +609,9 @@ namespace FidoRun
                 return;
             }
             Button button = input as Button;
-            // The native "OK" repeats "Zaloguj", the tile's name repeats the title.
-            if (type == 9 || type == 6) { input.Visible = false; return; }
+            // The native "OK" repeats "Zaloguj", the tile's name repeats the title; the "try again" link is pressed by
+            // itself after a failed exchange (ScheduleRetry), the person only taps the key again.
+            if (type == 9 || type == 6 || type == 3) { input.Visible = false; return; }
             if (button != null)
             {
                 button.FlatStyle = FlatStyle.Flat;
@@ -760,8 +761,68 @@ namespace FidoRun
         }
 
         private void AddLog(string line) { Post(delegate { trace.AppendText(line + Environment.NewLine); }); }
-        public void StatusText(string message) { Post(delegate { state.Text = message; }); }
-        public void ProviderFeedback(string message) { Post(delegate { providerFeedback.Text = message ?? ""; }); }
+        public void StatusText(string message) { Post(delegate { ShowProviderText(state, message); }); }
+        public void ProviderFeedback(string message) { Post(delegate { ShowProviderText((Label)providerFeedback, message); }); }
+
+        // Inside the Kiosk: a failed card exchange is said in the Kiosk's words and in red, and the tile listens again by
+        // itself (no "OK" link to press). Windows reports it when the key still lies on the reader instead of being tapped.
+        private bool problemShown;
+        private Timer retryTimer;
+
+        private void ShowProviderText(Label label, string message)
+        {
+            message = message ?? "";
+            if (!Embedded) { label.Text = message; return; }
+            string lower = message.ToLowerInvariant();
+            bool failed = lower.Contains("nie można zakończyć logowania") || lower.Contains("couldn't complete") || lower.Contains("can't complete");
+            bool unknown = lower.Contains("nieznany") || lower.Contains("unknown");
+            bool tapAgain = lower.StartsWith("dotknij") || lower.StartsWith("włóż") || lower.StartsWith("touch") || lower.StartsWith("insert");
+            if (failed)
+            {
+                message = "Zabierz klucz z czytnika i dotknij nim czytnika ponownie, aby się zalogować.";
+                ScheduleRetry();
+            }
+            // While the red request stands, Windows' own "touch the reader" after the retry does not replace it.
+            else if (problemShown && (tapAgain || message.Length == 0)) return;
+            problemShown = failed || unknown;
+            label.ForeColor = problemShown ? ProblemColor() : (label == state ? kioskMuted : kioskAccent);
+            label.Text = message;
+            if (problemShown) label.Visible = true;
+            // The other line must not keep an old red text.
+            Label other = label == state ? (Label)providerFeedback : state;
+            if (problemShown && other != null && other.ForeColor == ProblemColor()) { other.Text = ""; other.ForeColor = other == state ? kioskMuted : kioskAccent; }
+        }
+
+        private Color ProblemColor()
+        {
+            double luminance = (0.2126 * kioskSurface.R + 0.7152 * kioskSurface.G + 0.0722 * kioskSurface.B) / 255;
+            return luminance > 0.5 ? Color.FromArgb(190, 30, 45) : Color.FromArgb(255, 107, 107);
+        }
+
+        // The hidden "try again" link of the tile, pressed after a moment so a new tap is read.
+        private void ScheduleRetry()
+        {
+            if (retryTimer == null)
+            {
+                retryTimer = new Timer { Interval = 1500 };
+                retryTimer.Tick += delegate
+                {
+                    retryTimer.Stop();
+                    if (closing || IsDisposed || working || host == null) return;
+                    foreach (KeyValuePair<uint, FieldData> pair in fieldData)
+                    {
+                        Control input, container;
+                        if (pair.Value.Type != 3 || !inputs.TryGetValue(pair.Key, out input) || !input.Enabled) continue;
+                        if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
+                        log.Write("Embedded=AutoRetry; Field=" + pair.Key);
+                        host.Command(fieldGeneration, pair.Key);
+                        return;
+                    }
+                };
+            }
+            retryTimer.Stop();
+            retryTimer.Start();
+        }
         private void ApplyInteractionState()
         {
             bool hasInput = false;
