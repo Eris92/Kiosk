@@ -43,6 +43,7 @@ internal static class TileIcons
 
     private static Dictionary<string, string> categoryIcons = new(StringComparer.OrdinalIgnoreCase);
     private static HashSet<string> bottom = new(StringComparer.OrdinalIgnoreCase);
+    private static Dictionary<string, Color> categoryColors = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Kategorie → "Dolna sekcja": the category is in the left menu's group under the line.</summary>
     internal static bool InBottomGroup(string path) => bottom.Contains(path);
 
@@ -57,6 +58,8 @@ internal static class TileIcons
                 icons.TryAdd(category.Path.Split('/')[^1], glyph);
             }
         categoryIcons = icons;
+        categoryColors = categories.Where(c => KioskTheme.IsColor(c.Color))
+            .ToDictionary(c => c.Path, c => ColorTranslator.FromHtml(c.Color), StringComparer.OrdinalIgnoreCase);
         bottom = new HashSet<string>(categories.Where(c => c.Bottom).Select(c => c.Path), StringComparer.OrdinalIgnoreCase);
     }
 
@@ -71,7 +74,16 @@ internal static class TileIcons
         };
 
     internal static Color ColorFor(HelpAction item, int index) =>
-        KioskTheme.IsColor(item.Color) ? ColorTranslator.FromHtml(item.Color) : KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.85);
+        KioskTheme.IsColor(item.Color) ? ColorTranslator.FromHtml(item.Color)
+        : CategoryColor(item.LinkPath ?? item.CategoryPath) ?? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.85);
+
+    /// <summary>Kategorie → Kolor: the colour of the category or of the nearest one above it that has one.</summary>
+    internal static Color? CategoryColor(string path)
+    {
+        for (var p = path; p.Length > 0; p = p.Contains('/') ? p[..p.LastIndexOf('/')] : "")
+            if (categoryColors.TryGetValue(p, out var color)) return color;
+        return null;
+    }
 }
 
 /// <summary>Punkt samoobsługowy: the categories at the left ("Strona główna" first), one of them selected.</summary>
@@ -183,7 +195,7 @@ internal sealed class NavBar : Control
             }
             bool locked = entry.NeedsSignIn && !signedIn;
             KioskIcons.Draw(g, new Rectangle(bounds.Left + S(12), bounds.Top, S(26), bounds.Height), entry.Glyph, null,
-                locked ? KioskTheme.Muted : selected ? KioskTheme.Text : KioskTheme.AccentLine);
+                locked ? KioskTheme.Muted : TileIcons.CategoryColor(entry.Path) ?? (selected ? KioskTheme.Text : KioskTheme.AccentLine));
             TextRenderer.DrawText(g, entry.Text, selected ? bold : font, new Rectangle(bounds.Left + S(50), bounds.Top, bounds.Width - S(56) - (locked ? S(28) : 0), bounds.Height),
                 locked ? KioskTheme.Muted : KioskTheme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             // Works only after the card sign-in: a padlock, so nobody wonders why nothing opens.
