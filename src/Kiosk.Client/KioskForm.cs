@@ -72,7 +72,7 @@ internal sealed partial class KioskForm : Form
     private static readonly TimeSpan UpdateEvery = TimeSpan.FromHours(24);
     private DateTime updateCheckedAt = DateTime.MinValue;
     private (string Tag, string Folder)? updateWaiting;
-    private bool updating;
+    private bool autoUpdating;
     private bool loadingNews;
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
@@ -1038,8 +1038,8 @@ internal sealed partial class KioskForm : Form
     /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
     private async Task AutoUpdateAsync()
     {
-        if (updating || !config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
-        updating = true;
+        if (autoUpdating || !config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
+        autoUpdating = true;
         try
         {
             if (updateWaiting is not { } ready || DateTime.UtcNow - updateCheckedAt >= UpdateEvery)
@@ -1060,7 +1060,7 @@ internal sealed partial class KioskForm : Form
             Close();
         }
         catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
-        finally { updating = false; }
+        finally { autoUpdating = false; }
     }
 
     private HelpBrowserForm? helpBrowser;
