@@ -73,7 +73,8 @@ internal sealed partial class KioskForm : Form
     private DateTime updateCheckedAt = DateTime.MinValue;
     private (string Tag, string Folder)? updateWaiting;
     private bool autoUpdating;
-    private bool loadingNews;
+    /// <summary>Each load's number: a load that is overtaken (Konfiguracja saved meanwhile) does not show its older result.</summary>
+    private int newsLoad;
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
     private SharePointNews? sharePointNews;
@@ -1351,8 +1352,8 @@ internal sealed partial class KioskForm : Form
     /// <summary>Company messages from Konfiguracja → Komunikaty (kiosk-news.json in a folder or on a share).</summary>
     private async Task LoadNewsAsync()
     {
-        if (loadingNews) return;
-        loadingNews = true;
+        // A save in Konfiguracja always loads again at once, also while an earlier load still waits (e.g. for SharePoint).
+        int load = ++newsLoad;
         // The share and SharePoint are asked again only every NewsRefreshMinutes (Konfiguracja → Komunikaty), not every minute.
         int every = Math.Clamp(config.NewsRefreshMinutes, 1, 1440) * 60_000;
         if (newsTimer.Interval != every) newsTimer.Interval = every;
@@ -1368,7 +1369,7 @@ internal sealed partial class KioskForm : Form
             List<NewsItem> other = [];
             if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
                 other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
-            if (IsDisposed) return;
+            if (IsDisposed || load != newsLoad) return;
             var all = News.Merge(mine, other, config.NewsOrder);
             NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty
             desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
@@ -1378,10 +1379,10 @@ internal sealed partial class KioskForm : Form
         catch (Exception ex)
         {
             Audit.Write("news_failed", ex.Message);
+            if (load != newsLoad) return;
             NewsSlides.Publish([], config.NewsSeconds);
             if (!IsDisposed) desktop.SetNews([], config.NewsSeconds);
         }
-        finally { loadingNews = false; }
     }
 
     /// <summary>The button of a message: a page in the browser, or an application, remote desktop or command from the lists.</summary>
@@ -1878,11 +1879,19 @@ internal sealed partial class KioskForm : Form
         if (current != null && CanUseApps && IsAdmin(current)) { OpenSettings(); return; }
         AdminSettings.Open(this, configPath, () =>
         {
+            NewsAccount.Forget();
             if (!ReloadConfig()) return;
-            Invalidate(true);
-            StartIdleScreens();
-            RefreshChrome();
+            ApplySavedSettings();
         }, () => _ = UpdateFromSettingsAsync());
+    }
+
+    /// <summary>Saved Konfiguracja takes effect at once (both ways of opening it): screens, messages, colours.</summary>
+    private void ApplySavedSettings()
+    {
+        Invalidate(true);
+        StartIdleScreens();
+        _ = LoadNewsAsync();
+        RefreshChrome();
     }
 
     /// <summary>Reads the saved configuration again (and the server's, when it has a ConfigSource).</summary>
@@ -1972,10 +1981,8 @@ internal sealed partial class KioskForm : Form
             Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey, view.NewsAccountChange, view.StatsAccountChange));
             NewsAccount.Forget();
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
-            Invalidate(true);
             Audit.Write("settings_saved");
-            StartIdleScreens();
-            _ = LoadNewsAsync();
+            ApplySavedSettings();
             CloseWindow(SettingsKey, "settings_closed", session);
         };
         AddWindow(session, SettingsKey, "Konfiguracja", view);
