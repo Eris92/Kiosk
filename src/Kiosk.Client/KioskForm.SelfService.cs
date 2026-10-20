@@ -248,9 +248,10 @@ internal sealed partial class KioskForm
             desktop.UpdateStatus("Logowanie kartą", notice ?? "Przygotowuję logowanie kartą…");
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
-        var person = cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
+        // The name in large letters (without the domain when there is no friendly name), the account under it.
+        var person = cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName.Split('\\')[^1];
         desktop.SetPortalState(person, notice,
-            warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true);
+            warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true, login: cardLogon?.DisplayName);
     }
 
     /// <summary>"Zaloguj kartą" shows the card sign-in (again: back to the tiles); "Zakończ sesję" signs the person out.</summary>

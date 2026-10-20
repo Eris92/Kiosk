@@ -495,7 +495,9 @@ namespace FidoRun
             fields.MinimumSize = new Size(FieldWidth, 0); fields.Margin = new Padding(0);
             card.Controls.Add(fields, 0, 3);
 
-            FlowLayoutPanel buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 16, 0, 8) };
+            buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 16, 0, 8) };
+            // In the Kiosk the buttons do nothing until the card is tapped: shown together with the PIN field.
+            if (options.Broker && Embedded) buttons.Visible = false;
             StylePrimary(submit, accent);
             submit.Text = "Zaloguj"; submit.Enabled = false;
             submit.Click += delegate { if (host != null) host.Submit(); };
@@ -823,11 +825,13 @@ namespace FidoRun
             retryTimer.Stop();
             retryTimer.Start();
         }
+        private FlowLayoutPanel buttons;
         private void ApplyInteractionState()
         {
             bool hasInput = false;
             foreach (FieldData field in fieldData.Values)
                 if (FieldData.CanSubmit(field.Type, field.State, field.Interactive)) { hasInput = true; break; }
+            if (options.Broker && Embedded && buttons != null) buttons.Visible = hasInput || working;
             submit.Enabled = !working && canSubmit && !preparingFields && !fieldUpdatesFailed && (hasInput || serializationAvailable);
             fields.Enabled = !working && canSubmit && !fieldUpdatesFailed;
         }

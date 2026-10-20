@@ -521,6 +521,8 @@ internal sealed partial class DesktopView
     private readonly Label portalTitle = new() { AutoSize = false, TextAlign = ContentAlignment.BottomLeft, AutoEllipsis = true };
     private readonly Label portalLine = new() { AutoSize = false, TextAlign = ContentAlignment.TopLeft, AutoEllipsis = true };
     private readonly Label portalPerson = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, AutoEllipsis = true };
+    /// <summary>Under the name: the account it signed in with (the login, without the domain), smaller.</summary>
+    private readonly Label portalLogin = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
     private readonly Button account = new() { Text = "Zaloguj kartą" };
     private bool portal, signInWanted, portalSignedIn;
     /// <summary>The left column's width (a line is drawn at its edge on the plain background).</summary>
@@ -536,8 +538,10 @@ internal sealed partial class DesktopView
     {
         portalTitle.Font = new Font("Segoe UI Semibold", 16);
         portalLine.Font = new Font("Segoe UI", 10);
-        portalPerson.Font = new Font("Segoe UI", 11);
-        foreach (var label in new[] { portalTitle, portalLine, portalPerson }) { label.BackColor = Color.Transparent; label.Visible = false; }
+        portalPerson.Font = new Font("Segoe UI Semibold", 12);
+        portalLogin.Font = new Font("Segoe UI", 9.5f);
+        portalLogin.ForeColor = KioskTheme.Muted;
+        foreach (var label in new[] { portalTitle, portalLine, portalPerson, portalLogin }) { label.BackColor = Color.Transparent; label.Visible = false; }
         portalTitle.ForeColor = portalPerson.ForeColor = KioskTheme.Text;
         portalLine.ForeColor = KioskTheme.Muted;
         nav.Visible = Tiles.Visible = account.Visible = false;
@@ -556,7 +560,7 @@ internal sealed partial class DesktopView
             ArrangeControls();
         });
         nav.LinkRequested += item => Tiles.Run(item);
-        Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, account });
+        Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, portalLogin, account });
     }
 
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
@@ -594,6 +598,7 @@ internal sealed partial class DesktopView
             nav.Visible = value;
             portalTitle.Visible = portalLine.Visible = false;
             portalPerson.Visible = account.Visible = value && portalSignedIn;
+            portalLogin.Visible = value && portalSignedIn && portalLogin.Text.Length > 0;
             ApplyVisibility();
             ArrangeControls();
             Invalidate();
@@ -618,17 +623,22 @@ internal sealed partial class DesktopView
     internal DateTime SignInWantedAt { get; private set; }
 
     /// <summary>The bar on top: who is signed in and a notice (card taken away, a result) in place of the page's line.</summary>
-    internal void SetPortalState(string? personName, string? notice, bool warning = false)
+    internal void SetPortalState(string? personName, string? notice, bool warning = false, string? login = null)
     {
+        // The account without its domain (AzureAD\JanKowalski → JanKowalski), only when it says more than the name.
+        login = login?.Split('\\')[^1].Trim() ?? "";
+        if (personName == null || login.Equals(personName, StringComparison.OrdinalIgnoreCase)) login = "";
         // Called on every tick of the shell: only a change is drawn.
-        if (portalSignedIn == (personName != null) && portalPerson.Text == (personName ?? "") && portalNotice == notice && portalWarning == warning &&
+        if (portalSignedIn == (personName != null) && portalPerson.Text == (personName ?? "") && portalLogin.Text == login && portalNotice == notice && portalWarning == warning &&
             Tiles.SignedIn == (personName != null) && nav.SignedIn == (personName != null)) return;
         portalSignedIn = personName != null;
         portalNotice = notice;
         portalWarning = warning;
         portalPerson.Text = personName ?? "";
+        portalLogin.Text = login;
         account.Text = personName != null ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
-        KioskTheme.StyleButton(account, primary: personName == null && !signInWanted);
+        // In the accent colour like "Zaloguj": a plain button disappeared on the background.
+        KioskTheme.StyleButton(account, primary: true);
         account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         Tiles.SignedIn = nav.SignedIn = personName != null;
         // Signed out inside a category that needs the card: back to the start page.
@@ -682,13 +692,14 @@ internal sealed partial class DesktopView
         {
             int logoSize = Scale(56);
             var image = logo.Image!;
-            int logoWidth = Math.Min(side - margin, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
+            // As far from the line as from the window's edge (like the menu's entries).
+            int logoWidth = Math.Min(side - 2 * margin, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
             logo.SetBounds(margin, y, logoWidth, logoSize);
             y += logoSize + Scale(8);
         }
-        brand.SetBounds(margin, y, side - margin, Scale(44));
+        brand.SetBounds(margin, y, side - 2 * margin, Scale(44));
         if (brand.Visible) y += Scale(44);
-        subtitle.SetBounds(margin + Scale(2), y, side - margin, Scale(22));
+        subtitle.SetBounds(margin + Scale(2), y, side - 2 * margin - Scale(2), Scale(22));
         if (subtitle.Visible) y += Scale(22);
         y += Scale(20);
         clock.SetBounds(margin, Height - margin - Scale(84), side - margin, Scale(50));
@@ -696,13 +707,17 @@ internal sealed partial class DesktopView
         // Signed in: the person and "Zakończ sesję" at the bottom of the left column, above the time.
         int bottom = clock.Top - Scale(12);
         account.SetBounds(Scale(14), bottom - Scale(48), side - Scale(28), Scale(48));
-        portalPerson.SetBounds(Scale(18), account.Top - Scale(34), side - Scale(36), Scale(30));
+        // The name above the button, the account under it in small letters; both start where the menu's icons do.
+        bool login = portalLogin.Text.Length > 0;
+        portalLogin.SetBounds(Scale(26), account.Top - Scale(8) - Scale(22), side - Scale(40), Scale(22));
+        portalPerson.SetBounds(Scale(26), (login ? portalLogin.Top : account.Top - Scale(8)) - Scale(28), side - Scale(40), Scale(28));
         portalPerson.TextAlign = ContentAlignment.MiddleLeft;
         if (portalSignedIn) bottom = portalPerson.Top - Scale(8);
         nav.SetBounds(Scale(14), y, side - Scale(28), Math.Max(0, Math.Min(nav.Needed, bottom - Scale(8) - y)));
         // No bar on top: the chosen category is marked in the left column, a page has its own bar.
         foreach (var c in new Control[] { portalTitle, portalLine }) if (c.Visible) c.Visible = false;
         if (portalPerson.Visible != portalSignedIn) portalPerson.Visible = portalSignedIn;
+        if (portalLogin.Visible != (portalSignedIn && login)) portalLogin.Visible = portalSignedIn && login;
         if (account.Visible != portalSignedIn) account.Visible = portalSignedIn;
         // The tiles as far from the line as the left column's entries are.
         int left = side + Scale(14), right = Width - margin;
