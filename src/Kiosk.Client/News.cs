@@ -167,11 +167,11 @@ internal sealed class NewsCarousel : Control
 
     internal void SetItems(List<NewsItem> news)
     {
-        var old = items;
+        // The pictures are shared (the desktop, the screensaver on every screen), so no carousel disposes them:
+        // disposing here broke the others' drawing (red X) after a reload, e.g. saving Konfiguracja.
         items = news;
         if (index >= items.Count) index = 0;
         previous = -1; progress = 1;
-        foreach (var item in old) if (!items.Any(n => ReferenceEquals(n.Picture, item.Picture))) item.Picture?.Dispose();
         Invalidate();
     }
 
@@ -210,7 +210,18 @@ internal sealed class NewsCarousel : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         if (items.Count == 0 || Width < 20 || Height < 20) return;
-        var g = e.Graphics;
+        // A broken picture must not leave the red X and the .NET error window on the kiosk.
+        try { PaintSlides(e.Graphics); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.ExternalException)
+        {
+            if (!paintFailed) { paintFailed = true; Audit.Write("news_paint_failed", ex.Message); }
+        }
+    }
+
+    private bool paintFailed;
+
+    private void PaintSlides(Graphics g)
+    {
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         var box = new Rectangle(0, 0, Width - 1, Height - 1);
@@ -337,7 +348,7 @@ internal sealed class NewsCarousel : Control
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { animation.Dispose(); rotation.Dispose(); foreach (var item in items) item.Picture?.Dispose(); }
+        if (disposing) { animation.Dispose(); rotation.Dispose(); }
         base.Dispose(disposing);
     }
 }
