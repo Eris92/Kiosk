@@ -15,6 +15,8 @@ internal sealed class SharePointNews : IDisposable
     private readonly Control owner;
     private CoreWebView2Controller? controller;
     private string key = "";
+    private string account = "";
+    private bool signInAttached;
     private List<NewsItem> cached = [];
     private DateTime fetchedAt = DateTime.MinValue;
 
@@ -23,9 +25,12 @@ internal sealed class SharePointNews : IDisposable
     internal SharePointNews(Control owner) => this.owner = owner;
 
     /// <summary>The site's latest news; read again every 10 minutes, otherwise (also after an error) the last result.</summary>
-    internal async Task<List<NewsItem>> GetAsync(string url, int count)
+    /// <param name="accountName">Konfiguracja → Komunikaty "Konto do SharePointa": a shared account (accounts.kiosk) that signs in
+    /// on Microsoft's page when the Kiosk's Windows account has no access (a local kiosk account has none).</param>
+    internal async Task<List<NewsItem>> GetAsync(string url, int count, string accountName = "")
     {
-        var wanted = url + "|" + count;
+        account = accountName.Trim();
+        var wanted = url + "|" + count + "|" + account;
         if (wanted != key) { key = wanted; cached = []; fetchedAt = DateTime.MinValue; }
         if (url.Length == 0 || DateTime.UtcNow - fetchedAt < Refresh) return cached;
         fetchedAt = DateTime.UtcNow; // One attempt per period, also when it fails.
@@ -47,6 +52,24 @@ internal sealed class SharePointNews : IDisposable
         }
         var core = controller.CoreWebView2;
         var site = new Uri(url);
+        if (!signInAttached)
+        {
+            // Microsoft's sign-in on the way: the shared account types its login and password (the session then stays in this profile).
+            signInAttached = true;
+            core.NavigationCompleted += async (_, e) =>
+            {
+                if (!e.IsSuccess || account.Length == 0 || !Uri.TryCreate(core.Source, UriKind.Absolute, out var at) || at.Scheme != Uri.UriSchemeHttps) return;
+                if (!at.Host.Equals("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) && !at.Host.Equals("login.microsoft.com", StringComparison.OrdinalIgnoreCase)) return;
+                try
+                {
+                    var shared = await Task.Run(() => SharedAccounts.TryGetCached(account));
+                    if (shared == null) { Audit.Write("sharepoint_news_account_missing", account); return; }
+                    await core.ExecuteScriptAsync(PageScripts.SignIn(shared));
+                    Audit.Write("sharepoint_news_sign_in", account);
+                }
+                catch (Exception ex) { Audit.Write("sharepoint_news_sign_in_failed", ex.Message); }
+            };
+        }
         try
         {
             // The site's own page first: Windows signs in on the way (login.microsoftonline.com and back), then its REST API answers.
@@ -62,7 +85,8 @@ internal sealed class SharePointNews : IDisposable
                 core.Navigate(site.AbsoluteUri);
                 if (await Task.WhenAny(arrived.Task, Task.Delay(Limit)) != arrived.Task)
                     throw new InvalidOperationException(core.Source.Contains("login.", StringComparison.OrdinalIgnoreCase)
-                        ? "SharePoint wymaga logowania: konto Windows, na którym działa Kiosk, nie ma dostępu do tej strony."
+                        ? account.Length > 0 ? "SharePoint wymaga logowania, a konto " + account + " nie zalogowało się (hasło, MFA albo dostęp do witryny)."
+                            : "SharePoint wymaga logowania: konto Windows, na którym działa Kiosk, nie ma dostępu do tej strony – ustaw „Konto do SharePointa” w Konfiguracji → Komunikaty."
                         : "SharePoint nie odpowiedział w 60 s.");
             }
             finally { core.NavigationCompleted -= Completed; }

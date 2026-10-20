@@ -21,6 +21,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
     private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
+    private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = konto Windows Kiosku)" };
     private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
     private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
     private readonly ComboBox newsSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Standardowy", "Duży", "Bardzo duży" } };
@@ -561,6 +562,7 @@ internal sealed class SettingsView : UserControl
         folderPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         folderPicker.MinimumSize = Size.Empty;
         AddField(newsFields, "Aktualności ze strony SharePoint (puste = brak)", newsSharePoint);
+        AddField(newsFields, "Konto do SharePointa", newsSharePointAccount);
         AddField(newsFields, "Ile aktualności z SharePointa", newsSharePointCount);
         AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
@@ -568,6 +570,7 @@ internal sealed class SettingsView : UserControl
         AddField(newsFields, "Ekrany wygaszacza", newsOnScreens);
         newsOnScreens.Checked = config.NewsBarsOnScreens;
         newsSharePoint.Text = config.NewsSharePoint;
+        newsSharePointAccount.Text = config.NewsSharePointAccount;
         newsSharePointCount.Value = Math.Clamp(config.NewsSharePointCount, 1, 20);
         newsOrder.SelectedIndex = (int)config.NewsOrder;
         newsSize.SelectedIndex = (int)config.NewsSize;
@@ -1086,6 +1089,7 @@ internal sealed class SettingsView : UserControl
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
+            NewsSharePointAccount = newsSharePointAccount.Text.Trim(),
             NewsSharePointCount = (int)newsSharePointCount.Value,
             NewsOrder = (NewsOrdering)Math.Max(0, newsOrder.SelectedIndex),
             NewsSize = (NewsBanner)Math.Max(0, newsSize.SelectedIndex),

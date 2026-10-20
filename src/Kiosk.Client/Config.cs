@@ -130,6 +130,8 @@ internal sealed record Config
     /// <summary>A SharePoint site whose news (pages published as news) scroll with the folder's messages. Empty = none.</summary>
     public string NewsSharePoint { get; init; } = "";
     public int NewsSharePointCount { get; init; } = 6;
+    /// <summary>The shared account (accounts.kiosk) that signs in to that site when the Kiosk's own Windows account cannot. Empty = none.</summary>
+    public string NewsSharePointAccount { get; init; } = "";
     public NewsOrdering NewsOrder { get; init; }
     public NewsBanner NewsSize { get; init; }
     /// <summary>The bars (e.g. "Nie działa system XXX") also across the top of the screens' content and the lock screen.</summary>

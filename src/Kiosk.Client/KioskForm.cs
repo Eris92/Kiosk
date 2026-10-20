@@ -1293,7 +1293,7 @@ internal sealed partial class KioskForm : Form
             if (show == NewsDisplay.BarsOnly) mine = mine.Where(n => n.IsBar).ToList();
             List<NewsItem> other = [];
             if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
-                other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount);
+                other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
             if (IsDisposed) return;
             var all = News.Merge(mine, other, config.NewsOrder);
             NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty

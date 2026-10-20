@@ -70,6 +70,10 @@ internal static class PageScripts
         Actions.Where(a => a.Matches(url) && (a.Scope == PageScope.All || a.Scope == PageScope.Kiosk == kiosk))
             .Concat((extra ?? []).Where(a => a.Matches(url)));
 
+    /// <summary>Microsoft's sign-in with a shared account: login, password, and "Tak" on "Nie wylogowywać?".</summary>
+    internal static string SignIn(SharedAccounts.Account account) =>
+        Script(new PageAction { Url = "login.microsoftonline.com", Click = "Tak;Yes", Once = true }, account);
+
     private static string Script(PageAction action, SharedAccounts.Account? account)
     {
         var clicks = action.Click.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
