@@ -12,6 +12,10 @@ internal sealed class NewsVideo : IDisposable
     private const string Host = "kiosk-news.video";
     internal WebView2 View { get; } = new() { Visible = false, DefaultBackgroundColor = Color.Black };
     internal event Action? Ended;
+    private static int playingCount;
+    /// <summary>Some film is on screen now (the lock and screensaver then count real input only, see <see cref="InputWatch"/>).</summary>
+    internal static bool AnyPlaying => Volatile.Read(ref playingCount) > 0;
+    private bool counted;
     internal event Action<string>? Failed;
 
     private Task? starting;
@@ -52,6 +56,8 @@ internal sealed class NewsVideo : IDisposable
                 address = "https://" + Host + "/" + Uri.EscapeDataString(Path.GetFileName(source));
             }
             View.CoreWebView2.NavigateToString(Page(address, sound, loop));
+            InputWatch.Start();
+            Count(true);
             return true;
         }
         catch (Exception ex) { Failed?.Invoke(ex.Message); return false; }
@@ -61,6 +67,7 @@ internal sealed class NewsVideo : IDisposable
     internal void Stop()
     {
         View.Visible = false;
+        Count(false);
         if (playing.Length == 0 || View.CoreWebView2 == null) return;
         playing = "";
         try { View.CoreWebView2.NavigateToString("<html><body style='background:#000'></body></html>"); }
@@ -111,8 +118,16 @@ internal sealed class NewsVideo : IDisposable
                "</script></body></html>";
     }
 
+    private void Count(bool on)
+    {
+        if (on == counted) return;
+        counted = on;
+        Interlocked.Add(ref playingCount, on ? 1 : -1);
+    }
+
     public void Dispose()
     {
+        Count(false);
         disposed = true;
         View.Dispose();
     }

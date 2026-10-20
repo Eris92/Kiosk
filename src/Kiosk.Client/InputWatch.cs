@@ -1,0 +1,61 @@
+using System.Runtime.InteropServices;
+
+namespace Kiosk.Client;
+
+/// <summary>
+/// The time of the last real key or mouse/touch input, seen by low-level hooks on a thread of their own (so a busy
+/// screen never delays them). Used while a message film plays: the film keeps the display awake, and Windows then
+/// also moves its own "last input" time, so the lock and the screensaver would never start.
+/// </summary>
+internal static class InputWatch
+{
+    private const int KeyboardHook = 13, MouseHook = 14;
+    private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+    private static readonly HookProc Proc = OnInput;   // Kept alive for as long as the hooks are.
+    private static long lastInput = Environment.TickCount64;
+    private static int started;
+
+    internal static bool Running { get; private set; }
+    internal static uint IdleMilliseconds => (uint)Math.Min(uint.MaxValue, Math.Max(0, Environment.TickCount64 - Interlocked.Read(ref lastInput)));
+
+    /// <summary>Starts once (the first film); the hooks then stay until the Kiosk closes.</summary>
+    internal static void Start()
+    {
+        if (Interlocked.Exchange(ref started, 1) == 1) return;
+        var thread = new Thread(() =>
+        {
+            var module = GetModuleHandle(null);
+            var keyboard = SetWindowsHookEx(KeyboardHook, Proc, module, 0);
+            var mouse = SetWindowsHookEx(MouseHook, Proc, module, 0);
+            if (keyboard == IntPtr.Zero || mouse == IntPtr.Zero)
+            {
+                Audit.Write("input_watch_failed", Marshal.GetLastWin32Error().ToString());
+                if (keyboard != IntPtr.Zero) UnhookWindowsHookEx(keyboard);
+                if (mouse != IntPtr.Zero) UnhookWindowsHookEx(mouse);
+                return;
+            }
+            Interlocked.Exchange(ref lastInput, Environment.TickCount64);
+            Running = true;
+            while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref message); DispatchMessage(ref message); }
+            Running = false;
+        }) { IsBackground = true, Name = "Kiosk input watch" };
+        thread.Start();
+    }
+
+    private static IntPtr OnInput(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code >= 0) Interlocked.Exchange(ref lastInput, Environment.TickCount64);
+        return CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Message { public IntPtr Window; public uint Id; public IntPtr WParam; public IntPtr LParam; public uint Time; public int X, Y; }
+
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern int GetMessage(out Message message, IntPtr window, uint min, uint max);
+    [DllImport("user32.dll")] private static extern bool TranslateMessage(ref Message message);
+    [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref Message message);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? name);
+}

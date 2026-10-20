@@ -275,7 +275,10 @@ internal static class Native
     {
         var input = new LastInput { Size = (uint)Marshal.SizeOf<LastInput>() };
         if (!GetLastInputInfo(ref input)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        return unchecked((uint)Environment.TickCount - input.Time);
+        var idle = unchecked((uint)Environment.TickCount - input.Time);
+        // A film in the messages keeps the display awake, which also restarts Windows' input clock:
+        // while one plays, the time since the last real key or mouse/touch input is counted instead.
+        return NewsVideo.AnyPlaying && InputWatch.Running ? Math.Max(idle, InputWatch.IdleMilliseconds) : idle;
     }
     [DllImport("winscard.dll")]
     internal static extern int SCardEstablishContext(uint scope, IntPtr reserved1, IntPtr reserved2, out IntPtr context);
