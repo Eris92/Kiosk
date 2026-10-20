@@ -47,6 +47,11 @@ internal sealed class BrowserView : UserControl
           const seen = () => { const now = Date.now(); if (now - last > 400) { last = now; try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { } } };
           for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'input', 'scroll'])
             addEventListener(type, seen, { capture: true, passive: true });
+          // A training film playing on the page counts as use: the page does not close in the middle of it.
+          setInterval(() => {
+            if ([...document.querySelectorAll('video')].some(v => !v.paused && !v.ended && v.readyState > 2))
+              try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { }
+          }, 5000);
         })();
         """;
 
@@ -347,6 +352,11 @@ internal sealed class BrowserView : UserControl
         {
             await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);
             core.WebMessageReceived += (_, e) => { if (e.TryGetWebMessageAsString() == "kiosk-activity") Activity?.Invoke(); };
+            // A film with sound in a frame of another site (e.g. an e-learning player) is not seen by the script: the browser says it plays.
+            var playing = new System.Windows.Forms.Timer { Interval = 5000 };
+            playing.Tick += (_, _) => { try { if (core.IsDocumentPlayingAudio) Activity?.Invoke(); } catch (Exception) { } };
+            playing.Start();
+            Disposed += (_, _) => playing.Dispose();
         }
         core.NavigationStarting += (_, e) =>
         {

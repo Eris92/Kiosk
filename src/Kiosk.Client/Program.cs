@@ -278,7 +278,9 @@ internal static class Native
         var idle = unchecked((uint)Environment.TickCount - input.Time);
         // A film in the messages keeps the display awake, which also restarts Windows' input clock:
         // while one plays, the time since the last real key or mouse/touch input is counted instead.
-        return NewsVideo.AnyPlaying && InputWatch.Running ? Math.Max(idle, InputWatch.IdleMilliseconds) : idle;
+        if (!NewsVideo.AnyPlaying || !InputWatch.Running) return idle;
+        InputWatch.Compare(idle);
+        return Math.Max(idle, InputWatch.IdleMilliseconds);
     }
     [DllImport("winscard.dll")]
     internal static extern int SCardEstablishContext(uint scope, IntPtr reserved1, IntPtr reserved2, out IntPtr context);

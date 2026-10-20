@@ -42,6 +42,17 @@ internal static class InputWatch
         thread.Start();
     }
 
+    private static long reportedAt = -600_000;
+
+    /// <summary>Audits (at most every 10 minutes) when Windows' input clock was moved without real input during a film.</summary>
+    internal static void Compare(uint windowsIdle)
+    {
+        uint real = IdleMilliseconds;
+        if (real < windowsIdle + 60_000 || Environment.TickCount64 - reportedAt < 600_000) return;
+        reportedAt = Environment.TickCount64;
+        Audit.Write("idle_kept_by_film", "Windows " + windowsIdle / 1000 + " s, real input " + real / 1000 + " s");
+    }
+
     private static IntPtr OnInput(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0) Interlocked.Exchange(ref lastInput, Environment.TickCount64);
