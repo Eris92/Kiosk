@@ -718,6 +718,23 @@ internal sealed partial class KioskForm : Form
         };
     }
 
+    private DateTime mainIdleHeldAt = DateTime.MinValue;
+
+    /// <summary>For the log: what keeps the Kiosk in front of the main screen's screensaver.</summary>
+    private string MainIdleReason(uint idle)
+    {
+        var why = new List<string>();
+        if (current is { Locked: false }) why.Add("zalogowana sesja");
+        if (verifying) why.Add("sprawdzanie PIN-u");
+        if (settingsView != null) why.Add("Konfiguracja otwarta");
+        if (desktop.AskingPin) why.Add("pole PIN");
+        if (helpBrowser != null) why.Add("strona otwarta");
+        if (SelfService && cardLogon != null) why.Add("zalogowany kartą");
+        if (SelfService && cardKey != null) why.Add("karta w czytniku");
+        return (why.Count == 0 ? "nic" : string.Join(", ", why)) + "; bezczynność " + idle / 1000 + " s, film " + NewsVideo.AnyPlaying +
+               ", wejście " + (InputWatch.Running ? InputWatch.IdleMilliseconds / 1000 + " s" : "-");
+    }
+
     /// <summary>Main screen: input brings up the Kiosk (sign-in / lock screen); left alone while locked or signed out it returns to the content.</summary>
     private void UpdateMainIdle()
     {
@@ -729,7 +746,16 @@ internal sealed partial class KioskForm : Form
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
-            if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1)) { mainIdle.Hide(); Activate(); }
+            if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1))
+            {
+                Audit.Write("main_idle_hidden", MainIdleReason(idle));
+                mainIdle.Hide(); Activate();
+            }
+        }
+        else if (someone && idle >= (uint)config.IdleAfterSeconds * 1000u)
+        {
+            // Why the screensaver waits although nobody touched anything (at most every 5 minutes).
+            if (DateTime.UtcNow - mainIdleHeldAt > TimeSpan.FromMinutes(5)) { mainIdleHeldAt = DateTime.UtcNow; Audit.Write("main_idle_held", MainIdleReason(idle)); }
         }
         else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u)
         {
