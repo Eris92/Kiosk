@@ -58,14 +58,6 @@ internal sealed partial class KioskForm
         if (signInScreen == screen) signInScreen = null;
         if (outcome.SignIn is not { } signIn)
         {
-            if (outcome.Message.StartsWith("Anulowano", StringComparison.Ordinal))
-            {
-                // "Anuluj" on the sign-in: back to the tiles, nothing to report.
-                Audit.Write("selfservice_card_signin_cancelled");
-                desktop.SignInWanted = false;
-                RefreshChrome();
-                return;
-            }
             if (outcome.Message.StartsWith(FidoSignIn.UnknownKey, StringComparison.Ordinal))
             {
                 // A new or reset card: no account knows it. PIN, then registration, instead of the bare error.
@@ -141,10 +133,7 @@ internal sealed partial class KioskForm
         cardKey = key;
         PrepareCardSignIn();
         if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
-        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();
-        // The sign-in asked for and left alone: back to the tiles.
-        if (cardLogon == null && desktop.SignInWanted && DateTime.UtcNow - desktop.SignInWantedAt > TimeSpan.FromSeconds(Math.Max(60, config.HelpCloseSeconds)))
-        { desktop.SignInWanted = false; RefreshChrome(); }   // "Zamknij" or its countdown closed it.
+        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Zamknij" or its countdown closed it.
         if (cardLogon == null) return;
         if (signInReaders.Length == 0)
         {
@@ -254,15 +243,15 @@ internal sealed partial class KioskForm
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         var person = cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
-        desktop.SetPortalState(person, notice ?? (person == null && signInScreen == null && desktop.SignInWanted ? "Przygotowuję logowanie kartą…" : null),
+        desktop.SetPortalState(person, notice,
             warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true);
     }
 
     /// <summary>"Zaloguj kartą" shows the card sign-in (again: back to the tiles); "Zakończ sesję" signs the person out.</summary>
     private void PortalAccount()
     {
+        // The card sign-in waits on Strona główna all the time (as in build-176); the button only signs out.
         if (cardLogon != null) EndCardSession("selfservice_signed_out");
-        else desktop.SignInWanted = !desktop.SignInWanted;
         RefreshChrome();
     }
 }

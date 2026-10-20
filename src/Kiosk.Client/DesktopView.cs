@@ -250,7 +250,8 @@ internal sealed partial class DesktopView : UserControl
         // In the portal the greeting is never shown and the sign-in only when asked for: computed once, so nothing is
         // shown and hidden again in one pass (that made other elements blink).
         bool home = portal && nav.Selected.Length == 0;
-        bool signIn = signingIn && !AskingPin && !Asking && !page && (!portal || signInWanted || home);
+        // The card sign-in as in build-176: shown whenever it is ready and nothing else (page, question, PIN) is in the card.
+        bool signIn = signingIn && !AskingPin && !Asking && !page;
         bool status = !signIn && !page && !Asking && (!portal || home);
         card.SuspendLayout();
         if (pageContent != null) pageContent.Visible = page;
