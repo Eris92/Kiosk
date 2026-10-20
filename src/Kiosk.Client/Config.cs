@@ -138,8 +138,6 @@ internal sealed record Config
     public string StatsFolder { get; init; } = "";
     /// <summary>Automatic copy of the statistics every N hours (0 = only with "Wyślij teraz").</summary>
     public int StatsExportHours { get; init; } = 24;
-    /// <summary>Konfiguracja → Statystyki: folder (often a share) the Kiosk Card service copies the statistics to every hour; empty = Stats next to the server's client.json.</summary>
-    public string StatsFolder { get; init; } = "";
     public NewsOrdering NewsOrder { get; init; }
     public NewsBanner NewsSize { get; init; }
     /// <summary>The bars (e.g. "Nie działa system XXX") also across the top of the screens' content and the lock screen.</summary>
