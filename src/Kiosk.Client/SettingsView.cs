@@ -463,7 +463,11 @@ internal sealed class SettingsView : UserControl
         LayOut(menuCategories, "Name", "Action", "Side", "Description", "Icon", "Color", "SignedInOnly", "Bottom");
         foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions))
         {
-            int row = menuCategories.Rows.Add(c.Path, c.Icon, c.Action, c.Description, c.Color);
+            // By name: the columns were added Name, Icon, Action, Description, Side, Color (the colour landed in "Side" and was lost).
+            int row = menuCategories.Rows.Add();
+            var cells = menuCategories.Rows[row].Cells;
+            cells["Name"].Value = c.Path; cells["Icon"].Value = c.Icon; cells["Action"].Value = c.Action;
+            cells["Description"].Value = c.Description; cells["Color"].Value = c.Color;
             menuCategories.Rows[row].Cells["SignedInOnly"].Value = c.SignedInOnly ?? HelpAction.DefaultNeedsSignIn(c.Action ?? "");
             menuCategories.Rows[row].Cells["Bottom"].Value = c.Bottom;
             menuCategories.Rows[row].Cells["Side"].Value = c.Side;
