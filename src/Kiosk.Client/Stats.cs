@@ -90,21 +90,54 @@ internal static class Stats
         {
             var month = Path.GetFileNameWithoutExtension(file);
             if (month.Length >= 7 && string.CompareOrdinal(month[^7..], first) < 0) continue;
-            try
-            {
-                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = new StreamReader(stream);
-                while (reader.ReadLine() is { } line)
-                {
-                    if (line.Length == 0) continue;
-                    try { if (JsonSerializer.Deserialize<Entry>(line) is { } e && e.Time.LocalDateTime >= from) list.Add(e); }
-                    catch (JsonException) { }
-                }
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            list.AddRange(ReadFile(file).Where(e => e.Time.LocalDateTime >= from));
         }
         return list;
+    }
+
+    /// <summary>One month's file (unreadable lines and files are skipped).</summary>
+    internal static List<Entry> ReadFile(string file)
+    {
+        var list = new List<Entry>();
+        try
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            while (reader.ReadLine() is { } line)
+            {
+                if (line.Length == 0) continue;
+                try { if (JsonSerializer.Deserialize<Entry>(line) is { } e) list.Add(e); }
+                catch (JsonException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return list;
+    }
+
+    // ------------------------------------------------------------------ the export folder's account
+
+    private static readonly byte[] AccountEntropy = Encoding.UTF8.GetBytes("Kiosk.StatsAccount");
+    private static string AccountFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "StatsAccount.cred");
+    internal static bool AccountSaved => File.Exists(AccountFile);
+
+    /// <summary>Saves (or with an empty login removes) the account for the export folder; needs an administrator.</summary>
+    internal static void WriteAccount(CentralConfig.AccountChange change)
+    {
+        if (change.User.Trim().Length == 0) { if (File.Exists(AccountFile)) File.Delete(AccountFile); Audit.Write("stats_account_removed"); return; }
+        var plain = JsonSerializer.SerializeToUtf8Bytes(new SharedAccounts.Account(change.User.Trim(), change.Password));
+        try { CentralConfig.WriteSecret(AccountFile, plain, AccountEntropy); }
+        finally { Array.Clear(plain); }
+        Audit.Write("stats_account_saved", change.User.Trim());
+    }
+
+    /// <summary>Only the service (SYSTEM) and administrators can read it; null = none saved.</summary>
+    internal static SharedAccounts.Account? ReadAccount()
+    {
+        if (!AccountSaved) return null;
+        var plain = CentralConfig.ReadSecret(AccountFile, AccountEntropy);
+        try { return JsonSerializer.Deserialize<SharedAccounts.Account>(plain); }
+        finally { Array.Clear(plain); }
     }
 
     /// <summary>A table for Excel (semicolon, as Polish Excel expects).</summary>

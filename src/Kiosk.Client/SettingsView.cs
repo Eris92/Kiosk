@@ -26,6 +26,15 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox newsUser = new() { Dock = DockStyle.Fill, PlaceholderText = "login, np. kiosk@firma.pl (zapisany: zostaw puste, aby nie zmieniać)" };
     private readonly TextBox newsPassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, PlaceholderText = "hasło" };
     private readonly CheckBox removeNewsAccount = new() { Text = "Usuń zapisany login i hasło", AutoSize = true };
+    private readonly TextBox statsFolder = new() { Width = 520, PlaceholderText = "np. \\\\serwer\\kiosk\\statystyki (puste: Stats obok client.json na serwerze)" };
+    private readonly ComboBox statsEvery = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private static readonly (string Name, int Hours)[] StatsSchedule = [("Wyłączony", 0), ("Co godzinę", 1), ("Co 6 godzin", 6), ("Co 12 godzin", 12), ("Raz dziennie", 24), ("Raz w tygodniu", 168)];
+    private readonly TextBox statsUser = new() { Width = 260, PlaceholderText = "login, np. FIRMA\\kiosk-stat (zapisany: zostaw puste)" };
+    private readonly TextBox statsPassword = new() { Width = 200, UseSystemPasswordChar = true, PlaceholderText = "hasło" };
+    private readonly CheckBox removeStatsAccount = new() { Text = "Usuń zapisany login i hasło", AutoSize = true };
+    /// <summary>The export folder's account: null = unchanged, an empty login = remove.</summary>
+    internal CentralConfig.AccountChange? StatsAccountChange =>
+        removeStatsAccount.Checked ? new("", "") : statsUser.Text.Trim().Length > 0 ? new(statsUser.Text.Trim(), statsPassword.Text) : null;
 
     /// <summary>Komunikaty → login and password for SharePoint typed in (or "remove"); null = leave it as it is.</summary>
     internal CentralConfig.AccountChange? NewsAccountChange =>
@@ -864,10 +873,10 @@ internal sealed class SettingsView : UserControl
         var period = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
         period.Items.AddRange(["Dzisiaj", "Ostatnie 7 dni", "Ostatnie 30 dni", "Ostatnie 90 dni", "Ostatni rok"]);
         period.SelectedIndex = 2;
-        var serverFolder = CentralConfig.StatsFolder();
+        var serverFolder = CentralConfig.StatsFolder(original.StatsFolder);
         var source = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
         source.Items.Add("Ten komputer");
-        if (serverFolder != null) source.Items.Add("Wszystkie kioski (serwer)");
+        if (serverFolder != null) source.Items.Add("Wszystkie kioski (folder eksportu)");
         source.SelectedIndex = 0;
         var refresh = new Button { Text = "Odśwież", AutoSize = true, Margin = new Padding(8, 0, 0, 0) };
         var export = new Button { Text = "Eksportuj do Excela (CSV)", AutoSize = true, Margin = new Padding(8, 0, 0, 0) };
@@ -879,7 +888,7 @@ internal sealed class SettingsView : UserControl
             Dock = DockStyle.Bottom, Height = 52, ForeColor = HelpText, Padding = new Padding(4, 8, 4, 0),
             Text = "Bez nazwisk: „Osoby” to liczba różnych osób (każda ma kod z jej konta, z którego nie da się odczytać nazwiska). Liczą się logowania kartą, " +
                    "przyciski i kafelki Menu, komunikaty i aplikacje. Dane z 13 miesięcy, w C:\\ProgramData\\Kiosk\\Stats" +
-                   (serverFolder != null ? "; co godzinę kopiowane na serwer do " + serverFolder + " (komputer potrzebuje tam prawa zapisu)." : ".")
+                   ". „Wszystkie kioski” czyta folder eksportu (Eksport na dysk).
         };
         DataGridView Grid(params (string Name, string Header, int Weight)[] columns)
         {
@@ -901,9 +910,52 @@ internal sealed class SettingsView : UserControl
         split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
         split.Controls.Add(options, 0, 0);
         split.Controls.Add(days, 1, 0);
+        // Eksport na dysk: the Kiosk Card service copies this computer's statistics (JSON lines + CSV) to a folder on a schedule.
+        var exportPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
+        exportPanel.Controls.Add(new Label { Text = "Eksport na dysk", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 12, 4, 4) });
+        exportPanel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 6),
+            Text = "Usługa Kiosku kopiuje statystyki tego komputera do folderu (np. udziału) jako <folder>\\<komputer>\\, plik CSV do Excela na każdy miesiąc. " +
+                   "Gdy folder jest niedostępny, dane czekają tutaj i idą przy następnej udanej próbie. Konto: login i hasło z prawem zapisu w folderze " +
+                   "(zaszyfrowane dla tego komputera); bez konta usługa łączy się jako komputer. Ustawienia działają po zapisaniu Konfiguracji."
+        });
+        var folderRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), BackColor = Color.Transparent };
+        folderRow.Controls.Add(new Label { Text = "Folder", AutoSize = true, Margin = new Padding(4, 8, 8, 0) });
+        folderRow.Controls.Add(statsFolder);
+        folderRow.Controls.Add(new Label { Text = "Automatycznie", AutoSize = true, Margin = new Padding(16, 8, 8, 0) });
+        folderRow.Controls.Add(statsEvery);
+        exportPanel.Controls.Add(folderRow);
+        var accountRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), BackColor = Color.Transparent };
+        accountRow.Controls.Add(new Label { Text = "Konto" + (Stats.AccountSaved ? " (zapisane)" : ""), AutoSize = true, Margin = new Padding(4, 8, 8, 0) });
+        accountRow.Controls.Add(statsUser);
+        accountRow.Controls.Add(statsPassword);
+        accountRow.Controls.Add(removeStatsAccount);
+        removeStatsAccount.Visible = Stats.AccountSaved;
+        removeStatsAccount.CheckedChanged += (_, _) => statsUser.Enabled = statsPassword.Enabled = !removeStatsAccount.Checked;
+        var sendNow = new Button { Text = "Wyślij teraz", AutoSize = true, Margin = new Padding(16, 2, 4, 2) };
+        var sendResult = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 6, 4, 4) };
+        sendNow.Click += async (_, _) =>
+        {
+            sendNow.Enabled = false;
+            sendResult.Text = "Wysyłam (zapisane ustawienia)…";
+            var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "syncstats" }));
+            if (IsDisposed) return;
+            sendResult.Text = answer.Code == 0 ? answer.Message : "Nie udało się: " + answer.Message;
+            sendNow.Enabled = true;
+        };
+        accountRow.Controls.Add(sendNow);
+        exportPanel.Controls.Add(accountRow);
+        exportPanel.Controls.Add(sendResult);
+        foreach (var (name, _) in StatsSchedule) statsEvery.Items.Add(name);
+        statsEvery.SelectedIndex = Math.Max(0, Array.FindIndex(StatsSchedule, s => s.Hours == original.StatsExportHours));
+        statsFolder.Text = original.StatsFolder;
+        if (Central) { statsFolder.ReadOnly = true; statsEvery.Enabled = false; }   // From the server; the account stays this PC's own.
+
         statsTab.Controls.Add(split);
         statsTab.Controls.Add(summary);
         statsTab.Controls.Add(bar);
+        statsTab.Controls.Add(exportPanel);
         statsTab.Controls.Add(help);
 
         List<Stats.Entry> shown = [];
@@ -1211,6 +1263,8 @@ internal sealed class SettingsView : UserControl
             NewsRefreshMinutes = (int)newsRefresh.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
             NewsSharePointAccount = newsSharePointAccount.Text.Trim(),
+            StatsFolder = statsFolder.Text.Trim().Trim('"'),
+            StatsExportHours = StatsSchedule[Math.Max(0, statsEvery.SelectedIndex)].Hours,
             NewsSharePointCount = (int)newsSharePointCount.Value,
             NewsOrder = (NewsOrdering)Math.Max(0, newsOrder.SelectedIndex),
             NewsSize = (NewsBanner)Math.Max(0, newsSize.SelectedIndex),

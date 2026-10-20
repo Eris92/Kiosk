@@ -125,8 +125,7 @@ internal sealed partial class KioskForm : Form
         timer.Tick += (_, _) => TickState();
         Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
-        // Every hour: this PC's statistics to the server's Stats folder (Konfiguracja z serwera only).
-        updateTimer.Tick += (_, _) => _ = Task.Run(() => CardService.Call(new CardService.Request { Op = "syncstats" }));
+        updateTimer.Tick += (_, _) => ExportStats();
         updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
@@ -1072,6 +1071,21 @@ internal sealed partial class KioskForm : Form
     /// Szybka pomoc, locked or not: a help page (the person's browser when signed in, else a guest window),
     /// or the card itself: change its PIN, set it up again, reset it.
     /// </summary>
+    private DateTime statsExportedAt = DateTime.MinValue;
+
+    /// <summary>Konfiguracja → Statystyki → Automatycznie: every N hours the service copies the statistics to the export folder (checked hourly; a failure is tried again the next hour).</summary>
+    private void ExportStats()
+    {
+        int hours = config.StatsExportHours;
+        if (hours <= 0 || DateTime.UtcNow - statsExportedAt < TimeSpan.FromHours(hours) - TimeSpan.FromMinutes(5)) return;
+        _ = Task.Run(() =>
+        {
+            var answer = CardService.Call(new CardService.Request { Op = "syncstats" });
+            if (answer.Code == 0) statsExportedAt = DateTime.UtcNow;
+            else if (answer.Code == -2) statsExportedAt = DateTime.UtcNow;   // No folder set: nothing to do until the next time.
+        });
+    }
+
     /// <summary>Who is signed in, for the statistics (turned into a code there, never kept as a name).</summary>
     private string StatsPerson => cardLogon?.DisplayName ?? (current is { Locked: false } person ? person.Identity.Name : "");
 
@@ -1921,7 +1935,7 @@ internal sealed partial class KioskForm : Form
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey, view.NewsAccountChange));
+            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey, view.NewsAccountChange, view.StatsAccountChange));
             NewsAccount.Forget();
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Invalidate(true);

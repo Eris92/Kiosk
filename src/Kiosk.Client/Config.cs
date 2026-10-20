@@ -134,6 +134,12 @@ internal sealed record Config
     public int NewsSharePointCount { get; init; } = 6;
     /// <summary>The shared account (accounts.kiosk) that signs in to that site when the Kiosk's own Windows account cannot. Empty = none.</summary>
     public string NewsSharePointAccount { get; init; } = "";
+    /// <summary>Konfiguracja → Statystyki: the folder (often a share) the statistics are copied to; empty = Stats next to the server's client.json.</summary>
+    public string StatsFolder { get; init; } = "";
+    /// <summary>Automatic copy of the statistics every N hours (0 = only with "Wyślij teraz").</summary>
+    public int StatsExportHours { get; init; } = 24;
+    /// <summary>Konfiguracja → Statystyki: folder (often a share) the Kiosk Card service copies the statistics to every hour; empty = Stats next to the server's client.json.</summary>
+    public string StatsFolder { get; init; } = "";
     public NewsOrdering NewsOrder { get; init; }
     public NewsBanner NewsSize { get; init; }
     /// <summary>The bars (e.g. "Nie działa system XXX") also across the top of the screens' content and the lock screen.</summary>
@@ -275,6 +281,7 @@ internal sealed record Config
         if (HelpCloseSeconds is < 5 or > 3600) throw new InvalidDataException("Zamykanie okna Menu: od 5 do 3600 sekund.");
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
+        if (StatsExportHours is < 0 or > 168) throw new InvalidDataException("Eksport statystyk: od 0 do 168 godzin.");
         if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||

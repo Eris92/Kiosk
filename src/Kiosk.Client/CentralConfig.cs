@@ -154,33 +154,56 @@ internal static class CentralConfig
 
     // ------------------------------------------------------------------ Statystyki on the server
 
-    /// <summary>The server's folder with every computer's statistics (Stats next to its client.json); null without a server.</summary>
-    internal static string? StatsFolder()
+    /// <summary>
+    /// Where every computer's statistics go: Konfiguracja → Statystyki → folder (StatsFolder), else Stats next to the
+    /// server's client.json; null when neither is set.
+    /// </summary>
+    internal static string? StatsFolder(string configured = "")
     {
-        try { return Configuration.Load(SharedConfig).ConfigSource is { Length: > 0 } server ? Path.Combine(server, "Stats") : null; }
+        try
+        {
+            if (configured.Trim().Length > 0) return configured.Trim().Trim('"');
+            var folder = Configuration.Load(Path.Combine(MachineConfigFolder(), FileName)).StatsFolder.Trim().Trim('"');
+            if (folder.Length > 0) return folder;
+            return Configuration.Load(SharedConfig).ConfigSource is { Length: > 0 } server ? Path.Combine(server, "Stats") : null;
+        }
         catch (Exception) { return null; }
     }
 
-    /// <summary>Kiosk Card service, "syncstats": this computer's months copied to Stats\&lt;computer&gt;\ on the server (as the computer or the saved account).</summary>
+    /// <summary>
+    /// Kiosk Card service, "syncstats": this computer's months copied to &lt;folder&gt;\&lt;computer&gt;\ (JSON lines and a CSV for
+    /// Excel), as the account saved in Konfiguracja → Statystyki, else the server's saved account, else the computer.
+    /// Nothing is lost when the share is away: the months stay here and go with the next copy.
+    /// </summary>
     internal static CardService.Response SyncStatsForMachine()
     {
         try
         {
+            var folder = StatsFolder();
+            if (folder == null) return new CardService.Response { Code = -2, Message = "Nie ustawiono folderu statystyk." };
+            if (!Directory.Exists(Stats.Folder)) return new CardService.Response { Message = "Brak statystyk do wysłania." };
+            var account = Stats.ReadAccount();
             var server = Configuration.Load(SharedConfig).ConfigSource;
-            if (server.Length == 0) return new CardService.Response { Code = -2, Message = "Brak konfiguracji z serwera." };
-            if (!Directory.Exists(Stats.Folder)) return new CardService.Response();
-            using (Connect(server))
+            using (account != null ? Connect(folder, new ShareAccount(account.User, account.Password))
+                   : Server(folder) != null && Server(folder) == Server(server) ? Connect(folder) : null)
             {
-                var target = Path.Combine(server, "Stats", Environment.MachineName);
+                var target = Path.Combine(folder, Environment.MachineName);
                 Directory.CreateDirectory(target);
+                int count = 0;
                 foreach (var file in Directory.GetFiles(Stats.Folder, "????-??.jsonl"))
-                    File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+                {
+                    var month = Path.GetFileNameWithoutExtension(file);
+                    File.Copy(file, Path.Combine(target, month + ".jsonl"), true);
+                    File.WriteAllText(Path.Combine(target, Environment.MachineName + "-" + month + ".csv"), Stats.Csv(Stats.ReadFile(file)), new UTF8Encoding(true));
+                    count++;
+                }
+                Audit.Write("stats_export_ok", target);
+                return new CardService.Response { Message = "Wysłano " + count + " mies. do " + target };
             }
-            return new CardService.Response();
         }
         catch (Exception ex)
         {
-            Audit.Write("stats_sync_failed", ex.Message);
+            Audit.Write("stats_export_failed", ex.Message);
             return new CardService.Response { Code = -1, Message = ex.Message };
         }
     }
@@ -311,9 +334,9 @@ internal static class CentralConfig
     private static readonly byte[] StagedEntropy = Encoding.UTF8.GetBytes("Kiosk.ConfigSource.Staged");
 
     /// <summary>What the save step changes besides client.json: the share's account and the shared accounts' key (null = unchanged).</summary>
-    internal sealed record Secrets(AccountChange? Account, string? AccountsKey, AccountChange? NewsAccount = null)
+    internal sealed record Secrets(AccountChange? Account, string? AccountsKey, AccountChange? NewsAccount = null, AccountChange? StatsAccount = null)
     {
-        internal bool Any => Account != null || AccountsKey != null || NewsAccount != null;
+        internal bool Any => Account != null || AccountsKey != null || NewsAccount != null || StatsAccount != null;
     }
 
     internal static void WriteSecrets(Secrets secrets)
@@ -321,6 +344,7 @@ internal static class CentralConfig
         if (secrets.Account != null) WriteAccount(secrets.Account);
         if (secrets.AccountsKey != null) SharedAccounts.WriteKey(secrets.AccountsKey);
         if (secrets.NewsAccount != null) NewsAccount.Write(secrets.NewsAccount);
+        if (secrets.StatsAccount != null) Stats.WriteAccount(secrets.StatsAccount);
     }
 
     /// <summary>Saves or removes the share's account; needs an administrator (or SYSTEM).</summary>
