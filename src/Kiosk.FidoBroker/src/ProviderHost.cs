@@ -167,6 +167,9 @@ namespace FidoRun
             uint flags = scenario == 4 ? 0x200U : 0U;
             int status = provider.SetUsageScenario(scenario, flags);
             log.Write("SetUsageScenario: " + Status.Hex(status) + "; Scenario=" + scenario + "; Flags=0x" + flags.ToString("X4"));
+            // ERROR_ACCESS_DISABLED_BY_POLICY: security-key sign-in is not turned on for this PC; say so at once instead of a silent timeout.
+            if (status == unchecked((int)0x800704EC) && options.Broker)
+                KioskBroker.Failed("Logowanie kluczem bezpieczeństwa (FIDO2) jest wyłączone na tym komputerze. Włącz zasadę „Use security keys for sign-in” (Intune) albo UseSecurityKeyForSignin = 1.");
             Status.Check(status, "SetUsageScenario");
             if (options.UserArray == "empty")
             {
