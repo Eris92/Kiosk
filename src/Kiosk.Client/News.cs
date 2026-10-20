@@ -280,7 +280,8 @@ internal sealed class NewsCarousel : Control
             textLeft = pictureBounds.Right + pad;
         }
         int buttonWidth = 0;
-        if (item.Button.Length > 0 && item.Action.Length > 0)
+        // The screensaver has no buttons: any touch closes it before the button could be used.
+        if (!FullScreen && item.Button.Length > 0 && item.Action.Length > 0)
         {
             using var font = new Font("Segoe UI", 10, FontStyle.Bold);
             var size = TextRenderer.MeasureText(item.Button, font);
