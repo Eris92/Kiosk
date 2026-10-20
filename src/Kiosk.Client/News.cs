@@ -139,6 +139,8 @@ internal sealed class NewsCarousel : Control
     private readonly List<Rectangle> dots = [];
 
     internal int Seconds { get; set; } = 8;
+    /// <summary>The screensaver (Ekrany → kiosk:komunikaty): each slide fills the whole control, the dots lie on it.</summary>
+    internal bool FullScreen { get; init; }
     internal int Count => items.Count;
     internal int Index => index;
     internal event Action<NewsItem>? ActionRequested;
@@ -212,9 +214,10 @@ internal sealed class NewsCarousel : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         var box = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var path = KioskTheme.RoundedRectangle(box, S(18));
-        using (var back = new SolidBrush(Color.FromArgb(235, KioskTheme.Surface))) g.FillPath(back, path);
-        using (var border = new Pen(hover ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
+        using var path = FullScreen ? new GraphicsPath() : KioskTheme.RoundedRectangle(box, S(18));
+        if (FullScreen) path.AddRectangle(new Rectangle(0, 0, Width, Height));
+        using (var back = new SolidBrush(FullScreen ? KioskTheme.Background : Color.FromArgb(235, KioskTheme.Surface))) g.FillPath(back, path);
+        if (!FullScreen) using (var border = new Pen(hover ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
 
         var state = g.Save();
         g.SetClip(path);
@@ -229,13 +232,20 @@ internal sealed class NewsCarousel : Control
         leftArrow = rightArrow = Rectangle.Empty;
         if (items.Count > 1)
         {
-            int dot = S(7), gap = S(8), total = items.Count * dot + (items.Count - 1) * gap;
-            int x = (Width - total) / 2, y = Height - S(16);
+            int dot = S(FullScreen ? 10 : 7), gap = S(FullScreen ? 12 : 8), total = items.Count * dot + (items.Count - 1) * gap;
+            int x = (Width - total) / 2, y = Height - S(FullScreen ? 40 : 16);
+            if (FullScreen)
+            {
+                // On the slide itself: a dark pill under the dots, so they show on any picture.
+                using var pill = KioskTheme.RoundedRectangle(new Rectangle(x - S(14), y - S(9), total + S(28), dot + S(18)), (dot + S(18)) / 2);
+                using var shade = new SolidBrush(Color.FromArgb(120, 0, 0, 0));
+                g.FillPath(shade, pill);
+            }
             for (int i = 0; i < items.Count; i++)
             {
                 var r = new Rectangle(x + i * (dot + gap), y, dot, dot);
                 dots.Add(r);
-                using var brush = new SolidBrush(i == index ? KioskTheme.AccentLine : Color.FromArgb(90, KioskTheme.Muted));
+                using var brush = new SolidBrush(i == index ? KioskTheme.AccentLine : FullScreen ? Color.FromArgb(170, Color.White) : Color.FromArgb(90, KioskTheme.Muted));
                 g.FillEllipse(brush, r);
             }
             int arrow = S(30);
@@ -253,6 +263,7 @@ internal sealed class NewsCarousel : Control
 
     private void DrawSlide(Graphics g, NewsItem item, int offset, bool current)
     {
+        if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset, current); return; }
         int pad = S(22), side = items.Count > 1 ? S(44) : pad;
         var area = new Rectangle(offset + side, S(14), Width - side * 2, Height - S(36));
         int textLeft = area.Left;
@@ -299,6 +310,38 @@ internal sealed class NewsCarousel : Control
         if (item.Text.Length > 0)
             TextRenderer.DrawText(g, item.Text, bodyFont, new Rectangle(textArea.Left, top + titleHeight + S(4), textArea.Width, Math.Max(0, textArea.Bottom - top - titleHeight - S(4))),
                 KioskTheme.Muted, TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+    }
+
+    /// <summary>The screensaver: the picture covers the whole slide, the title and text on a shade at its bottom.</summary>
+    private void DrawFullSlide(Graphics g, NewsItem item, int offset, bool current)
+    {
+        var picture = item.Picture!;
+        var slide = new Rectangle(offset, 0, Width, Height);
+        // Covers the slide, cut evenly at the sides or top and bottom (no stretching).
+        double scale = Math.Max((double)Width / picture.Width, (double)Height / picture.Height);
+        int w = (int)Math.Ceiling(picture.Width * scale), h = (int)Math.Ceiling(picture.Height * scale);
+        var state = g.Save();
+        g.SetClip(slide, CombineMode.Intersect);
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.DrawImage(picture, new Rectangle(slide.Left + (Width - w) / 2, (Height - h) / 2, w, h));
+        if (current) buttonBounds = Rectangle.Empty;
+        if (item.Title.Length > 0 || item.Text.Length > 0)
+        {
+            int shadeHeight = Height / 3;
+            var shadeBounds = new Rectangle(slide.Left, Height - shadeHeight, Width, shadeHeight);
+            using (var shade = new LinearGradientBrush(shadeBounds, Color.FromArgb(0, 0, 0, 0), Color.FromArgb(190, 0, 0, 0), LinearGradientMode.Vertical))
+                g.FillRectangle(shade, shadeBounds);
+            int margin = S(48);
+            var textArea = new Rectangle(slide.Left + margin, Height - shadeHeight + S(24), Width - margin * 2, shadeHeight - S(24) - S(64));
+            using var titleFont = new Font("Segoe UI", 30, FontStyle.Bold);
+            using var bodyFont = new Font("Segoe UI", 16);
+            int titleHeight = item.Title.Length > 0 ? Math.Min(textArea.Height / 2, TextRenderer.MeasureText(g, item.Title, titleFont, new Size(textArea.Width, int.MaxValue), TextFormatFlags.WordBreak).Height) : 0;
+            if (titleHeight > 0) TextRenderer.DrawText(g, item.Title, titleFont, new Rectangle(textArea.Left, textArea.Top, textArea.Width, titleHeight), Color.White, TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            if (item.Text.Length > 0)
+                TextRenderer.DrawText(g, item.Text, bodyFont, new Rectangle(textArea.Left, textArea.Top + titleHeight + S(6), textArea.Width, Math.Max(0, textArea.Height - titleHeight - S(6))),
+                    Color.FromArgb(225, 255, 255, 255), TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+        }
+        g.Restore(state);
     }
 
     protected override void Dispose(bool disposing)

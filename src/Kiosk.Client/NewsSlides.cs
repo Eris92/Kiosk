@@ -21,7 +21,7 @@ internal sealed class NewsSlides : Control
         Changed?.Invoke();
     }
 
-    private readonly NewsCarousel carousel = new() { Dock = DockStyle.Fill };
+    private readonly NewsCarousel carousel = new() { Dock = DockStyle.Fill, FullScreen = true };
     private readonly Label empty = new()
     {
         Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = KioskTheme.Muted,
