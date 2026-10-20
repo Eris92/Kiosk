@@ -67,6 +67,12 @@ internal sealed partial class KioskForm : Form
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
+    // Automatic update: at start and then every 24 hours; a downloaded update waits (checked hourly) until nobody has work open.
+    private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 60 * 60_000 };
+    private static readonly TimeSpan UpdateEvery = TimeSpan.FromHours(24);
+    private DateTime updateCheckedAt = DateTime.MinValue;
+    private (string Tag, string Folder)? updateWaiting;
+    private bool updating;
     private bool loadingNews;
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
@@ -117,8 +123,9 @@ internal sealed partial class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
+        updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
         desktop.Tiles.ActionRequested += item => _ = RunHelpAsync(item);
@@ -129,7 +136,7 @@ internal sealed partial class KioskForm : Form
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { newsTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
+        FormClosed += (_, _) => { newsTimer.Dispose(); updateTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
         if (ShellMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -1031,20 +1038,29 @@ internal sealed partial class KioskForm : Form
     /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
     private async Task AutoUpdateAsync()
     {
-        if (!config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
+        if (updating || !config.AutoUpdate || Environment.GetCommandLineArgs().Contains("--self-test")) return;
+        updating = true;
         try
         {
-            var release = await Updater.LatestAsync();
-            if (!Updater.IsNewer(release.Tag)) return;
-            var folder = await Updater.DownloadAsync(release);
-            // Only while nobody has work open; otherwise the update waits for the next start.
-            if (IsDisposed || sessions.Values.Any(x => x.HasWork) || !Updater.FirstAttempt(release.Tag)) return;
-            Audit.Write("auto_update", release.Tag);
+            if (updateWaiting is not { } ready || DateTime.UtcNow - updateCheckedAt >= UpdateEvery)
+            {
+                updateCheckedAt = DateTime.UtcNow;
+                var release = await Updater.LatestAsync();
+                if (!Updater.IsNewer(release.Tag)) { updateWaiting = null; return; }
+                if (updateWaiting?.Tag != release.Tag) updateWaiting = (release.Tag, await Updater.DownloadAsync(release));
+                ready = updateWaiting.Value;
+            }
+            // Only while nobody has work open; otherwise it is tried again every hour.
+            if (IsDisposed || sessions.Values.Any(x => x.HasWork)) return;
+            updateWaiting = null;
+            if (!Updater.FirstAttempt(ready.Tag)) return;
+            Audit.Write("auto_update", ready.Tag);
             closeConfirmed = true;
-            Updater.Launch(folder);
+            Updater.Launch(ready.Folder);
             Close();
         }
         catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
+        finally { updating = false; }
     }
 
     private HelpBrowserForm? helpBrowser;

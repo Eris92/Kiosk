@@ -615,8 +615,8 @@ internal sealed class SettingsView : UserControl
             AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 12),
             Text = "Pobiera najnowsze wydanie z GitHub (github.com/Eris92/Kiosk, zakładka Releases), zamyka Kiosk, podmienia pliki programu " +
                    "i uruchamia nową wersję. Konfiguracja zostaje bez zmian. Gdy Kiosk jest zainstalowany w Program Files, Windows zapyta o administratora. " +
-                   "Niezapisane zmiany w tej Konfiguracji przepadną. Automatyczna aktualizacja działa po zapisaniu konfiguracji: przy starcie Kiosku, " +
-                   "gdy nikt nie ma otwartej pracy, instaluje nowszą wersję i uruchamia Kiosk ponownie."
+                   "Niezapisane zmiany w tej Konfiguracji przepadną. Automatyczna aktualizacja działa po zapisaniu konfiguracji: sprawdza przy starcie Kiosku i potem co 24 godziny; " +
+                   "nowszą wersję instaluje, gdy nikt nie ma otwartej pracy (do tego czasu próbuje co godzinę), i uruchamia Kiosk ponownie."
         });
         var updateButton = new Button { Text = "Sprawdź i zaktualizuj", Size = new Size(240, 38), Margin = new Padding(4) };
         KioskTheme.StyleButton(updateButton, primary: true);
