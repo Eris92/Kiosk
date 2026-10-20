@@ -719,6 +719,14 @@ internal sealed partial class KioskForm : Form
     }
 
     private DateTime mainIdleHeldAt = DateTime.MinValue;
+    /// <summary>Self-service: when the card (or a USB key) was put on the reader.</summary>
+    private DateTime cardPlacedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// Self-service: a card just put on the reader means someone is there, but only for the screensaver's time.
+    /// A card left lying there (or a USB key that stays in the port) no longer holds the screensaver back.
+    /// </summary>
+    private bool CardJustPlaced => SelfService && cardKey != null && DateTime.UtcNow - cardPlacedAt < TimeSpan.FromSeconds(config.IdleAfterSeconds);
 
     /// <summary>For the log: what keeps the Kiosk in front of the main screen's screensaver.</summary>
     private string MainIdleReason(uint idle)
@@ -730,7 +738,7 @@ internal sealed partial class KioskForm : Form
         if (desktop.AskingPin) why.Add("pole PIN");
         if (helpBrowser != null) why.Add("strona otwarta");
         if (SelfService && cardLogon != null) why.Add("zalogowany kartą");
-        if (SelfService && cardKey != null) why.Add("karta w czytniku");
+        if (CardJustPlaced) why.Add("karta właśnie położona");
         return (why.Count == 0 ? "nic" : string.Join(", ", why)) + "; bezczynność " + idle / 1000 + " s, film " + NewsVideo.AnyPlaying +
                ", wejście " + (InputWatch.Running ? InputWatch.IdleMilliseconds / 1000 + " s" : "-");
     }
@@ -742,7 +750,7 @@ internal sealed partial class KioskForm : Form
         foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
-        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || SelfService && (cardLogon != null || cardKey != null);
+        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || SelfService && cardLogon != null || CardJustPlaced;
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {

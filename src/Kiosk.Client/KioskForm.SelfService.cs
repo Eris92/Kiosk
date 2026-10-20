@@ -137,6 +137,7 @@ internal sealed partial class KioskForm
     private void SelfServiceTick()
     {
         var key = reader.Snapshot(config.ReaderName);
+        if (key != null && key != cardKey) cardPlacedAt = DateTime.UtcNow;
         cardKey = key;
         PrepareCardSignIn();
         if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
