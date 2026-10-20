@@ -21,7 +21,14 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
     private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
-    private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = konto Windows Kiosku)" };
+    private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = login i hasło poniżej)" };
+    private readonly TextBox newsUser = new() { Dock = DockStyle.Fill, PlaceholderText = "login, np. kiosk@firma.pl (zapisany: zostaw puste, aby nie zmieniać)" };
+    private readonly TextBox newsPassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, PlaceholderText = "hasło" };
+    private readonly CheckBox removeNewsAccount = new() { Text = "Usuń zapisany login i hasło", AutoSize = true };
+
+    /// <summary>Komunikaty → login and password for SharePoint typed in (or "remove"); null = leave it as it is.</summary>
+    internal CentralConfig.AccountChange? NewsAccountChange =>
+        removeNewsAccount.Checked ? new("", "") : newsUser.Text.Trim().Length > 0 ? new(newsUser.Text.Trim(), newsPassword.Text) : null;
     private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
     private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
     private readonly ComboBox newsSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Standardowy", "Duży", "Bardzo duży" } };
@@ -563,6 +570,11 @@ internal sealed class SettingsView : UserControl
         folderPicker.MinimumSize = Size.Empty;
         AddField(newsFields, "Aktualności ze strony SharePoint (puste = brak)", newsSharePoint);
         AddField(newsFields, "Konto do SharePointa", newsSharePointAccount);
+        AddField(newsFields, "albo login do SharePointa" + (NewsAccount.Saved ? " (zapisany)" : ""), newsUser);
+        AddField(newsFields, "Hasło do SharePointa", newsPassword);
+        AddField(newsFields, "", removeNewsAccount);
+        removeNewsAccount.Visible = NewsAccount.Saved;
+        removeNewsAccount.CheckedChanged += (_, _) => newsUser.Enabled = newsPassword.Enabled = !removeNewsAccount.Checked;
         AddField(newsFields, "Ile aktualności z SharePointa", newsSharePointCount);
         AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
@@ -711,7 +723,7 @@ internal sealed class SettingsView : UserControl
         {
             Dock = DockStyle.Top, Height = 64, Padding = new Padding(24, 6, 24, 6), ForeColor = KioskTheme.Text, BackColor = Card, Visible = Central,
             Text = "Podgląd – konfiguracja z serwera " + config.ConfigSource + ". Zmiany wprowadza się w plikach na serwerze; " +
-                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera)."
+                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera) i login do SharePointa (Komunikaty)."
         };
         if (Central)
         {
@@ -722,6 +734,9 @@ internal sealed class SettingsView : UserControl
             removeAccount.Enabled = true;
             accountsKey.ReadOnly = false;
             removeKey.Enabled = true;
+            // This PC's own login to SharePoint (Komunikaty) is saved here also with a server's configuration.
+            newsUser.ReadOnly = newsPassword.ReadOnly = false;
+            removeNewsAccount.Enabled = true;
             sourceTest.Enabled = true;
             updateButton.Enabled = true;
         }

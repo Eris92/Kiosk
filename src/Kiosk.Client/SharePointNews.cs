@@ -58,14 +58,16 @@ internal sealed class SharePointNews : IDisposable
             signInAttached = true;
             core.NavigationCompleted += async (_, e) =>
             {
-                if (!e.IsSuccess || account.Length == 0 || !Uri.TryCreate(core.Source, UriKind.Absolute, out var at) || at.Scheme != Uri.UriSchemeHttps) return;
+                if (!e.IsSuccess || !Uri.TryCreate(core.Source, UriKind.Absolute, out var at) || at.Scheme != Uri.UriSchemeHttps) return;
                 if (!at.Host.Equals("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) && !at.Host.Equals("login.microsoft.com", StringComparison.OrdinalIgnoreCase)) return;
                 try
                 {
-                    var shared = await Task.Run(() => SharedAccounts.TryGetCached(account));
-                    if (shared == null) { Audit.Write("sharepoint_news_account_missing", account); return; }
+                    // A shared account named in Konfiguracja, else the login and password saved on this PC.
+                    var name = account;
+                    var shared = await Task.Run(() => name.Length > 0 ? SharedAccounts.TryGetCached(name) : NewsAccount.TryGet());
+                    if (shared == null) { Audit.Write("sharepoint_news_account_missing", name.Length > 0 ? name : "login i hasło"); return; }
                     await core.ExecuteScriptAsync(PageScripts.SignIn(shared));
-                    Audit.Write("sharepoint_news_sign_in", account);
+                    Audit.Write("sharepoint_news_sign_in", shared.User);
                 }
                 catch (Exception ex) { Audit.Write("sharepoint_news_sign_in_failed", ex.Message); }
             };
@@ -85,8 +87,8 @@ internal sealed class SharePointNews : IDisposable
                 core.Navigate(site.AbsoluteUri);
                 if (await Task.WhenAny(arrived.Task, Task.Delay(Limit)) != arrived.Task)
                     throw new InvalidOperationException(core.Source.Contains("login.", StringComparison.OrdinalIgnoreCase)
-                        ? account.Length > 0 ? "SharePoint wymaga logowania, a konto " + account + " nie zalogowało się (hasło, MFA albo dostęp do witryny)."
-                            : "SharePoint wymaga logowania: konto Windows, na którym działa Kiosk, nie ma dostępu do tej strony – ustaw „Konto do SharePointa” w Konfiguracji → Komunikaty."
+                        ? account.Length > 0 || NewsAccount.Saved ? "SharePoint wymaga logowania, a zapisane konto nie zalogowało się (hasło, MFA albo dostęp do witryny)."
+                            : "SharePoint wymaga logowania: konto Windows, na którym działa Kiosk, nie ma dostępu do tej strony – podaj konto w Konfiguracji → Komunikaty."
                         : "SharePoint nie odpowiedział w 60 s.");
             }
             finally { core.NavigationCompleted -= Completed; }

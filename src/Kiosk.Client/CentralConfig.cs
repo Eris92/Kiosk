@@ -278,15 +278,16 @@ internal static class CentralConfig
     private static readonly byte[] StagedEntropy = Encoding.UTF8.GetBytes("Kiosk.ConfigSource.Staged");
 
     /// <summary>What the save step changes besides client.json: the share's account and the shared accounts' key (null = unchanged).</summary>
-    internal sealed record Secrets(AccountChange? Account, string? AccountsKey)
+    internal sealed record Secrets(AccountChange? Account, string? AccountsKey, AccountChange? NewsAccount = null)
     {
-        internal bool Any => Account != null || AccountsKey != null;
+        internal bool Any => Account != null || AccountsKey != null || NewsAccount != null;
     }
 
     internal static void WriteSecrets(Secrets secrets)
     {
         if (secrets.Account != null) WriteAccount(secrets.Account);
         if (secrets.AccountsKey != null) SharedAccounts.WriteKey(secrets.AccountsKey);
+        if (secrets.NewsAccount != null) NewsAccount.Write(secrets.NewsAccount);
     }
 
     /// <summary>Saves or removes the share's account; needs an administrator (or SYSTEM).</summary>
