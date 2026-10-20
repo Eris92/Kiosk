@@ -52,7 +52,7 @@ internal static class KioskTheme
         (int)Math.Round(from.R + (to.R - from.R) * amount), (int)Math.Round(from.G + (to.G - from.G) * amount),
         (int)Math.Round(from.B + (to.B - from.B) * amount));
 
-    private static double Luminance(Color c) => (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255;
+    internal static double Luminance(Color c) => (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255;
 
     internal static void StyleButton(Button button, bool primary = false)
     {
@@ -150,8 +150,8 @@ internal sealed partial class DesktopView : UserControl
     private void PlacePage(Rectangle area)
     {
         if (sideContent == null) { pageContent!.Bounds = area; return; }
-        // Folded instructions: a narrow strip with "Pokaż", the page takes the rest.
-        int split = sideContent is SidePage { Collapsed: true } ? area.Width - Scale(72) : area.Width * 55 / 100, gap = Scale(1);
+        // Folded instructions: only their ribbon at the right edge, the page takes the rest.
+        int split = sideContent is SidePage { Collapsed: true } folded ? area.Width - folded.StripWidth : area.Width * 55 / 100, gap = Scale(1);
         pageContent!.SetBounds(area.Left, area.Top, split, area.Height);
         sideContent.SetBounds(area.Left + split + gap, area.Top, Math.Max(0, area.Width - split - gap), area.Height);
     }

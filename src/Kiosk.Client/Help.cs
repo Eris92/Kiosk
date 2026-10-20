@@ -316,12 +316,14 @@ internal sealed class SidePage : Panel
 {
     private readonly BrowserView browser;
     private readonly string url;
-    private readonly Button show = new() { Text = "◀\nPokaż", Dock = DockStyle.Fill, Visible = false };
+    private readonly SideTab tab = new() { Dock = DockStyle.Left };
     internal event Action? Activity;
-    /// <summary>"Ukryj" or "Pokaż" pressed: the page's frame gives the strip or the half back.</summary>
+    /// <summary>The tab was clicked: the page's frame gives the strip or the half back.</summary>
     internal event Action? Toggled;
-    /// <summary>Folded to a narrow strip at the right with "Pokaż"; the page takes the width.</summary>
+    /// <summary>Folded to the tab at the right edge; the page takes the width.</summary>
     internal bool Collapsed { get; private set; }
+    /// <summary>The width while folded: the tab.</summary>
+    internal int StripWidth => tab.Width;
 
     internal SidePage(string title, string url, IEnumerable<string> domains, bool onlyListed)
     {
@@ -330,24 +332,21 @@ internal sealed class SidePage : Panel
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) && !uri.IsFile ? uri.Host : "";
         var policy = new SitePolicy(onlyListed, [], HelpBrowserForm.SignInDomains.Concat(domains).Append(host));
         policy.Trust(url);
+        // No bar of its own: the document is the right part of the page's frame, with a tab on its edge.
         browser = new BrowserView([], policy, null, singlePage: true) { Dock = DockStyle.Fill };
-        var hide = new Button { Text = "Ukryj" };
-        KioskTheme.StyleButton(hide);
-        hide.Click += (_, _) => SetCollapsed(true);
-        browser.SetPageBar(title, hide);
+        browser.HideBars();
         browser.Activity += () => Activity?.Invoke();
-        KioskTheme.StyleButton(show, primary: true);
-        show.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-        show.Click += (_, _) => SetCollapsed(false);
+        tab.Title = title;
+        tab.Click += (_, _) => SetCollapsed(!Collapsed);
         Controls.Add(browser);
-        Controls.Add(show);
+        Controls.Add(tab);
     }
 
     private void SetCollapsed(bool value)
     {
         Collapsed = value;
+        tab.Collapsed = value;
         browser.Visible = !value;
-        show.Visible = value;
         Activity?.Invoke();
         Toggled?.Invoke();
     }
@@ -530,4 +529,76 @@ internal sealed class HelpCountdown : Control
         if (disposing) timer.Dispose();
         base.Dispose(disposing);
     }
+}
+
+/// <summary>
+/// The ribbon on the left edge of the element beside a page: a thin accent strip that widens under the pointer and
+/// says "Schowaj" (or "Pokaż" when folded); a click folds or unfolds the element.
+/// </summary>
+internal sealed class SideTab : Control
+{
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 15 };
+    private bool hover, collapsed;
+    private int target;
+    internal string Title { get; set; } = "";
+    /// <summary>Takes its new width at once, so the page's frame is laid out with it.</summary>
+    internal bool Collapsed
+    {
+        get => collapsed;
+        set { collapsed = value; timer.Stop(); target = hover ? Wide : Rest; Width = target; Invalidate(); }
+    }
+
+    internal SideTab()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
+        timer.Tick += (_, _) =>
+        {
+            int step = Math.Max(1, Math.Abs(target - Width) / 3);
+            Width = Width < target ? Math.Min(target, Width + step) : Math.Max(target, Width - step);
+            if (Width == target) timer.Stop();
+        };
+    }
+
+    private int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    // Folded: always wide enough for its text (the page's frame does not move under the pointer).
+    private int Rest => Scale(collapsed ? 40 : 8);
+    private int Wide => Scale(collapsed ? 40 : 44);
+
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Width = target = Rest; }
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Grow(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; Grow(); }
+
+    private void Grow()
+    {
+        target = hover ? Wide : Rest;
+        if (!IsHandleCreated) return;
+        if (Width != target) timer.Start();
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        g.Clear(KioskTheme.Background);
+        using (var fill = new SolidBrush(hover ? KioskTheme.Accent : Color.FromArgb(collapsed ? 210 : 150, KioskTheme.Accent)))
+            g.FillRectangle(fill, 0, 0, Width, Height);
+        if (Width < Scale(24)) return;
+        // Vertical text, read from the bottom up, like a ribbon on a binder.
+        string text = hover ? (collapsed ? "◀  Pokaż" : "Schowaj  ▶") : collapsed ? "◀  " + Title : "";
+        if (text.Length == 0) return;
+        using var font = new Font("Segoe UI Semibold", 11);
+        var color = KioskTheme.Luminance(KioskTheme.Accent) > 0.5 ? Color.FromArgb(20, 20, 20) : Color.White;
+        var state = g.Save();
+        g.TranslateTransform(Width / 2f, Height / 2f);
+        g.RotateTransform(-90);
+        var size = g.MeasureString(text, font);
+        using var brush = new SolidBrush(color);
+        g.DrawString(text, font, brush, -size.Width / 2, -size.Height / 2);
+        g.Restore(state);
+    }
+
+    protected override void Dispose(bool disposing) { if (disposing) timer.Dispose(); base.Dispose(disposing); }
 }

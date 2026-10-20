@@ -154,6 +154,9 @@ internal sealed class BrowserView : UserControl
         if (IsHandleCreated) { toolbar.Height = Scale(64); ArrangeToolbar(); }
     }
 
+    /// <summary>Only the page: no bar above it (the element beside a page, part of that page's frame).</summary>
+    internal void HideBars() { toolbar.Visible = false; favorites.Visible = false; }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
