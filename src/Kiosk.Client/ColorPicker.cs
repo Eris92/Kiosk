@@ -61,7 +61,8 @@ internal static class ColorPicker
         const int size = 30, gap = 6, columns = 8;
         var panel = new Panel { BackColor = Color.FromArgb(43, 43, 43), Padding = new Padding(10), Size = new Size(columns * (size + gap) - gap + 20, 0) };
         var popup = new ToolStripDropDown { Padding = Padding.Empty, BackColor = panel.BackColor };
-        void Choose(string hex) { popup.Close(); chosen(hex); }
+        // The value first, then the palette closes (the grid's editor must not open while the palette is going away).
+        void Choose(string hex) { popup.Close(); owner.BeginInvoke(() => chosen(hex)); }
 
         for (int i = 0; i < Palette.Length; i++)
         {
@@ -124,7 +125,8 @@ internal static class ColorPicker
 
         var host = new ToolStripControlHost(panel) { Margin = Padding.Empty, Padding = Padding.Empty, AutoSize = false, Size = panel.Size };
         popup.Items.Add(host);
-        popup.Closed += (_, _) => popup.Dispose();
+        // Disposed after Windows Forms has finished closing it (disposing inside Closed broke the closing that follows).
+        popup.Closed += (_, _) => owner.BeginInvoke(popup.Dispose);
         popup.Show(owner, at);
         code.Focus();
         code.SelectAll();
