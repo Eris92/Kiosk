@@ -213,7 +213,7 @@ internal sealed partial class KioskForm
         try
         {
             await page.StartAsync(entry, logon);
-            if (cardPage == page) page.BringToUser();
+            if (cardPage == page) { page.BringToUser(); desktop.RefreshSide(); }   // Now its window can leave room for the element beside it.
             Audit.Write("selfservice_page_as_person");
         }
         catch (Exception ex)

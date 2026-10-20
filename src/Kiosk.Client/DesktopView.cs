@@ -149,11 +149,16 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The page in <paramref name="area"/> of the card; with a second element the page takes 55 % at the left.</summary>
     private void PlacePage(Rectangle area)
     {
-        if (sideContent == null) { pageContent!.Bounds = area; return; }
-        // Folded instructions: only their ribbon at the right edge, the page takes the rest.
-        int split = sideContent is SidePage { Collapsed: true } folded ? area.Width - folded.StripWidth : area.Width * 55 / 100, gap = Scale(1);
-        pageContent!.SetBounds(area.Left, area.Top, split, area.Height);
-        sideContent.SetBounds(area.Left + split + gap, area.Top, Math.Max(0, area.Width - split - gap), area.Height);
+        pageContent!.Bounds = area;
+        // The page keeps its bar (Zamknij) and countdown across the whole width; the element beside it sits between them,
+        // in the right part the page leaves free. Folded: only its ribbon at the right edge.
+        int width = sideContent == null ? 0 : sideContent is SidePage { Collapsed: true } folded ? folded.StripWidth : area.Width * 45 / 100;
+        if (pageContent is HelpBrowserForm form) form.SetSideInset(width);
+        else if (pageContent is ApplicationView { HostedWindow: var window } && window != IntPtr.Zero)
+            AppNative.PostMessage(window, HelpBrowserForm.SideInsetMessage, (IntPtr)width, IntPtr.Zero);
+        if (sideContent == null) return;
+        sideContent.Bounds = HelpBrowserForm.SideSlot(area, width, DeviceDpi);
+        sideContent.BringToFront();
     }
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };

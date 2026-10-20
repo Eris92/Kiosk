@@ -276,6 +276,48 @@ internal sealed class HelpBrowserForm : Form
     /// <summary>Someone reads the element beside the page: the page's countdown starts again.</summary>
     internal void Touch() => countdown.Restart();
 
+    /// <summary>The Kiosk tells the person's page (another program) how wide the element beside it is: wParam = px.</summary>
+    internal const int SideInsetMessage = 0x8051;   // WM_APP + 0x51
+    private int sideInset;
+
+    /// <summary>
+    /// Menu → "Obok": the bar (Zamknij) and the countdown stay across the whole width; the page itself leaves the
+    /// right part free for the element beside it. Over the Kiosk (the person's page) that part is cut out of this
+    /// window, so the Kiosk's element under it shows and takes the clicks.
+    /// </summary>
+    internal void SetSideInset(int width)
+    {
+        sideInset = Math.Max(0, width);
+        browser.SetRightInset(sideInset);
+        UpdateSideRegion();
+    }
+
+    /// <summary>Where the element beside a page goes in the page's <paramref name="area"/>: under the bar, over the lines at the bottom.</summary>
+    internal static Rectangle SideSlot(Rectangle area, int width, int dpi)
+    {
+        int S(int v) => (int)Math.Round(v * dpi / 96d);
+        int top = S(64), bottom = S(30) + S(30);   // The page bar; the browser's message line and the countdown.
+        return new Rectangle(area.Right - width, area.Top + top, width, Math.Max(0, area.Height - top - bottom));
+    }
+
+    private void UpdateSideRegion()
+    {
+        if (!TopLevel || !IsHandleCreated) return;
+        if (sideInset <= 0) { Region = null; return; }
+        var slot = SideSlot(new Rectangle(Point.Empty, ClientSize), sideInset, DeviceDpi);
+        var region = new Region(new Rectangle(Point.Empty, ClientSize));
+        region.Exclude(slot);
+        Region = region;
+    }
+
+    protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateSideRegion(); }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == SideInsetMessage) { SetSideInset((int)m.WParam); return; }
+        base.WndProc(ref m);
+    }
+
     private bool started;
 
     protected override void OnShown(EventArgs e)
@@ -318,7 +360,7 @@ internal sealed class SidePage : Panel
     private readonly string url;
     private readonly SideTab tab = new() { Dock = DockStyle.Left };
     internal event Action? Activity;
-    /// <summary>The tab was clicked: the page's frame gives the strip or the half back.</summary>
+    /// <summary>The tab was clicked (or, folded, grew under the pointer): the page's frame gives the strip or the half back.</summary>
     internal event Action? Toggled;
     /// <summary>Folded to the tab at the right edge; the page takes the width.</summary>
     internal bool Collapsed { get; private set; }
@@ -338,6 +380,7 @@ internal sealed class SidePage : Panel
         browser.Activity += () => Activity?.Invoke();
         tab.Title = title;
         tab.Click += (_, _) => SetCollapsed(!Collapsed);
+        tab.Resized += () => Toggled?.Invoke();
         Controls.Add(browser);
         Controls.Add(tab);
     }
@@ -541,6 +584,8 @@ internal sealed class SideTab : Control
     private bool hover, collapsed;
     private int target;
     internal string Title { get; set; } = "";
+    /// <summary>Folded, it grew or shrank under the pointer.</summary>
+    internal event Action? Resized;
     /// <summary>Takes its new width at once, so the page's frame is laid out with it.</summary>
     internal bool Collapsed
     {
@@ -561,8 +606,8 @@ internal sealed class SideTab : Control
     }
 
     private int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
-    // Folded: always wide enough for its text (the page's frame does not move under the pointer).
-    private int Rest => Scale(collapsed ? 40 : 8);
+    // Thin at rest, folded or not; under the pointer wide enough for its text.
+    private int Rest => Scale(8);
     private int Wide => Scale(collapsed ? 40 : 44);
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Width = target = Rest; }
@@ -573,7 +618,9 @@ internal sealed class SideTab : Control
     {
         target = hover ? Wide : Rest;
         if (!IsHandleCreated) return;
-        if (Width != target) timer.Start();
+        // Folded, the page's frame makes room for it: at once, so the page is laid out twice, not at every step.
+        if (collapsed) { Width = target; Resized?.Invoke(); }
+        else if (Width != target) timer.Start();
         Invalidate();
     }
 
@@ -587,7 +634,7 @@ internal sealed class SideTab : Control
             g.FillRectangle(fill, 0, 0, Width, Height);
         if (Width < Scale(24)) return;
         // Vertical text, read from the bottom up, like a ribbon on a binder.
-        string text = hover ? (collapsed ? "◀  Pokaż" : "Schowaj  ▶") : collapsed ? "◀  " + Title : "";
+        string text = hover ? (collapsed ? "◀  Pokaż" : "Schowaj  ▶") : "";
         if (text.Length == 0) return;
         using var font = new Font("Segoe UI Semibold", 11);
         var color = KioskTheme.Luminance(KioskTheme.Accent) > 0.5 ? Color.FromArgb(20, 20, 20) : Color.White;
