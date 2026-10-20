@@ -217,6 +217,8 @@ internal sealed class ApplicationView : Panel
         {
             HostedWindow = IntPtr.Zero;
             if (windowLostAt == DateTime.MaxValue) windowLostAt = DateTime.UtcNow;
+            // The person's page has one window: "Zamknij" ends it at once, with its second element (never another page's window).
+            if (AlwaysOverlay) return false;
             var replacement = FindMainWindow();
             if (replacement != IntPtr.Zero) { try { Embed(replacement); } catch (Win32Exception) { } }
             else if (untrackedProgram != null || job != null && ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
