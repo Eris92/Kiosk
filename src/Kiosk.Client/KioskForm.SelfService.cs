@@ -40,7 +40,7 @@ internal sealed partial class KioskForm
             if (!signInStarting.IsCompleted) return;
             var ready = signInStarting.Status == TaskStatus.RanToCompletion ? signInStarting.Result : null;
             signInStarting = null;
-            if (ready == null) { signInFailedAt = DateTime.UtcNow; notice = "Logowanie kartą nie wystartowało. Ponawiam…"; RefreshChrome(); return; }
+            if (ready == null) { signInFailedAt = DateTime.UtcNow; notice = "Logowanie kartą nie wystartowało" + (FidoSignIn.LastError.Length > 0 ? ": " + FidoSignIn.LastError.TrimEnd('.') : "") + ". Ponawiam…"; RefreshChrome(); return; }
             signInScreen = ready;
             notice = null;
             _ = WaitForCardSignInAsync(ready);

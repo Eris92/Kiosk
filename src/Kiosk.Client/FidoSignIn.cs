@@ -39,20 +39,24 @@ internal sealed class FidoSignIn : IDisposable
     /// card: Windows reads only a card that arrives while it listens, never one already lying on the reader.
     /// Null (with the reason in the Kiosk's log) when it could not start.
     /// </summary>
+    /// <summary>Why the last <see cref="PrepareAsync"/> returned null, shown on the screen instead of a bare "did not start".</summary>
+    internal static string LastError { get; private set; } = "";
+
     internal static async Task<FidoSignIn?> PrepareAsync(IntPtr place, int dpi)
     {
+        LastError = "";
         var embed = place.ToInt64() + ";" + dpi + ";" + Hex(KioskTheme.Surface) + ";" + Hex(KioskTheme.Text) + ";" + Hex(KioskTheme.Muted) + ";" + Hex(KioskTheme.AccentLine);
         CardService.Response started;
         try { started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin", Embed = embed })); }
-        catch (Exception ex) { Audit.Write("fido_prepare_failed", ex.Message); return null; }
-        if (started.Code != 0) { Audit.Write("fido_prepare_failed", started.Message); return null; }
+        catch (Exception ex) { Audit.Write("fido_prepare_failed", LastError = ex.Message); return null; }
+        if (started.Code != 0) { Audit.Write("fido_prepare_failed", LastError = started.Message); return null; }
         var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
         try
         {
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
             if (!listening.StartsWith("OK", StringComparison.Ordinal))
             {
-                Audit.Write("fido_prepare_failed", listening);
+                Audit.Write("fido_prepare_failed", LastError = listening.StartsWith("ERROR ", StringComparison.Ordinal) ? listening[6..] : listening);
                 signIn.Dispose();
                 return null;
             }
@@ -61,7 +65,7 @@ internal sealed class FidoSignIn : IDisposable
         }
         catch (Exception ex)
         {
-            Audit.Write("fido_prepare_failed", ex.Message);
+            Audit.Write("fido_prepare_failed", LastError = ex.Message);
             signIn.Dispose();
             return null;
         }
