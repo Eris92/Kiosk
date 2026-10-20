@@ -221,7 +221,7 @@ internal static class Configuration
         // Logo and messages folder may be given relative to the configuration's folder (Konfiguracja z serwera).
         var folder = Path.GetDirectoryName(Path.GetFullPath(path))!;
         string Resolve(string value) => value.Length > 0 && !Path.IsPathFullyQualified(value) ? Path.GetFullPath(Path.Combine(folder, value)) : value;
-        config = config with { BrandLogo = Resolve(config.BrandLogo ?? ""), NewsFolder = Resolve(config.NewsFolder ?? "") };
+        config = config with { BrandLogo = Resolve(config.BrandLogo ?? ""), NewsFolder = Resolve(config.NewsFolder ?? ""), Folder = folder };
         config.Validate(); return config;
     }
     internal static bool IsWebUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&

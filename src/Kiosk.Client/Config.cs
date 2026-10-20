@@ -120,6 +120,8 @@ internal sealed record Config
     public string BrandTitle { get; init; } = "Kiosk";
     public string BrandSubtitle { get; init; } = "Twój pulpit pracy";
     public string BrandLogo { get; init; } = "";
+    /// <summary>The folder the configuration was read from (a server's copy too): files given relative to it are there.</summary>
+    [JsonIgnore] internal string Folder { get; init; } = "";
     /// <summary>Folder or share with kiosk-news.json: company messages scrolling on the desktop. Empty = none.</summary>
     public string NewsFolder { get; init; } = "";
     /// <summary>Komunikaty on/off: all, only the bars at the top, or none.</summary>

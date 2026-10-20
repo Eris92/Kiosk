@@ -464,14 +464,15 @@ internal sealed class SitePolicy
     internal void Trust(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
-        if (uri.IsFile) trustedFolders.Add(uri.AbsoluteUri[..(uri.AbsoluteUri.LastIndexOf('/') + 1)]);
+        // By the folder on disk: the browser may spell the same file's address differently (spaces, Polish letters).
+        if (uri.IsFile) trustedFolders.Add(Path.GetDirectoryName(uri.LocalPath)!.TrimEnd('\\') + "\\");
         else if (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) trustedHosts.Add(uri.Host.TrimEnd('.'));
     }
 
     internal bool Allows(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
-        if (uri.IsFile) return trustedFolders.Any(f => uri.AbsoluteUri.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+        if (uri.IsFile) return trustedFolders.Any(f => uri.LocalPath.StartsWith(f, StringComparison.OrdinalIgnoreCase));
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
         if (hosts == null) return true;
         var host = uri.Host.TrimEnd('.').ToLowerInvariant();

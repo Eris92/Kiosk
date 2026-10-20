@@ -143,11 +143,15 @@ internal sealed partial class DesktopView : UserControl
         ApplyVisibility();
     }
 
+    /// <summary>The element beside the page was folded or unfolded.</summary>
+    internal void RefreshSide() => ArrangeControls();
+
     /// <summary>The page in <paramref name="area"/> of the card; with a second element the page takes 55 % at the left.</summary>
     private void PlacePage(Rectangle area)
     {
         if (sideContent == null) { pageContent!.Bounds = area; return; }
-        int split = area.Width * 55 / 100, gap = Scale(1);
+        // Folded instructions: a narrow strip with "Pokaż", the page takes the rest.
+        int split = sideContent is SidePage { Collapsed: true } ? area.Width - Scale(72) : area.Width * 55 / 100, gap = Scale(1);
         pageContent!.SetBounds(area.Left, area.Top, split, area.Height);
         sideContent.SetBounds(area.Left + split + gap, area.Top, Math.Max(0, area.Width - split - gap), area.Height);
     }

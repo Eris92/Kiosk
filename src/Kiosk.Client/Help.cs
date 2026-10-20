@@ -316,8 +316,12 @@ internal sealed class SidePage : Panel
 {
     private readonly BrowserView browser;
     private readonly string url;
+    private readonly Button show = new() { Text = "◀\nPokaż", Dock = DockStyle.Fill, Visible = false };
     internal event Action? Activity;
-    internal event Action? HideRequested;
+    /// <summary>"Ukryj" or "Pokaż" pressed: the page's frame gives the strip or the half back.</summary>
+    internal event Action? Toggled;
+    /// <summary>Folded to a narrow strip at the right with "Pokaż"; the page takes the width.</summary>
+    internal bool Collapsed { get; private set; }
 
     internal SidePage(string title, string url, IEnumerable<string> domains, bool onlyListed)
     {
@@ -329,10 +333,23 @@ internal sealed class SidePage : Panel
         browser = new BrowserView([], policy, null, singlePage: true) { Dock = DockStyle.Fill };
         var hide = new Button { Text = "Ukryj" };
         KioskTheme.StyleButton(hide);
-        hide.Click += (_, _) => HideRequested?.Invoke();
+        hide.Click += (_, _) => SetCollapsed(true);
         browser.SetPageBar(title, hide);
         browser.Activity += () => Activity?.Invoke();
+        KioskTheme.StyleButton(show, primary: true);
+        show.Font = new Font("Segoe UI", 11, FontStyle.Bold);
+        show.Click += (_, _) => SetCollapsed(false);
         Controls.Add(browser);
+        Controls.Add(show);
+    }
+
+    private void SetCollapsed(bool value)
+    {
+        Collapsed = value;
+        browser.Visible = !value;
+        show.Visible = value;
+        Activity?.Invoke();
+        Toggled?.Invoke();
     }
 
     internal async void Start()

@@ -1105,14 +1105,16 @@ internal sealed partial class KioskForm : Form
         {
             // A file: a full path, or one relative to the configuration's folder (instrukcje\mfa.pdf).
             var path = uri?.IsFile == true ? uri.LocalPath : side;
-            if (!Path.IsPathRooted(path)) path = Path.Combine(Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory, path);
+            // Konfiguracja z serwera: the copy of the server's folder the configuration was read from.
+            if (!Path.IsPathRooted(path)) path = Path.Combine(config.Folder.Length > 0 ? config.Folder : Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory, path);
             url = new Uri(Path.GetFullPath(path)).AbsoluteUri;
         }
         var title = Uri.TryCreate(url, UriKind.Absolute, out var u) && u.IsFile ? Path.GetFileNameWithoutExtension(u.LocalPath) : "Instrukcja";
+        if (u?.IsFile == true && !File.Exists(u.LocalPath)) Audit.Write("side_page_missing", u.LocalPath);
         var panel = new SidePage(title, url, HelpPageDomains(), config.BrowserOnlyBookmarks);
         // Reading the instructions keeps the page open.
         panel.Activity += () => helpBrowser?.Touch();
-        panel.HideRequested += () => desktop.ShowSide(null);
+        panel.Toggled += () => desktop.RefreshSide();
         desktop.ShowSide(panel);
         panel.Start();
         Audit.Write("side_page", url);
