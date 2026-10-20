@@ -152,6 +152,39 @@ internal static class CentralConfig
         return folder;
     }
 
+    // ------------------------------------------------------------------ Statystyki on the server
+
+    /// <summary>The server's folder with every computer's statistics (Stats next to its client.json); null without a server.</summary>
+    internal static string? StatsFolder()
+    {
+        try { return Configuration.Load(SharedConfig).ConfigSource is { Length: > 0 } server ? Path.Combine(server, "Stats") : null; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>Kiosk Card service, "syncstats": this computer's months copied to Stats\&lt;computer&gt;\ on the server (as the computer or the saved account).</summary>
+    internal static CardService.Response SyncStatsForMachine()
+    {
+        try
+        {
+            var server = Configuration.Load(SharedConfig).ConfigSource;
+            if (server.Length == 0) return new CardService.Response { Code = -2, Message = "Brak konfiguracji z serwera." };
+            if (!Directory.Exists(Stats.Folder)) return new CardService.Response();
+            using (Connect(server))
+            {
+                var target = Path.Combine(server, "Stats", Environment.MachineName);
+                Directory.CreateDirectory(target);
+                foreach (var file in Directory.GetFiles(Stats.Folder, "????-??.jsonl"))
+                    File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+            }
+            return new CardService.Response();
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("stats_sync_failed", ex.Message);
+            return new CardService.Response { Code = -1, Message = ex.Message };
+        }
+    }
+
     // ------------------------------------------------------------------ Komunikaty on a share
 
     private static string NewsCache => Path.Combine(KioskData, "News");

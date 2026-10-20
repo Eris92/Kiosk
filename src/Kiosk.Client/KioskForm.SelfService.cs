@@ -83,6 +83,7 @@ internal sealed partial class KioskForm
         cardKey = reader.Snapshot(config.ReaderName);
         signInReaders = reader.ReadersWithCard() ?? [];
         Audit.Write("selfservice_signed_in_with_card", logon.DisplayName);
+        Stats.Record(Stats.SignIn, "Karta i PIN", person: logon.DisplayName);
         Audit.Write("selfservice_card_watched", signInReaders.Length == 0 ? "(brak czytnika z kartą)" : string.Join(", ", signInReaders));
         notice = null;
         RefreshChrome();

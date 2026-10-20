@@ -125,6 +125,8 @@ internal sealed partial class KioskForm : Form
         timer.Tick += (_, _) => TickState();
         Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
+        // Every hour: this PC's statistics to the server's Stats folder (Konfiguracja z serwera only).
+        updateTimer.Tick += (_, _) => _ = Task.Run(() => CardService.Call(new CardService.Request { Op = "syncstats" }));
         updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
@@ -268,6 +270,7 @@ internal sealed partial class KioskForm : Form
         session.Verified = true;
         session.Notice = null;
         Audit.Write("unlocked", session.Identity.Name);
+        Stats.Record(Stats.SignIn, ShellMode ? "Windows" : "Karta", person: session.Identity.Name);
         ShowView(session.LastView != null && session.Windows.Any(w => w.View == session.LastView) ? session.LastView : desktop);
         if (!session.AutoConnected)
         {
@@ -1069,11 +1072,15 @@ internal sealed partial class KioskForm : Form
     /// Szybka pomoc, locked or not: a help page (the person's browser when signed in, else a guest window),
     /// or the card itself: change its PIN, set it up again, reset it.
     /// </summary>
+    /// <summary>Who is signed in, for the statistics (turned into a code there, never kept as a name).</summary>
+    private string StatsPerson => cardLogon?.DisplayName ?? (current is { Locked: false } person ? person.Identity.Name : "");
+
     private async Task RunHelpAsync(HelpAction item)
     {
         if (verifying || desktop.AskingPin) return;
         if (!desktop.Help.SignedIn && item.NeedsSignIn) return;
         Audit.Write("help_action", item.Name + " " + item.Action);
+        Stats.Record(Stats.Option, item.Name, item.CategoryPath, desktop.Help.SignedIn ? StatsPerson : "");
         switch (item.Action.ToLowerInvariant())
         {
             case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
@@ -1333,6 +1340,7 @@ internal sealed partial class KioskForm : Form
     private async Task RunNewsActionAsync(NewsItem item)
     {
         Audit.Write("news_action", item.Title + " " + item.Action);
+        Stats.Record(Stats.News, item.Title.Length > 0 ? item.Title : item.Button, person: StatsPerson);
         if (!CanUseApps) { notice = "Przyłóż kartę i zaloguj się, aby otworzyć „" + (item.Title.Length > 0 ? item.Title : item.Button) + "”."; return; }
         var action = item.Action;
         string Name(string prefix) => action[prefix.Length..].Trim();
@@ -1749,7 +1757,7 @@ internal sealed partial class KioskForm : Form
                 : new NetworkAccountStarter(await Task.Run(() => SharedAccounts.Get(entry.RunAs.Trim())));
             if (requested.IsDisposed) return;
             await requested.StartAsync(entry, starter);
-            if (!requested.IsDisposed) Audit.Write("application_opened", entry.Name);
+            if (!requested.IsDisposed) { Audit.Write("application_opened", entry.Name); Stats.Record(Stats.App, entry.Name, person: session.Identity.Name); }
         }
         catch (Exception ex)
         {

@@ -698,6 +698,8 @@ internal sealed class SettingsView : UserControl
         updatePanel.Controls.Add(removeKey);
         updateTab.Controls.Add(updatePanel);
 
+        var statsTab = AddStatsTab(tabs);
+
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
         var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };
         var cancel = new Button { Text = "Anuluj", Size = new Size(120, 38) };
@@ -735,7 +737,7 @@ internal sealed class SettingsView : UserControl
         };
         if (Central)
         {
-            foreach (TabPage page in tabs.TabPages) Preview(page);
+            foreach (TabPage page in tabs.TabPages) if (page != statsTab) Preview(page);   // Statystyki only reads.
             autoUpdate.Enabled = false;
             configSource.ReadOnly = false;
             sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
@@ -849,6 +851,101 @@ internal sealed class SettingsView : UserControl
             TextRenderer.DrawText(g, button.Text, button.Font, button.ClientRectangle, primary ? KioskTheme.OnAccent : button.Enabled ? KioskTheme.Text : KioskTheme.Muted,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
         };
+    }
+
+    /// <summary>
+    /// Statystyki: sign-ins and opened options from this computer (or from every computer on the server), with no names:
+    /// "Osoby" counts different people by their code.
+    /// </summary>
+    private TabPage AddStatsTab(TabControl tabs)
+    {
+        var statsTab = new TabPage("Statystyki") { Padding = new Padding(12) };
+        tabs.TabPages.Add(statsTab);
+        var period = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+        period.Items.AddRange(["Dzisiaj", "Ostatnie 7 dni", "Ostatnie 30 dni", "Ostatnie 90 dni", "Ostatni rok"]);
+        period.SelectedIndex = 2;
+        var serverFolder = CentralConfig.StatsFolder();
+        var source = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
+        source.Items.Add("Ten komputer");
+        if (serverFolder != null) source.Items.Add("Wszystkie kioski (serwer)");
+        source.SelectedIndex = 0;
+        var refresh = new Button { Text = "Odśwież", AutoSize = true, Margin = new Padding(8, 0, 0, 0) };
+        var export = new Button { Text = "Eksportuj do Excela (CSV)", AutoSize = true, Margin = new Padding(8, 0, 0, 0) };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, BackColor = Color.Transparent, Padding = new Padding(0, 0, 0, 8) };
+        bar.Controls.AddRange(new Control[] { period, source, refresh, export });
+        var summary = new Label { Dock = DockStyle.Top, AutoSize = false, Height = 64, Font = new Font("Segoe UI", 12, FontStyle.Bold), Padding = new Padding(4, 8, 4, 0) };
+        var help = new Label
+        {
+            Dock = DockStyle.Bottom, Height = 52, ForeColor = HelpText, Padding = new Padding(4, 8, 4, 0),
+            Text = "Bez nazwisk: „Osoby” to liczba różnych osób (każda ma kod z jej konta, z którego nie da się odczytać nazwiska). Liczą się logowania kartą, " +
+                   "przyciski i kafelki Menu, komunikaty i aplikacje. Dane z 13 miesięcy, w C:\\ProgramData\\Kiosk\\Stats" +
+                   (serverFolder != null ? "; co godzinę kopiowane na serwer do " + serverFolder + " (komputer potrzebuje tam prawa zapisu)." : ".")
+        };
+        DataGridView Grid(params (string Name, string Header, int Weight)[] columns)
+        {
+            var grid = new DataGridView
+            {
+                Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, RowHeadersVisible = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect
+            };
+            foreach (var (name, header, weight) in columns) grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, FillWeight = weight });
+            StyleGrid(grid);
+            return grid;
+        }
+        var options = Grid(("Name", "Opcja", 200), ("Kind", "Rodzaj", 80), ("Category", "Kategoria", 110), ("Count", "Otwarcia", 70), ("People", "Osoby", 60), ("Last", "Ostatnio", 110));
+        var days = Grid(("Day", "Dzień", 90), ("SignIns", "Logowania", 80), ("People", "Osoby", 60), ("Opened", "Otwarcia", 70));
+        options.Columns["Count"].ValueType = typeof(int);
+        options.Columns["People"].ValueType = typeof(int);
+        var split = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent };
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
+        split.Controls.Add(options, 0, 0);
+        split.Controls.Add(days, 1, 0);
+        statsTab.Controls.Add(split);
+        statsTab.Controls.Add(summary);
+        statsTab.Controls.Add(bar);
+        statsTab.Controls.Add(help);
+
+        List<Stats.Entry> shown = [];
+        async void Load()
+        {
+            var from = period.SelectedIndex switch { 0 => DateTime.Today, 1 => DateTime.Today.AddDays(-6), 2 => DateTime.Today.AddDays(-29), 3 => DateTime.Today.AddDays(-89), _ => DateTime.Today.AddYears(-1) };
+            var folder = source.SelectedIndex == 1 && serverFolder != null ? serverFolder : Stats.Folder;
+            summary.Text = "Wczytuję…";
+            refresh.Enabled = false;
+            try { shown = await Task.Run(() => Stats.Read(folder, from)); }
+            catch (Exception ex) { summary.Text = "Nie udało się wczytać statystyk: " + ex.Message; return; }
+            finally { if (!IsDisposed) refresh.Enabled = true; }
+            if (IsDisposed) return;
+            var signIns = shown.Where(e => e.Kind == Stats.SignIn).ToList();
+            var opened = shown.Where(e => e.Kind != Stats.SignIn).ToList();
+            int people = shown.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count();
+            int computers = shown.Select(e => e.Pc).Distinct().Count();
+            summary.Text = "Logowania: " + signIns.Count + "     Osoby: " + people + "     Otwarte opcje: " + opened.Count +
+                           (computers > 1 ? "     Komputery: " + computers : "") +
+                           "\n" + (opened.Count == 0 ? "Brak otwartych opcji w tym okresie." : "Najczęściej: " + string.Join(", ",
+                               opened.GroupBy(e => e.Name).OrderByDescending(g => g.Count()).Take(3).Select(g => g.Key + " (" + g.Count() + ")")));
+            options.Rows.Clear();
+            foreach (var g in opened.GroupBy(e => (e.Kind, e.Name, e.Category)).OrderByDescending(g => g.Count()))
+                options.Rows.Add(g.Key.Name, g.Key.Kind, g.Key.Category, g.Count(), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
+                    g.Max(e => e.Time).LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
+            days.Rows.Clear();
+            foreach (var g in shown.GroupBy(e => e.Time.LocalDateTime.Date).OrderByDescending(g => g.Key))
+                days.Rows.Add(g.Key.ToString("yyyy-MM-dd"), g.Count(e => e.Kind == Stats.SignIn), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
+                    g.Count(e => e.Kind != Stats.SignIn));
+        }
+        refresh.Click += (_, _) => Load();
+        period.SelectedIndexChanged += (_, _) => Load();
+        source.SelectedIndexChanged += (_, _) => Load();
+        tabs.Selected += (_, e) => { if (e.TabPage == statsTab) Load(); };
+        export.Click += (_, _) =>
+        {
+            using var dialog = new SaveFileDialog { Filter = "CSV (Excel)|*.csv", FileName = "kiosk-statystyki-" + DateTime.Today.ToString("yyyy-MM-dd") + ".csv" };
+            if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
+            try { File.WriteAllText(dialog.FileName, Stats.Csv(shown), new System.Text.UTF8Encoding(true)); }
+            catch (Exception ex) { summary.Text = "Nie udało się zapisać pliku: " + ex.Message; }
+        };
+        return statsTab;
     }
 
     private static void StyleGrid(DataGridView grid)
