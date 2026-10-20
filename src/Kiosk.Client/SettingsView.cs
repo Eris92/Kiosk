@@ -888,7 +888,7 @@ internal sealed class SettingsView : UserControl
             Dock = DockStyle.Bottom, Height = 52, ForeColor = HelpText, Padding = new Padding(4, 8, 4, 0),
             Text = "Bez nazwisk: „Osoby” to liczba różnych osób (każda ma kod z jej konta, z którego nie da się odczytać nazwiska). Liczą się logowania kartą, " +
                    "przyciski i kafelki Menu, komunikaty i aplikacje. Dane z 13 miesięcy, w C:\\ProgramData\\Kiosk\\Stats" +
-                   ". „Wszystkie kioski” czyta folder eksportu (Eksport na dysk).
+                   ". „Wszystkie kioski” czyta folder eksportu (Eksport na dysk)."
         };
         DataGridView Grid(params (string Name, string Header, int Weight)[] columns)
         {
