@@ -52,6 +52,12 @@
   },
   {
     "Enabled": true,
+    "Title": "Środki ochrony indywidualnej",
+    "Text": "Na halę i plac tylko w kasku, kamizelce odblaskowej i butach ochronnych.",
+    "Video": "bhp-ochrona.mp4"
+  },
+  {
+    "Enabled": true,
     "Title": "Aktualizacja A",
     "Text": "W piątek po 18:00 aktualizujemy system. Zapisz pracę przed wyjściem.",
     "Image": "aktualizacja.png",
