@@ -368,6 +368,12 @@ internal sealed class SettingsView : UserControl
             Name = "Color", HeaderText = "Kolor", ToolTipText = "Kafelek: kolor koła. Kliknij, aby wybrać z palety albo wpisać #RRGGBB. Domyślny: kolor kategorii albo Kiosku.",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
+        helpActions.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Side", HeaderText = "Obok (strona lub PDF)", ToolTipText = "Otwiera się po prawej stronie obok strony z „Akcji”: druga strona https://… albo plik, np. instrukcja PDF " +
+                "(pełna ścieżka, \\\\serwer\\… albo ścieżka względem folderu konfiguracji, np. instrukcje\\mfa.pdf). Puste: tylko strona.",
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
         AddEnabledColumn(helpActions);
         // Punkt samoobsługowy: greyed out until someone signs in with the card.
         helpActions.Columns.Add(new DataGridViewCheckBoxColumn
@@ -377,11 +383,12 @@ internal sealed class SettingsView : UserControl
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         // The same order and widths as Kategorie: name, category, action, description, icon, colour, sign-in.
-        LayOut(helpActions, "Enabled", "Name", "Category", "Action", "Description", "Icon", "Color", "SignedInOnly");
+        LayOut(helpActions, "Enabled", "Name", "Category", "Action", "Side", "Description", "Icon", "Color", "SignedInOnly");
         void AddHelpRow(HelpAction h)
         {
             if (h.CategoryPath.Length > 0 && !categoryColumn.Items.Contains(h.CategoryPath)) categoryColumn.Items.Add(h.CategoryPath);
             int row = helpActions.Rows.Add(h.Name, h.Action, h.CategoryPath, h.Description, h.Icon, h.Color);
+            helpActions.Rows[row].Cells["Side"].Value = h.Side;
             SetEnabled(helpActions, row, h.Enabled);
             helpActions.Rows[row].Cells["SignedInOnly"].Value = h.NeedsSignIn;
         }
@@ -423,6 +430,7 @@ internal sealed class SettingsView : UserControl
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Description", HeaderText = "Opis", ToolTipText = "Kategoria z akcją: linia pod nazwą jej kafelka", SortMode = DataGridViewColumnSortMode.NotSortable });
+        menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Side", HeaderText = "Obok (strona lub PDF)", ToolTipText = "Kategoria z akcją: po prawej obok jej strony druga strona https://… albo plik PDF (pełna ścieżka albo względem folderu konfiguracji).", SortMode = DataGridViewColumnSortMode.NotSortable });
         menuCategories.Columns.Add(new DataGridViewTextBoxColumn { Name = "Color", HeaderText = "Kolor", ToolTipText = "Kolor ikony kategorii w lewym menu i kafelków bez własnego koloru. Kliknij, aby wybrać z palety albo wpisać #RRGGBB.", SortMode = DataGridViewColumnSortMode.NotSortable });
         menuCategories.Columns.Add(new DataGridViewCheckBoxColumn
         {
@@ -436,12 +444,13 @@ internal sealed class SettingsView : UserControl
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         menuCategories.Columns["Name"].HeaderText = "Nazwa";
-        LayOut(menuCategories, "Name", "Action", "Description", "Icon", "Color", "SignedInOnly", "Bottom");
+        LayOut(menuCategories, "Name", "Action", "Side", "Description", "Icon", "Color", "SignedInOnly", "Bottom");
         foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions))
         {
             int row = menuCategories.Rows.Add(c.Path, c.Icon, c.Action, c.Description, c.Color);
             menuCategories.Rows[row].Cells["SignedInOnly"].Value = c.SignedInOnly ?? HelpAction.DefaultNeedsSignIn(c.Action ?? "");
             menuCategories.Rows[row].Cells["Bottom"].Value = c.Bottom;
+            menuCategories.Rows[row].Cells["Side"].Value = c.Side;
         }
         List<string> CategoryPaths() => menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow)
             .Select(r => MenuCategory.Normalize(Cell(r, "Name"))).Where(p => p.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -1057,6 +1066,7 @@ internal sealed class SettingsView : UserControl
                     Name = Cell(r, "Name"), Action = Cell(r, "Action").Trim(), Enabled = IsEnabled(r),
                     Category = string.Join("/", Cell(r, "Category").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0)),
                     Description = Cell(r, "Description").Trim(), Icon = Cell(r, "Icon").Trim(), Color = Cell(r, "Color").Trim(),
+                    Side = Cell(r, "Side").Trim().Trim('"'),
                     SignedInOnly = r.Cells["SignedInOnly"].Value is bool only ? only : HelpAction.DefaultNeedsSignIn(Cell(r, "Action"))
                 }).ToArray(),
             MenuCategories = menuCategories.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && MenuCategory.Normalize(Cell(r, "Name")).Length > 0)
@@ -1064,7 +1074,7 @@ internal sealed class SettingsView : UserControl
                 {
                     Name = MenuCategory.Normalize(Cell(r, "Name")), Icon = Cell(r, "Icon"), Action = Cell(r, "Action"), Description = Cell(r, "Description"),
                     Color = Cell(r, "Color"), SignedInOnly = Cell(r, "Action").Length == 0 ? null : r.Cells["SignedInOnly"].Value is bool only ? only : null,
-                    Bottom = r.Cells["Bottom"].Value is true
+                    Bottom = r.Cells["Bottom"].Value is true, Side = Cell(r, "Side").Trim().Trim('"')
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),

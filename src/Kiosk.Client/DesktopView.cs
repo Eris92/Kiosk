@@ -123,6 +123,34 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>A Szybka pomoc page shown in the middle frame (the card grows to the free space beside Szybka pomoc).</summary>
     private Control? pageContent;
     internal Control? Page => pageContent;
+    /// <summary>Menu → "Obok": a second page or a PDF at the page's right; closed together with the page.</summary>
+    private Control? sideContent;
+
+    /// <summary>Puts <paramref name="content"/> beside the page (null = the page alone); the previous one is disposed.</summary>
+    internal void ShowSide(Control? content)
+    {
+        if (sideContent == content) return;
+        var old = sideContent;
+        sideContent = content;
+        if (content != null)
+        {
+            content.Visible = false;
+            card.Controls.Add(content);
+            content.BringToFront();
+        }
+        if (old != null && !old.IsDisposed) { card.Controls.Remove(old); old.Dispose(); }
+        ArrangeControls();
+        ApplyVisibility();
+    }
+
+    /// <summary>The page in <paramref name="area"/> of the card; with a second element the page takes 55 % at the left.</summary>
+    private void PlacePage(Rectangle area)
+    {
+        if (sideContent == null) { pageContent!.Bounds = area; return; }
+        int split = area.Width * 55 / 100, gap = Scale(1);
+        pageContent!.SetBounds(area.Left, area.Top, split, area.Height);
+        sideContent.SetBounds(area.Left + split + gap, area.Top, Math.Max(0, area.Width - split - gap), area.Height);
+    }
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
@@ -255,6 +283,7 @@ internal sealed partial class DesktopView : UserControl
         bool status = !signIn && !page && !Asking && (!portal || home);
         card.SuspendLayout();
         if (pageContent != null) pageContent.Visible = page;
+        if (sideContent != null) sideContent.Visible = page;
         signInPlace.Visible = signIn;
         card.SignIn = !status || AskingPin;
         heading.Visible = status;
@@ -291,8 +320,13 @@ internal sealed partial class DesktopView : UserControl
             card.Controls.Add(content);
             content.BringToFront();
         }
-        // A page closed (Zamknij, its time ran out, signing out): back to "Strona główna".
-        else if (portal && nav.Selected.Length > 0) { nav.Select(""); Tiles.ShowCategory(""); }
+        else
+        {
+            // The second element goes with its page.
+            if (sideContent != null) { var side = sideContent; sideContent = null; card.Controls.Remove(side); side.Dispose(); }
+            // A page closed (Zamknij, its time ran out, signing out): back to "Strona główna".
+            if (portal && nav.Selected.Length > 0) { nav.Select(""); Tiles.ShowCategory(""); }
+        }
         ArrangeControls();
         ApplyVisibility();
         card.Invalidate();
@@ -450,7 +484,7 @@ internal sealed partial class DesktopView : UserControl
             cardWidth = place.Width;
             cardHeight = place.Height;
             card.Bounds = place;
-            if (page) pageContent!.SetBounds(0, 0, cardWidth, cardHeight);
+            if (page) PlacePage(new Rectangle(0, 0, cardWidth, cardHeight));
             if (Help.Visible) Help.Visible = false;
         }
         else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
@@ -491,7 +525,7 @@ internal sealed partial class DesktopView : UserControl
             cardHeight = Math.Max(Scale(200), Height - top - margin - helpRow);
             card.SetBounds(left, top, cardWidth, cardHeight);
             int inset = Scale(10);
-            pageContent!.SetBounds(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset));
+            PlacePage(new Rectangle(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)));
         }
         else card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
         Help.Visible = help;

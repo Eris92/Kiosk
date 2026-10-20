@@ -98,9 +98,19 @@ internal sealed record HelpAction
     public string Icon { get; init; } = "";
     /// <summary>The tile's circle colour #RRGGBB; empty = a colour of the Kiosk's set by position.</summary>
     public string Color { get; init; } = "";
+    /// <summary>
+    /// Opened beside the page, at its right: a second page (https://…) or a file such as a PDF with instructions
+    /// (a full path, or a path relative to the configuration's folder). Empty = the page alone.
+    /// </summary>
+    public string Side { get; init; } = "";
     /// <summary>Set for a category with its own action (Menu → Kategorie): the category's path.</summary>
     internal string? LinkPath { get; init; }
     internal string CategoryPath => string.Join("/", (Category ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
+
+    /// <summary>"Obok": empty, a https://… page or a file path (no other kind of address).</summary>
+    internal static bool ValidSide(string? side) =>
+        string.IsNullOrWhiteSpace(side) || Uri.TryCreate(side.Trim(), UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.IsFile)
+        || !side.Contains("://") && side.Trim().IndexOfAny(System.IO.Path.GetInvalidPathChars()) < 0;
 
     internal static bool DefaultNeedsSignIn(string action)
     {
@@ -140,6 +150,8 @@ internal sealed record MenuCategory
     public string Action { get; init; } = "";
     public string Description { get; init; } = "";
     public string Color { get; init; } = "";
+    /// <summary>Like an entry of Menu: a second page or a file (PDF) beside the category's page.</summary>
+    public string Side { get; init; } = "";
     public bool? SignedInOnly { get; init; }
     /// <summary>Punkt samoobsługowy: in the left menu's second group, under a line (e.g. Szybka pomoc, Zgłoś incydent).</summary>
     public bool Bottom { get; init; }
@@ -148,7 +160,7 @@ internal sealed record MenuCategory
     /// <summary>The category with an action as an entry of the menu: in its parent category, and opened from the left menu.</summary>
     internal HelpAction? Link => (Action ?? "").Trim().Length == 0 ? null : new HelpAction
     {
-        Name = Path.Split('/')[^1], Action = Action.Trim(), Description = Description ?? "", Icon = Icon ?? "", Color = Color ?? "",
+        Name = Path.Split('/')[^1], Action = Action.Trim(), Description = Description ?? "", Icon = Icon ?? "", Color = Color ?? "", Side = Side ?? "",
         SignedInOnly = SignedInOnly, Category = Path.Contains('/') ? Path[..Path.LastIndexOf('/')] : "", LinkPath = Path
     };
 

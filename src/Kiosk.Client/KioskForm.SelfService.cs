@@ -184,18 +184,20 @@ internal sealed partial class KioskForm
     private ApplicationView? cardPage;
 
     /// <summary>A Szybka pomoc page as the signed-in person (their account, SSO): a clean page inside the Kiosk.</summary>
-    private bool OpenPageAsCardPerson(string title, string url)
+    private bool OpenPageAsCardPerson(string title, string url, string side = "")
     {
         if (cardLogon == null) return false;
-        _ = OpenCardPageAsync(cardLogon, title, url);
+        _ = OpenCardPageAsync(cardLogon, title, url, side);
         return true;
     }
 
-    private async Task OpenCardPageAsync(UserLogon logon, string title, string url)
+    private async Task OpenCardPageAsync(UserLogon logon, string title, string url, string side = "")
     {
         CloseCardPage();
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         helpBrowser?.Close();
+        // The second element first: the person's page is laid over the left part only.
+        ShowSideFor(side);
         var page = new ApplicationView { AlwaysOverlay = true };
         cardPage = page;
         // In the start screen's middle frame, like the guest page; the page's window is kept exactly over it.

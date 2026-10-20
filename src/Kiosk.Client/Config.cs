@@ -258,6 +258,11 @@ internal sealed record Config
         foreach (var help in HelpActions)
             if (help.Color is { Length: > 0 } tileColor && !KioskTheme.IsColor(tileColor))
                 throw new InvalidDataException("Menu: kolor kafelka „" + help.Name + "” podaj jako #RRGGBB, np. #3B82F6.");
+            else if (!HelpAction.ValidSide(help.Side))
+                throw new InvalidDataException("Menu: „Obok” przy „" + help.Name + "” to adres https://… albo ścieżka pliku (np. instrukcje\\mfa.pdf).");
+        foreach (var category in MenuCategories)
+            if (!HelpAction.ValidSide(category.Side))
+                throw new InvalidDataException("Kategorie: „Obok” przy „" + category.Path + "” to adres https://… albo ścieżka pliku (np. instrukcje\\mfa.pdf).");
         if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
             throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
         if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");

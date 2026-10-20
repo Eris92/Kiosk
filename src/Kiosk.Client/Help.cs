@@ -273,6 +273,8 @@ internal sealed class HelpBrowserForm : Form
     }
 
     private void Touched() => countdown.Restart();
+    /// <summary>Someone reads the element beside the page: the page's countdown starts again.</summary>
+    internal void Touch() => countdown.Restart();
 
     private bool started;
 
@@ -304,6 +306,50 @@ internal sealed class HelpBrowserForm : Form
         }
     }
 
+}
+
+/// <summary>
+/// Menu → "Obok": a second page or a file (a PDF with instructions, shown by the browser itself) at the right of the
+/// page. A small bar with its name and "Ukryj"; reading it counts as using the page (<see cref="Activity"/>).
+/// </summary>
+internal sealed class SidePage : Panel
+{
+    private readonly BrowserView browser;
+    private readonly string url;
+    internal event Action? Activity;
+    internal event Action? HideRequested;
+
+    internal SidePage(string title, string url, IEnumerable<string> domains, bool onlyListed)
+    {
+        this.url = url;
+        BackColor = KioskTheme.Background;
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) && !uri.IsFile ? uri.Host : "";
+        var policy = new SitePolicy(onlyListed, [], HelpBrowserForm.SignInDomains.Concat(domains).Append(host));
+        policy.Trust(url);
+        browser = new BrowserView([], policy, null, singlePage: true) { Dock = DockStyle.Fill };
+        var hide = new Button { Text = "Ukryj" };
+        KioskTheme.StyleButton(hide);
+        hide.Click += (_, _) => HideRequested?.Invoke();
+        browser.SetPageBar(title, hide);
+        browser.Activity += () => Activity?.Invoke();
+        Controls.Add(browser);
+    }
+
+    internal async void Start()
+    {
+        try { await browser.InitializeAsync(url); }
+        catch (Exception ex)
+        {
+            Audit.Write("side_page_error", ex.Message);
+            var error = new Label
+            {
+                Text = "Nie udało się otworzyć: " + ex.Message, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 12), BackColor = KioskTheme.Background, ForeColor = KioskTheme.Text
+            };
+            Controls.Add(error);
+            error.BringToFront();
+        }
+    }
 }
 
 /// <summary>

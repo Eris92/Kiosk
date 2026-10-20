@@ -1066,17 +1066,18 @@ internal sealed partial class KioskForm : Form
             case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
             default:
                 // Always the help window (also when signed in), so it closes after the time set for Szybka pomoc.
-                ShowHelpPage(item.Name, item.Action);
+                ShowHelpPage(item.Name, item.Action, item.Side);
                 break;
         }
         RefreshChrome();
     }
 
     /// <summary>A Szybka pomoc page; in Punkt samoobsługowy with the card's sign-in while the card lies on the reader.</summary>
-    private void ShowHelpPage(string title, string url)
+    private void ShowHelpPage(string title, string url, string side = "")
     {
-        if (SelfService && OpenPageAsCardPerson(title, url)) return;
+        if (SelfService && OpenPageAsCardPerson(title, url, side)) return;
         helpBrowser?.Close();
+        ShowSideFor(side);
         // In the start screen's middle frame: no separate window over the screen.
         var window = new HelpBrowserForm(title, url, HelpPageDomains(), config.HelpCloseSeconds, onlyListed: config.BrowserOnlyBookmarks) { TopLevel = false, TopMost = false };
         window.FormClosed += (_, _) =>
@@ -1091,6 +1092,30 @@ internal sealed partial class KioskForm : Form
         window.Show();
         window.Focus();
         window.Start();
+    }
+
+    /// <summary>Menu → "Obok": the second page or file at the page's right (before the page is shown, so the page gets the left part).</summary>
+    private void ShowSideFor(string side)
+    {
+        if (string.IsNullOrWhiteSpace(side)) { desktop.ShowSide(null); return; }
+        side = side.Trim().Trim('"');
+        string url;
+        if (Uri.TryCreate(side, UriKind.Absolute, out var uri) && !uri.IsFile) url = uri.AbsoluteUri;
+        else
+        {
+            // A file: a full path, or one relative to the configuration's folder (instrukcje\mfa.pdf).
+            var path = uri?.IsFile == true ? uri.LocalPath : side;
+            if (!Path.IsPathRooted(path)) path = Path.Combine(Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory, path);
+            url = new Uri(Path.GetFullPath(path)).AbsoluteUri;
+        }
+        var title = Uri.TryCreate(url, UriKind.Absolute, out var u) && u.IsFile ? Path.GetFileNameWithoutExtension(u.LocalPath) : "Instrukcja";
+        var panel = new SidePage(title, url, HelpPageDomains(), config.BrowserOnlyBookmarks);
+        // Reading the instructions keeps the page open.
+        panel.Activity += () => helpBrowser?.Touch();
+        panel.HideRequested += () => desktop.ShowSide(null);
+        desktop.ShowSide(panel);
+        panel.Start();
+        Audit.Write("side_page", url);
     }
 
     /// <summary>Sites a Szybka pomoc page may open with "tylko strony z listy": the allowed domains and the bookmarks' sites.</summary>
