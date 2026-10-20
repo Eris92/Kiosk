@@ -23,6 +23,18 @@ Unzip it to e.g. `C:\Kiosk` (it keeps the repository layout: `out\client`,
 below as administrator. No .NET installation is needed. `client.local.json`
 is never part of the package.
 
+## Simple installation for preparing the configuration
+
+On an administrator's PC (no service, no shell change, Explorer stays), as administrator:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Install-KioskConfig.ps1
+```
+
+It copies the Kiosk to `C:\Program Files\Kiosk`, the configuration to `C:\ProgramData\Kiosk\client.json`
+(only when there is none) and adds the shortcuts **Kiosk - Konfiguracja** and **Kiosk** to the Start menu and
+the desktop. `-Uninstall` removes the program and the shortcuts and keeps the configuration.
+
 ## Konfiguracja for administrators
 
 Only admin cards and Windows administrators see Konfiguracja in the Menu. In anyone's session an
