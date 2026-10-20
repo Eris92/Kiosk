@@ -101,7 +101,7 @@ internal sealed class NewsVideo : IDisposable
     {
         var src = System.Net.WebUtility.HtmlEncode(address);
         return "<!doctype html><html><head><meta charset='utf-8'><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}" +
-               "video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body>" +
+               "video{width:100%;height:100%;object-fit:contain;background:#000}video::-webkit-media-controls,video::-webkit-media-controls-overlay-play-button,video::-webkit-media-controls-start-playback-button{display:none!important}</style></head><body>" +
                "<video id='v' src='" + src + "' autoplay playsinline" + (sound ? "" : " muted") + (loop ? " loop" : "") + "></video><script>" +
                "const v=document.getElementById('v');" +
                "v.addEventListener('ended',()=>chrome.webview.postMessage('ended'));" +

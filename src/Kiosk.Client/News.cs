@@ -364,8 +364,14 @@ internal sealed class NewsCarousel : Control
             var videoBounds = new Rectangle(area.Left, area.Top, MediaWidth(item, area), area.Height);
             using var clip = KioskTheme.RoundedRectangle(videoBounds, S(10));
             using var black = new SolidBrush(Color.Black);
-            g.FillPath(black, clip);
-            KioskIcons.Draw(g, videoBounds, "\uE768", null, Color.FromArgb(200, Color.White)); // play
+            g.FillPath(black, clip);   // Until the film starts: black (or the "Image" as its first picture), no play sign.
+            if (item.Picture is { } poster)
+            {
+                var state = g.Save();
+                g.SetClip(clip, CombineMode.Intersect);
+                g.DrawImage(poster, videoBounds);
+                g.Restore(state);
+            }
             textLeft = videoBounds.Right + pad;
         }
         else if (item.Picture is { } picture)
