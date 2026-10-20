@@ -722,7 +722,12 @@ internal sealed partial class KioskForm : Form
         {
             if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1)) { mainIdle.Hide(); Activate(); }
         }
-        else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u) mainIdle.Show();
+        else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u)
+        {
+            mainIdle.Show();
+            // Whoever comes next starts on "Strona główna", not in the category the last person left open.
+            desktop.GoHome();
+        }
     }
 
     // ---------------------------------------------------------------- Windows shell mode

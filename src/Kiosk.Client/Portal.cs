@@ -661,6 +661,21 @@ internal sealed partial class DesktopView
         if (account.Visible != (portal && portalSignedIn)) account.Visible = portal && portalSignedIn;
     }
 
+    /// <summary>Back to "Strona główna" (the screensaver came on): an open page closes, no category stays chosen.</summary>
+    internal void GoHome()
+    {
+        if (!portal || PortalHome && pageContent == null && !signInWanted) return;
+        Atomically(() =>
+        {
+            if (pageContent != null) PageCloseRequested?.Invoke();
+            nav.Select("");
+            Tiles.ShowCategory("");
+            if (signInWanted) SignInWanted = false;
+            ApplyVisibility();
+            ArrangeControls();
+        });
+    }
+
     private string? pageTitleText;
     /// <summary>The title of the page open in the middle (shown in the bar on top).</summary>
     internal void SetPageTitle(string? title) { pageTitleText = title; UpdatePortalHeader(); }
