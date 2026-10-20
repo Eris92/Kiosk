@@ -19,6 +19,7 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
     private readonly TextBox newsFolder = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
+    private readonly NumericUpDown newsRefresh = new() { Minimum = 1, Maximum = 1440, Width = 140 };
     private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
     private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = login i hasło poniżej)" };
@@ -582,6 +583,7 @@ internal sealed class SettingsView : UserControl
         AddField(newsFields, "Ile aktualności z SharePointa", newsSharePointCount);
         AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
+        AddField(newsFields, "Pobieranie z sieci co (minuty)", newsRefresh);
         AddField(newsFields, "Rozmiar banera", newsSize);
         AddField(newsFields, "Ekrany wygaszacza", newsOnScreens);
         newsOnScreens.Checked = config.NewsBarsOnScreens;
@@ -592,6 +594,7 @@ internal sealed class SettingsView : UserControl
         newsSize.SelectedIndex = (int)config.NewsSize;
         newsFolder.Text = config.NewsFolder;
         newsSeconds.Value = Math.Clamp(config.NewsSeconds, 3, 300);
+        newsRefresh.Value = Math.Clamp(config.NewsRefreshMinutes, 1, 1440);
         newsTab.Controls.Add(new Label
         {
             Dock = DockStyle.Fill, ForeColor = HelpText, Padding = new Padding(4, 12, 4, 4),
@@ -1107,6 +1110,7 @@ internal sealed class SettingsView : UserControl
                     Bottom = r.Cells["Bottom"].Value is true, Side = Cell(r, "Side").Trim().Trim('"')
                 }).ToArray(),
             NewsSeconds = (int)newsSeconds.Value,
+            NewsRefreshMinutes = (int)newsRefresh.Value,
             NewsSharePoint = newsSharePoint.Text.Trim(),
             NewsSharePointAccount = newsSharePointAccount.Text.Trim(),
             NewsSharePointCount = (int)newsSharePointCount.Value,

@@ -127,6 +127,8 @@ internal sealed record Config
     /// <summary>Komunikaty on/off: all, only the bars at the top, or none.</summary>
     public NewsDisplay NewsShow { get; init; }
     public int NewsSeconds { get; init; } = 8;
+    /// <summary>How often the messages are fetched again (a share, SharePoint): they change rarely, so not every minute.</summary>
+    public int NewsRefreshMinutes { get; init; } = 30;
     /// <summary>A SharePoint site whose news (pages published as news) scroll with the folder's messages. Empty = none.</summary>
     public string NewsSharePoint { get; init; } = "";
     public int NewsSharePointCount { get; init; } = 6;
@@ -273,6 +275,7 @@ internal sealed record Config
         if (HelpCloseSeconds is < 5 or > 3600) throw new InvalidDataException("Zamykanie okna Menu: od 5 do 3600 sekund.");
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
+        if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||
             !new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" }.Contains(Path.GetExtension(BrandLogo).ToLowerInvariant())))

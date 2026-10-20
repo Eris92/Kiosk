@@ -9,7 +9,8 @@ namespace Kiosk.Client;
 /// </summary>
 internal sealed class SharePointNews : IDisposable
 {
-    private static readonly TimeSpan Refresh = TimeSpan.FromMinutes(10);
+    // How often is set by the Kiosk (Konfiguracja → Komunikaty → Pobieranie z sieci); this only spares repeated calls close together.
+    private static readonly TimeSpan Refresh = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
     private readonly Control owner;

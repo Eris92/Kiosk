@@ -1282,6 +1282,9 @@ internal sealed partial class KioskForm : Form
     {
         if (loadingNews) return;
         loadingNews = true;
+        // The share and SharePoint are asked again only every NewsRefreshMinutes (Konfiguracja → Komunikaty), not every minute.
+        int every = Math.Clamp(config.NewsRefreshMinutes, 1, 1440) * 60_000;
+        if (newsTimer.Interval != every) newsTimer.Interval = every;
         var folder = config.NewsFolder;
         try
         {
