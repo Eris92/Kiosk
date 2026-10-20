@@ -234,13 +234,6 @@ internal sealed class NewsCarousel : Control
         {
             int dot = S(FullScreen ? 10 : 7), gap = S(FullScreen ? 12 : 8), total = items.Count * dot + (items.Count - 1) * gap;
             int x = (Width - total) / 2, y = Height - S(FullScreen ? 40 : 16);
-            if (FullScreen)
-            {
-                // On the slide itself: a dark pill under the dots, so they show on any picture.
-                using var pill = KioskTheme.RoundedRectangle(new Rectangle(x - S(14), y - S(9), total + S(28), dot + S(18)), (dot + S(18)) / 2);
-                using var shade = new SolidBrush(Color.FromArgb(120, 0, 0, 0));
-                g.FillPath(shade, pill);
-            }
             for (int i = 0; i < items.Count; i++)
             {
                 var r = new Rectangle(x + i * (dot + gap), y, dot, dot);
@@ -313,7 +306,7 @@ internal sealed class NewsCarousel : Control
                 KioskTheme.Muted, TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
     }
 
-    /// <summary>The screensaver: the picture covers the whole slide, the title and text on a shade at its bottom.</summary>
+    /// <summary>The screensaver: the picture covers the whole slide, the title and text at its bottom (no shade).</summary>
     private void DrawFullSlide(Graphics g, NewsItem item, int offset, bool current)
     {
         var picture = item.Picture!;
@@ -329,9 +322,6 @@ internal sealed class NewsCarousel : Control
         if (item.Title.Length > 0 || item.Text.Length > 0)
         {
             int shadeHeight = Height / 3;
-            var shadeBounds = new Rectangle(slide.Left, Height - shadeHeight, Width, shadeHeight);
-            using (var shade = new LinearGradientBrush(shadeBounds, Color.FromArgb(0, 0, 0, 0), Color.FromArgb(190, 0, 0, 0), LinearGradientMode.Vertical))
-                g.FillRectangle(shade, shadeBounds);
             int margin = S(48);
             var textArea = new Rectangle(slide.Left + margin, Height - shadeHeight + S(24), Width - margin * 2, shadeHeight - S(24) - S(64));
             using var titleFont = new Font("Segoe UI", 30, FontStyle.Bold);
