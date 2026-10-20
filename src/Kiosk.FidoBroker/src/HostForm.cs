@@ -133,6 +133,7 @@ namespace FidoRun
 
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
 
         private int autoRetries;
         private DateTime lastAutoRetry;
@@ -837,6 +838,23 @@ namespace FidoRun
         }
         public void Busy(bool value) { Post(delegate { working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
 
+        // Diagnostics for "the PIN box takes no keys": focus changes and how many characters arrived, never the PIN.
+        // A click on the box takes the keyboard explicitly, also when the Kiosk around this window holds it.
+        private void WatchPinBox(TextBox box)
+        {
+            box.GotFocus += delegate { log.Write("PinField=Focused"); };
+            box.LostFocus += delegate { log.Write("PinField=LostFocus"); };
+            box.MouseDown += delegate
+            {
+                bool had = box.Focused;
+                if (!had) box.Focus();
+                log.Write("PinField=Clicked; HadFocus=" + had + "; Focused=" + box.Focused + "; Enabled=" + box.Enabled + "; ReadOnly=" + box.ReadOnly
+                    + "; FormsEnabled=" + fields.Enabled + "; RootIsForeground=" + (GetForegroundWindow() == GetAncestor(Handle, 2)));
+            };
+            int typed = 0;
+            box.KeyPress += delegate { if (++typed <= 12) log.Write("PinField=KeyPress; Count=" + typed); };
+        }
+
         // On the PIN screen the visible PIN box always holds the cursor, so the user just types.
         private void FocusPin()
         {
@@ -1048,6 +1066,7 @@ namespace FidoRun
                                 if (pinScreen && field.Type == 5) text.Font = new Font(Font.FontFamily, 22f * scale);
                                 text.TextChanged += delegate { if (!rendering && !closing) host.StringValue(generation, field.Id, text.Text); };
                                 text.ReadOnly = field.Interactive == 1;
+                                if (field.Type == 5) WatchPinBox(text);
                                 input = text; break;
                             case 6:
                                 input = new Label { Text = "FIDO security key", AutoSize = true }; break;
