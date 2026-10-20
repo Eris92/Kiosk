@@ -599,9 +599,10 @@ internal sealed class SettingsView : UserControl
         {
             Dock = DockStyle.Fill, ForeColor = HelpText, Padding = new Padding(4, 12, 4, 4),
             Text = "Komunikaty przewijają się na dole pulpitu (np. „Zgłoś problem”), a paski („Kind”: „Pasek”) świecą u góry (np. „Nie działa system XXX”). " +
-                   "Folder (np. \\\\serwer\\kiosk\\komunikaty) zawiera plik " + News.FileName + ", Kiosk czyta go co minutę; musi być do odczytu dla wszystkich kont. " +
-                   "Opis wszystkich pól (Title, Text, Image, Button, Action, Color, TextColor, Enabled, From / Until) jest na początku przykładowego pliku: " +
-                   "„Użyj przykładu” albo config\\news w paczce. SharePoint: najnowsze aktualności witryny co 10 minut, czytane kontem Windows Kiosku."
+                   "Folder (np. \\\\serwer\\kiosk\\komunikaty) zawiera plik " + News.FileName + ", Kiosk pobiera go co ustawioną liczbę minut; musi być do odczytu dla wszystkich kont. " +
+                   "Film (Video, plik MP4): slajd stoi, aż film się skończy, pozostałe zmieniają się co ustawione sekundy. " +
+                   "Opis wszystkich pól (Title, Text, Image, Video, Sound, Button, Action, Color, TextColor, Enabled, From / Until) jest na początku przykładowego pliku: " +
+                   "„Użyj przykładu” albo config\\news w paczce. SharePoint: najnowsze aktualności witryny, czytane kontem Windows Kiosku albo kontem podanym niżej."
         });
         newsTab.Controls.Add(newsFields);
 

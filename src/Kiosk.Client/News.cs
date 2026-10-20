@@ -24,6 +24,15 @@ internal sealed record NewsItem
     public string TextColor { get; init; } = "";
     /// <summary>false: the entry stays in the file (ready for next time) but is not shown.</summary>
     public bool Enabled { get; init; } = true;
+    /// <summary>A film (MP4) next to kiosk-news.json, a full path or https://…: the slide stays until it ends.</summary>
+    public string Video { get; init; } = "";
+    /// <summary>true: the film plays with sound (default silent).</summary>
+    public bool Sound { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal bool IsVideo => VideoSource.Length > 0;
+    /// <summary>The film's full path or https address (empty: no film or the file is missing).</summary>
+    [System.Text.Json.Serialization.JsonIgnore] internal string VideoSource { get; init; } = "";
 
     [System.Text.Json.Serialization.JsonIgnore]
     internal bool IsBar => Kind.Equals("pasek", StringComparison.OrdinalIgnoreCase) || Kind.Equals("bar", StringComparison.OrdinalIgnoreCase);
@@ -48,7 +57,7 @@ internal static class News
         var today = DateTime.Today;
         foreach (var item in list)
         {
-            if (item == null || !item.Enabled || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0) continue;
+            if (item == null || !item.Enabled || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0 && item.Video.Length == 0) continue;
             if (!Shown(item, DateTime.Now)) continue;
             Image? picture = null;
             if (item.Image.Length > 0)
@@ -58,9 +67,20 @@ internal static class News
                 try { if (File.Exists(path)) picture = System.Drawing.Image.FromStream(new MemoryStream(File.ReadAllBytes(path))); }
                 catch (Exception) { picture = null; }
             }
-            items.Add(item with { Picture = picture, Action = ResolveAction(item.Action, folder) });
+            items.Add(item with { Picture = picture, Action = ResolveAction(item.Action, folder), VideoSource = VideoFor(item.Video, folder) });
         }
         return items;
+    }
+
+    /// <summary>A film: https://… as it is, a file (next to the json or a full path) only when it exists.</summary>
+    internal static string VideoFor(string video, string folder)
+    {
+        video = video.Trim().Trim('"');
+        if (video.Length == 0) return "";
+        if (video.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || video.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) return video;
+        var path = Path.IsPathFullyQualified(video) ? video : Path.Combine(folder, video);
+        try { return File.Exists(path) ? Path.GetFullPath(path) : ""; }
+        catch (Exception) { return ""; }
     }
 
     /// <summary>The folder's messages together with the SharePoint news, in the order set in Konfiguracja.</summary>
@@ -137,6 +157,10 @@ internal sealed class NewsCarousel : Control
     private readonly System.Windows.Forms.Timer rotation = new() { Interval = 250 };
     private Rectangle buttonBounds, leftArrow, rightArrow;
     private readonly List<Rectangle> dots = [];
+    // A film slide: played in a small browser over the slide; the slide moves on when the film ends.
+    private NewsVideo? player;
+    private bool videoFailed;
+    private static readonly TimeSpan LongestVideo = TimeSpan.FromMinutes(30);
 
     internal int Seconds { get; set; } = 8;
     /// <summary>The screensaver (Ekrany → kiosk:komunikaty): each slide fills the whole control, the dots lie on it.</summary>
@@ -155,14 +179,68 @@ internal sealed class NewsCarousel : Control
         animation.Tick += (_, _) =>
         {
             progress = Math.Min(1, progress + 0.07);
-            if (progress >= 1) { animation.Stop(); previous = -1; }
+            if (progress >= 1) { animation.Stop(); previous = -1; UpdateVideo(); }
             Invalidate();
         };
         rotation.Tick += (_, _) =>
         {
-            if (!hover && items.Count > 1 && Visible && DateTime.UtcNow - shownAt > TimeSpan.FromSeconds(Math.Max(3, Seconds))) Step(1);
+            if (hover || items.Count < 2 || !Visible) return;
+            // Pictures and text: the time from Konfiguracja; a film: until it ends (a broken film: the same time).
+            var wait = items[index].IsVideo && !videoFailed ? LongestVideo : TimeSpan.FromSeconds(Math.Max(3, Seconds));
+            if (DateTime.UtcNow - shownAt > wait) Step(1);
         };
         rotation.Start();
+    }
+
+    protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); UpdateVideo(); }
+    protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateVideo(); }
+
+    /// <summary>Shows the film of the current slide (once the slide has stopped moving), or stops it.</summary>
+    private void UpdateVideo()
+    {
+        if (IsDisposed) return;
+        var item = items.Count > 0 && index < items.Count ? items[index] : null;
+        if (item is not { IsVideo: true } || videoFailed || !Visible || progress < 1 || Width < 20 || Height < 20 || !IsHandleCreated)
+        {
+            player?.Stop();
+            return;
+        }
+        if (player == null)
+        {
+            player = new NewsVideo();
+            player.Ended += () => { if (items.Count > 1) Step(1); };
+            player.Failed += message =>
+            {
+                // The slide then stays as long as a picture would, with the black placeholder.
+                videoFailed = true; shownAt = DateTime.UtcNow;
+                player?.Stop();
+                Audit.Write("news_video_failed", message);
+            };
+            Controls.Add(player.View);
+        }
+        player.View.Bounds = VideoBounds(item);
+        player.Play(item.VideoSource, item.Sound, loop: items.Count < 2);
+    }
+
+    /// <summary>Where the film plays: the whole screensaver, or the picture's place on the banner (16:9).</summary>
+    private Rectangle VideoBounds(NewsItem item)
+    {
+        if (FullScreen) return ClientRectangle;
+        var area = SlideArea(0);
+        return new Rectangle(area.Left, area.Top, MediaWidth(item, area), area.Height);
+    }
+
+    private Rectangle SlideArea(int offset)
+    {
+        int side = items.Count > 1 ? S(44) : S(22);
+        return new Rectangle(offset + side, S(14), Width - side * 2, Height - S(36));
+    }
+
+    private int MediaWidth(NewsItem item, Rectangle area)
+    {
+        int h = area.Height;
+        if (item.IsVideo) return Math.Min(h * 16 / 9, area.Width / 2);
+        return item.Picture is { } picture ? Math.Min(h * 2, Math.Max(S(40), h * picture.Width / Math.Max(1, picture.Height))) : 0;
     }
 
     internal void SetItems(List<NewsItem> news)
@@ -171,7 +249,8 @@ internal sealed class NewsCarousel : Control
         // disposing here broke the others' drawing (red X) after a reload, e.g. saving Konfiguracja.
         items = news;
         if (index >= items.Count) index = 0;
-        previous = -1; progress = 1;
+        previous = -1; progress = 1; shownAt = DateTime.UtcNow; videoFailed = false;
+        UpdateVideo();
         Invalidate();
     }
 
@@ -185,7 +264,8 @@ internal sealed class NewsCarousel : Control
     {
         if (target == index || items.Count == 0) return;
         previous = index; index = target; direction = Math.Sign(step) == 0 ? 1 : Math.Sign(step);
-        progress = 0; shownAt = DateTime.UtcNow;
+        progress = 0; shownAt = DateTime.UtcNow; videoFailed = false;
+        player?.Stop();
         animation.Start();
         Invalidate();
     }
@@ -267,13 +347,30 @@ internal sealed class NewsCarousel : Control
 
     private void DrawSlide(Graphics g, NewsItem item, int offset, bool current)
     {
-        if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset, current); return; }
-        int pad = S(22), side = items.Count > 1 ? S(44) : pad;
-        var area = new Rectangle(offset + side, S(14), Width - side * 2, Height - S(36));
-        int textLeft = area.Left;
-        if (item.Picture is { } picture)
+        if (FullScreen && item.IsVideo)
         {
-            int h = area.Height, w = Math.Min(h * 2, Math.Max(S(40), h * picture.Width / Math.Max(1, picture.Height)));
+            // Black under the film (also while the slide comes in, before the film starts).
+            using var black = new SolidBrush(Color.Black);
+            g.FillRectangle(black, new Rectangle(offset, 0, Width, Height));
+            if (current) buttonBounds = Rectangle.Empty;
+            return;
+        }
+        if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset, current); return; }
+        int pad = S(22);
+        var area = SlideArea(offset);
+        int textLeft = area.Left;
+        if (item.IsVideo)
+        {
+            var videoBounds = new Rectangle(area.Left, area.Top, MediaWidth(item, area), area.Height);
+            using var clip = KioskTheme.RoundedRectangle(videoBounds, S(10));
+            using var black = new SolidBrush(Color.Black);
+            g.FillPath(black, clip);
+            KioskIcons.Draw(g, videoBounds, "\uE768", null, Color.FromArgb(200, Color.White)); // play
+            textLeft = videoBounds.Right + pad;
+        }
+        else if (item.Picture is { } picture)
+        {
+            int h = area.Height, w = MediaWidth(item, area);
             var pictureBounds = new Rectangle(area.Left, area.Top, w, h);
             using var clip = KioskTheme.RoundedRectangle(pictureBounds, S(10));
             var state = g.Save();
@@ -348,7 +445,7 @@ internal sealed class NewsCarousel : Control
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { animation.Dispose(); rotation.Dispose(); }
+        if (disposing) { animation.Dispose(); rotation.Dispose(); player?.Dispose(); }
         base.Dispose(disposing);
     }
 }

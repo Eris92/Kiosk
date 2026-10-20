@@ -1978,6 +1978,9 @@ internal sealed partial class KioskForm : Form
             if (News.ResolveAction("https:// wp.pl", folder) != "https://wp.pl" || News.ResolveAction("wp.pl", folder) != "https://wp.pl" ||
                 News.ResolveAction("app:Excel", folder) != "app:Excel")
                 throw new InvalidOperationException("Company message addresses were not normalised.");
+            if (News.VideoFor("brak.mp4", folder) != "" || News.VideoFor("https://firma.pl/film.mp4", folder) != "https://firma.pl/film.mp4" ||
+                items.Any(i => i.IsVideo))
+                throw new InvalidOperationException("A message film was resolved wrongly.");
             var trusted = new SitePolicy(true, [new Bookmark { Name = "G", Url = "https://www.google.com" }], []);
             trusted.Trust(items[1].Action);
             trusted.Trust("https://wp.pl");

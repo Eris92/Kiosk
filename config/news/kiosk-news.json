@@ -4,6 +4,8 @@
 // From / Until: opcjonalnie, od kiedy / do kiedy pokazywać: "2026-10-20 16:00" (dzień i godzina) albo "2026-10-20" (cały dzień).
 // "Kind": "Pasek": pasek na górze pulpitu zamiast slajdu; Color (tło) i TextColor (tekst): nazwa (red, orange, green…) albo #RRGGBB.
 // "Enabled": true / false: włącza i wyłącza wpis bez usuwania (przygotuj kilka pasków i włączaj potrzebny).
+// Video: film MP4 z tego folderu (np. pierwsza-pomoc.mp4), pełna ścieżka albo https://…; slajd stoi, aż film się skończy
+//   (pozostałe zmieniają się co czas z Konfiguracji). "Sound": true – z dźwiękiem (domyślnie bez dźwięku).
 [
   {
     "Enabled": true,
@@ -40,6 +42,13 @@
     "Text": "Nowa wersja Kiosku jest już dostępna.",
     "Color": "#1565C0",
     "TextColor": "white"
+  },
+  {
+    // Film: na banerze obok tytułu, na wygaszaczu na cały ekran. Następny komunikat dopiero po końcu filmu.
+    "Enabled": true,
+    "Title": "Pierwsza pomoc",
+    "Text": "Krótki instruktaż: co zrobić, gdy ktoś stracił przytomność. W razie potrzeby dzwoń 112.",
+    "Video": "pierwsza-pomoc.mp4"
   },
   {
     "Enabled": true,
