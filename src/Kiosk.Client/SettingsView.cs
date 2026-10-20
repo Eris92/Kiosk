@@ -312,7 +312,7 @@ internal sealed class SettingsView : UserControl
         idleScreens.DefaultValuesNeeded += (_, e) => e.Row.Cells["Screen"].Value = "0";
         SetupGridTab(screens, idleScreens,
             "Gdy nikt nie pracuje, ekrany pokazują tę treść tylko do oglądania (bez klawiatury i myszy). Na głównym ekranie ruch myszy, " +
-            "klawisz albo karta pokazuje logowanie. Strona kiosk:komunikaty pokazuje Komunikaty jako slajdy. Ekrany: " + string.Join(", ", Screen.AllScreens.Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
+            "klawisz albo karta pokazuje logowanie. Strona kiosk:komunikaty (przycisk „Dodaj komunikaty jako wygaszacz”) pokazuje Komunikaty jako slajdy, zmieniane co tyle sekund, ile ustawiono w Komunikatach. Ekrany: " + string.Join(", ", Screen.AllScreens.Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
         var idleRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 8) };
         idleRow.Controls.Add(new Label { Text = "Ekran blokady na głównym ekranie po (s bez ruchu, gdy sesja zablokowana lub nikt nie jest zalogowany)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
         idleRow.Controls.Add(idleAfter);
@@ -323,6 +323,14 @@ internal sealed class SettingsView : UserControl
         var identify = new Button { Text = "Pokaż numery ekranów", AutoSize = true, Margin = new Padding(24, 2, 4, 2) };
         identify.Click += (_, _) => IdentifyScreensRequested?.Invoke();
         idleRow.Controls.Add(identify);
+        // Komunikaty as the screensaver: the Kiosk's own slides on the main screen (other screens keep their content).
+        var addNews = new Button { Text = "Dodaj komunikaty jako wygaszacz", AutoSize = true, Dock = DockStyle.Bottom };
+        addNews.Click += (_, _) =>
+        {
+            if (idleScreens.Rows.Cast<DataGridViewRow>().Any(r => !r.IsNewRow && NewsSlides.IsAddress(Cell(r, "Url")))) return;
+            SetEnabled(idleScreens, idleScreens.Rows.Add("1", NewsSlides.Address, "", ""), true);
+        };
+        screens.Controls.Add(addNews);
         screens.Controls.Add(idleRow);
         screens.Controls.Add(new ScreenMap { Dock = DockStyle.Top, Height = 150 });
 
