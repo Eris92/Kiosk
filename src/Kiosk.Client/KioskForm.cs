@@ -1891,8 +1891,24 @@ internal sealed partial class KioskForm : Form
         base.OnHandleDestroyed(e);
     }
 
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        // Alt+F4 never closes the shell itself, even when no keyboard hook is running.
+        if ((keyData & Keys.KeyCode) == Keys.F4 && (keyData & Keys.Alt) != 0) return true;
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private const int WmSysCommand = 0x0112, ScClose = 0xF060;
+
     protected override void WndProc(ref Message m)
     {
+        // Alt+F4 also arrives as SC_CLOSE (also while a child has the focus); the Kiosk's own exit calls Close() instead.
+        if (m.Msg == WmSysCommand && (m.WParam.ToInt64() & 0xFFF0) == ScClose)
+        {
+            Audit.Write("shell_close_shortcut_blocked");
+            m.Result = IntPtr.Zero;
+            return;
+        }
         if (AdminSettings.IsHotkey(m))
         {
             // Konfiguracja → "Skrót Ctrl+Alt+K": turned off, the shortcut does nothing (Ctrl+Alt+U still updates).
