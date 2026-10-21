@@ -64,8 +64,9 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration when missing')) {
     if (Test-Path $ConfigPath) { Write-Output "Configuration kept: $ConfigPath" }
     else {
         Copy-Item $SourceConfig $ConfigPath
-        $news = Join-Path (Split-Path $SourceConfig) 'news'
-        if (Test-Path $news) { Copy-Item $news (Join-Path $directory 'news') -Recurse -Force }
+        # The release package carries the example messages once, in out\client\news-example.
+        $news = @((Join-Path (Split-Path $SourceConfig) 'news'), (Join-Path $SourcePath 'news-example')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($news) { Copy-Item $news (Join-Path $directory 'news') -Recurse -Force }
         Write-Output "Configuration copied: $ConfigPath"
     }
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
