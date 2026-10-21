@@ -391,8 +391,12 @@ internal sealed partial class DesktopView : UserControl
             logo.Image = null;
             old?.Dispose();
             // Read into memory, so the file is not kept locked; a missing or broken file simply shows no logo.
-            try { if (logoFile.Length > 0 && File.Exists(logoFile)) logo.Image = Image.FromStream(new MemoryStream(File.ReadAllBytes(logoFile))); }
-            catch (Exception) { logo.Image = null; }
+            try
+            {
+                if (logoFile.Length > 0 && File.Exists(logoFile)) logo.Image = Image.FromStream(new MemoryStream(File.ReadAllBytes(logoFile)));
+                else if (logoFile.Length > 0) Audit.Write("logo_missing", logoFile);
+            }
+            catch (Exception ex) { logo.Image = null; Audit.Write("logo_missing", logoFile + ": " + ex.Message); }
         }
         logo.Visible = logo.Image != null;
         brand.Visible = title.Length > 0;

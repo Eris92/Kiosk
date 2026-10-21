@@ -76,6 +76,7 @@ internal sealed partial class KioskForm : Form
     /// <summary>Each load's number: a load that is overtaken (Konfiguracja saved meanwhile) does not show its older result.</summary>
     private int newsLoad;
     private bool newsShown;
+    private string screenBarsReported = "";
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
     private SharePointNews? sharePointNews;
@@ -1389,6 +1390,9 @@ internal sealed partial class KioskForm : Form
                 desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
                 screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
                 foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
+                // For the log: bars on the screensaver screens (Komunikaty → "Ekrany wygaszacza"), once per change.
+                var report = "opcja " + config.NewsBarsOnScreens + ", pasków " + mine.Count(n => n.IsBar) + ", na ekranach " + screenBars.Count + ", ekranów wygaszacza " + idleScreens.Count;
+                if (report != screenBarsReported) { screenBarsReported = report; Audit.Write("screen_bars", report); }
             }
             bool sharePoint = show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated;
             // The folder's messages at once; SharePoint (its sign-in can take a while) joins them when it answers.

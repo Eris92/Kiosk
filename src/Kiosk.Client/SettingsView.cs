@@ -16,7 +16,7 @@ internal sealed class SettingsView : UserControl
     private readonly TextBox home = new() { Dock = DockStyle.Fill };
     private readonly TextBox brandTitle = new() { Dock = DockStyle.Fill, MaxLength = 60 };
     private readonly TextBox brandSubtitle = new() { Dock = DockStyle.Fill, MaxLength = 120 };
-    private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill };
+    private readonly TextBox brandLogo = new() { Dock = DockStyle.Fill, PlaceholderText = "logo.png (plik obok client.json) albo pełna ścieżka" };
     private readonly TextBox newsFolder = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown newsSeconds = new() { Minimum = 3, Maximum = 300, Width = 140 };
     private readonly NumericUpDown newsRefresh = new() { Minimum = 1, Maximum = 1440, Width = 140 };
@@ -190,7 +190,7 @@ internal sealed class SettingsView : UserControl
         logoPicker.Controls.Add(brandLogo, 0, 0);
         logoPicker.Controls.Add(chooseLogo, 1, 0);
         logoPicker.Controls.Add(clearLogo, 2, 0);
-        AddField(fields, "Logo na pulpicie (PNG/JPG, dostępne dla wszystkich)", logoPicker);
+        AddField(fields, "Logo na pulpicie (np. logo.png obok client.json)", logoPicker);
         logoPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         logoPicker.MinimumSize = Size.Empty;
         AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
@@ -224,7 +224,7 @@ internal sealed class SettingsView : UserControl
         home.Text = config.BrowserUrl;
         brandTitle.Text = config.BrandTitle;
         brandSubtitle.Text = config.BrandSubtitle;
-        brandLogo.Text = config.BrandLogo;
+        brandLogo.Text = NextToConfig(config.BrandLogo, config.Folder);
         lockAfter.Value = config.LockAfterSeconds;
         changeUserAfter.Value = config.ChangeUserAfterSeconds;
         connectTimeout.Value = config.ConnectTimeoutSeconds;
@@ -583,7 +583,7 @@ internal sealed class SettingsView : UserControl
         newsSharePointCount.Value = Math.Clamp(config.NewsSharePointCount, 1, 20);
         newsOrder.SelectedIndex = (int)config.NewsOrder;
         newsSize.SelectedIndex = (int)config.NewsSize;
-        newsFolder.Text = config.NewsFolder;
+        newsFolder.Text = NextToConfig(config.NewsFolder, config.Folder);
         newsSeconds.Value = Math.Clamp(config.NewsSeconds, 3, 300);
         newsRefresh.Value = Math.Clamp(config.NewsRefreshMinutes, 1, 1440);
         newsTab.Controls.Add(new Label
@@ -734,6 +734,14 @@ internal sealed class SettingsView : UserControl
         }
         Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
+    }
+
+    /// <summary>A file or folder next to client.json shown (and saved) by its name, as written there, e.g. "logo.png".</summary>
+    private static string NextToConfig(string path, string folder)
+    {
+        if (path.Length == 0 || folder.Length == 0) return path;
+        var relative = Path.GetRelativePath(folder, path);
+        return relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathFullyQualified(relative) ? path : relative;
     }
 
     /// <summary>The configuration comes from a server (ConfigSource): everything here is a preview.</summary>

@@ -282,9 +282,9 @@ internal sealed record Config
         if (StatsExportHours is < 0 or > 168) throw new InvalidDataException("Eksport statystyk: od 0 do 168 godzin.");
         if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
-        if (BrandLogo.Length > 0 && (!Path.IsPathFullyQualified(BrandLogo) ||
-            !new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" }.Contains(Path.GetExtension(BrandLogo).ToLowerInvariant())))
-            throw new InvalidDataException("Logo podaj jako pełną ścieżkę do pliku PNG, JPG, BMP lub GIF.");
+        // A bare name (logo.png) is the file next to client.json: on a server it comes with the configuration.
+        if (BrandLogo.Length > 0 && !new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" }.Contains(Path.GetExtension(BrandLogo).ToLowerInvariant()))
+            throw new InvalidDataException("Logo podaj jako plik PNG, JPG, BMP lub GIF: nazwę pliku obok client.json (np. logo.png) albo pełną ścieżkę.");
         if (!KioskTheme.IsColor(AccentColor)) throw new InvalidDataException("Kolor przewodni musi mieć postać #RRGGBB.");
         if (AdminCards == null || AdminCards.Any(a => a == null || string.IsNullOrWhiteSpace(a.Id) || a.Name == null))
             throw new InvalidDataException("Każda karta administratora wymaga identyfikatora.");
