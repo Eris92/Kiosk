@@ -296,9 +296,15 @@ internal static class CentralConfig
     private static void Copy(string from, string to)
     {
         Directory.CreateDirectory(to);
-        foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
+        foreach (var file in Directory.GetFiles(from))
+            if (!EditorFile(Path.GetFileName(file))) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
         foreach (var folder in Directory.GetDirectories(from)) Copy(folder, Path.Combine(to, Path.GetFileName(folder)));
     }
+
+    /// <summary>The messages editor (KioskKomunikaty.exe, its settings) and its .bak / .tmp files live next to kiosk-news.json, but are not for the kiosks.</summary>
+    private static bool EditorFile(string name) =>
+        name.StartsWith("KioskKomunikaty.", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
 
     private static void TryDelete(string folder)
     {

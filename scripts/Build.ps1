@@ -16,6 +16,10 @@ $versionArguments = if ($Version) { @("-p:InformationalVersion=$Version", '-p:In
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 # WebView2's NuGet copies WebView2Loader.dll a second time into runtimes\win-x64\native; Kiosk loads the one next to it.
 Remove-Item (Join-Path $OutputPath 'runtimes') -Recurse -Force -ErrorAction SilentlyContinue
+# Edytor komunikatów (separate project, ordinary user): next to the example messages, so it goes wherever they are copied.
+$editor = Join-Path $PSScriptRoot '..\src\Kiosk.NewsEditor\KioskKomunikaty.csproj'
+& dotnet publish $editor -c Release -r win-x64 --self-contained false -o (Join-Path $OutputPath 'news-example') @versionArguments
+if ($LASTEXITCODE -ne 0) { throw 'Building the messages editor failed.' }
 # The card sign-in program (card + PIN signs the person in to Windows), .NET Framework 4.8: out\client\fido.
 $fido = Join-Path $PSScriptRoot '..\src\Kiosk.FidoBroker\FidoRun.csproj'
 & dotnet build $fido -c Release -o (Join-Path $OutputPath 'fido') --nologo

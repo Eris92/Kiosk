@@ -1,0 +1,9 @@
+// Edytor komunikatów Kiosku: gdzie są komunikaty i statystyki (zwykle udziały na serwerze).
+// NewsFolder: folder z kiosk-news.json (ten sam co w Konfiguracji Kiosku → Komunikaty), obrazy i filmy trafiają obok.
+//   Puste = folder, w którym leży ten program (najprościej: trzymaj program obok kiosk-news.json).
+// StatsFolder: folder eksportu statystyk (Konfiguracja Kiosku → Statystyki → Eksport na dysk), puste = bez statystyk.
+// Zmiana w programie („Zmień folder…”) zapisuje się dla Ciebie w %APPDATA%\Kiosk\KioskKomunikaty.json.
+{
+  "NewsFolder": "",
+  "StatsFolder": ""
+}
