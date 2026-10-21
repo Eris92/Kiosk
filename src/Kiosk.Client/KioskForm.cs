@@ -937,6 +937,8 @@ internal sealed partial class KioskForm : Form
             left.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
         if (config.IdleScreens.Length > 0)
             left.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
+        // Windows' "Switch user" also when Ctrl+Alt+Del is turned off: this session keeps running, Windows shows its sign-in screen.
+        left.Add(new MenuItemSpec("Przełącz użytkownika", "Ekran logowania Windows; ta sesja działa dalej", () => DisconnectWindows("manual_switch_user"), true, KioskIcons.SwitchUser));
         var power = new List<MenuItemSpec>();
         if (can)
         {
