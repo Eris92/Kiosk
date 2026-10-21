@@ -37,6 +37,7 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Menu na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
+    private readonly CheckBox adminHotkey = new() { Text = "Ctrl+Alt+K otwiera Konfigurację (jako administrator Windows)", AutoSize = true };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
@@ -171,6 +172,17 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
         AddField(fields, "Tryb sesji", sessionMode);
         AddField(fields, "Logowanie i odblokowanie", unlock);
+        AddField(fields, "Skrót do Konfiguracji", adminHotkey);
+        adminHotkey.Checked = config.AdminHotkey;
+        adminHotkey.CheckedChanged += (_, _) =>
+        {
+            if (adminHotkey.Checked) return;
+            // Without the shortcut (and with Ctrl+Alt+Del turned off) only an administrator's session or card opens Konfiguracja.
+            if (MessageBox.Show(this, "Bez Ctrl+Alt+K Konfigurację otworzy tylko zalogowany administrator (karta administratora albo konto administratora Windows). " +
+                    "Jeśli nie ma takiej karty, wejście wróci dopiero po zmianie \"AdminHotkey\" w client.json. Wyłączyć skrót?",
+                    "Skrót do Konfiguracji", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                adminHotkey.Checked = true;
+        };
         AddField(fields, "Kolor przewodni", accent);
         AddField(fields, "Położenie Start i ikon na pasku", taskbarAlign);
         AddField(fields, "Napis na pulpicie (puste = brak)", brandTitle);
@@ -1371,6 +1383,7 @@ internal sealed class SettingsView : UserControl
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
+            AdminHotkey = adminHotkey.Checked,
             ConfigSource = configSource.Text.Trim().Trim('"'),
             ShowHelp = showHelp.Checked,
             HelpCloseSeconds = (int)helpCloseSeconds.Value,

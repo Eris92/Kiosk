@@ -1893,7 +1893,12 @@ internal sealed partial class KioskForm : Form
 
     protected override void WndProc(ref Message m)
     {
-        if (AdminSettings.IsHotkey(m)) { OpenSettingsAsAdministrator(); return; }
+        if (AdminSettings.IsHotkey(m))
+        {
+            // Konfiguracja → "Skrót Ctrl+Alt+K": turned off, the shortcut does nothing (Ctrl+Alt+U still updates).
+            if (config.AdminHotkey) OpenSettingsAsAdministrator(); else Audit.Write("admin_hotkey_disabled");
+            return;
+        }
         if (AdminSettings.IsUpdateHotkey(m)) { _ = UpdateByHotkeyAsync(); return; }
         base.WndProc(ref m);
     }
