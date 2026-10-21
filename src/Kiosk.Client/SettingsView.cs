@@ -317,7 +317,7 @@ internal sealed class SettingsView : UserControl
         idleScreens.DefaultValuesNeeded += (_, e) => e.Row.Cells["Screen"].Value = "0";
         SetupGridTab(screens, idleScreens,
             "Gdy nikt nie pracuje, ekrany pokazują tę treść tylko do oglądania (bez klawiatury i myszy). Na głównym ekranie ruch myszy, " +
-            "klawisz albo karta pokazuje logowanie. Strona kiosk:komunikaty (przycisk „Dodaj komunikaty jako wygaszacz”) pokazuje Komunikaty jako slajdy, zmieniane co tyle sekund, ile ustawiono w Komunikatach. Ekrany: " + string.Join(", ", Screen.AllScreens.Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
+            "klawisz albo karta pokazuje logowanie. Strona kiosk:komunikaty (przycisk „Dodaj komunikaty jako wygaszacz”) pokazuje Komunikaty jako slajdy, zmieniane co tyle sekund, ile ustawiono w Komunikatach. Ekrany: " + string.Join(", ", DisplayRotation.Ordered().Select((s, i) => (i + 1) + " = " + s.Bounds.Width + "×" + s.Bounds.Height + (s.Primary ? " (główny)" : ""))) + ".");
         var idleRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 8) };
         idleRow.Controls.Add(new Label { Text = "Ekran blokady na głównym ekranie po (s bez ruchu, gdy sesja zablokowana lub nikt nie jest zalogowany)", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
         idleRow.Controls.Add(idleAfter);
@@ -336,6 +336,7 @@ internal sealed class SettingsView : UserControl
             SetEnabled(idleScreens, idleScreens.Rows.Add("1", NewsSlides.Address, "", ""), true);
         };
         screens.Controls.Add(addNews);
+        screens.Controls.Add(RotationRow());
         screens.Controls.Add(idleRow);
         screens.Controls.Add(new ScreenMap { Dock = DockStyle.Top, Height = 150 });
 
@@ -731,10 +732,45 @@ internal sealed class SettingsView : UserControl
             removeKey.Enabled = true;
             sourceTest.Enabled = true;
             updateButton.Enabled = true;
+            foreach (var (_, choice, _) in rotations) choice.Enabled = true;   // The monitors are this PC's own.
+            rotateNow!.Enabled = true;
         }
         Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
     }
+
+    private readonly List<(int Screen, ComboBox Choice, int Initial)> rotations = [];
+    private Button? rotateNow;
+
+    /// <summary>Ekrany → "Obrót": Windows' orientation of each monitor (the saved one, else what Windows has now), and "Obróć teraz".</summary>
+    private Control RotationRow()
+    {
+        var row = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 8) };
+        row.Controls.Add(new Label { Text = "Obrót monitora", AutoSize = true, Padding = new Padding(4, 8, 8, 4) });
+        var screens = DisplayRotation.Ordered();
+        for (int i = 0; i < screens.Length; i++)
+        {
+            int number = i + 1;
+            var saved = original.ScreenRotations.FirstOrDefault(t => t.Screen == number);
+            int degrees = saved?.Degrees ?? DisplayRotation.Current(screens[i]);
+            var choice = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, Margin = new Padding(0, 2, 12, 2) };
+            foreach (var d in DisplayRotation.Degrees) choice.Items.Add(d + "°");
+            choice.SelectedIndex = Math.Max(0, Array.IndexOf(DisplayRotation.Degrees, degrees));
+            rotations.Add((number, choice, choice.SelectedIndex));
+            row.Controls.Add(new Label { Text = "Ekran " + number + (screens[i].Primary ? " (główny)" : ""), AutoSize = true, Padding = new Padding(4, 8, 4, 4) });
+            row.Controls.Add(choice);
+        }
+        var now = rotateNow = new Button { Text = "Obróć teraz", AutoSize = true, Margin = new Padding(8, 2, 4, 2) };
+        now.Click += (_, _) => DisplayRotation.Apply(ReadRotations());   // Kept after "Zapisz konfigurację" (also at every start).
+        row.Controls.Add(now);
+        return row;
+    }
+
+    /// <summary>Saved only once someone chose a turn: otherwise the Kiosk leaves Windows' orientation alone.</summary>
+    private ScreenTurn[] ReadRotations() =>
+        rotations.Any(r => r.Choice.SelectedIndex != r.Initial) || original.ScreenRotations.Length > 0
+            ? rotations.Select(r => new ScreenTurn { Screen = r.Screen, Degrees = DisplayRotation.Degrees[Math.Max(0, r.Choice.SelectedIndex)] }).ToArray()
+            : [];
 
     /// <summary>A file or folder next to client.json shown (and saved) by its name, as written there, e.g. "logo.png".</summary>
     private static string NextToConfig(string path, string folder)
@@ -1345,6 +1381,7 @@ internal sealed class SettingsView : UserControl
             Bookmarks = bookmarks.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new Bookmark { Name = Cell(r, "Name"), Url = Cell(r, "Url"), Enabled = IsEnabled(r) }).ToArray(),
             IdleAfterSeconds = (int)idleAfter.Value,
             ScreenRefreshSeconds = (int)screenRefresh.Value,
+            ScreenRotations = ReadRotations(),
             Commands = commands.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow && Cell(r, "Name").Length > 0).Select(r => new CommandEntry
             {
                 Name = Cell(r, "Name"), Path = PathCell(r, "Path"), Arguments = Cell(r, "Arguments"),
@@ -1368,7 +1405,7 @@ internal sealed class SettingsView : UserControl
             if (Central)
             {
                 // Only the server's address can change here; the PC's own file keeps everything else.
-                var source = original with { ConfigSource = configSource.Text.Trim().Trim('"') };
+                var source = original with { ConfigSource = configSource.Text.Trim().Trim('"'), ScreenRotations = ReadRotations() };
                 source.Validate();
                 SaveRequested?.Invoke(source);
                 return;

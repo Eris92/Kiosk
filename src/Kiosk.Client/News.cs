@@ -165,6 +165,25 @@ internal sealed class NewsCarousel : Control
     internal int Seconds { get; set; } = 8;
     /// <summary>The screensaver (Ekrany → kiosk:komunikaty): each slide fills the whole control, the dots lie on it.</summary>
     internal bool FullScreen { get; init; }
+    /// <summary>Screensaver screens show the same slide at the same time (one clock for all of them).</summary>
+    internal bool Synced { get; init; }
+    /// <summary>A film's sound only on one screen (the main one), not as an echo from every monitor.</summary>
+    internal bool Muted { get; init; }
+
+    /// <summary>The screensavers' common slide: whichever screen's time runs out (or film ends) moves all of them.</summary>
+    private static class Together
+    {
+        internal static int Index;
+        internal static DateTime ShownAt = DateTime.UtcNow;
+        internal static event Action? Moved;
+        internal static void Next(int from, int count)
+        {
+            if (from != Index || count < 2) return;   // Another screen moved them already.
+            Index = (Index + 1) % count;
+            ShownAt = DateTime.UtcNow;
+            Moved?.Invoke();
+        }
+    }
     internal int Count => items.Count;
     internal int Index => index;
     internal event Action<NewsItem>? ActionRequested;
@@ -187,12 +206,34 @@ internal sealed class NewsCarousel : Control
             if (hover || items.Count < 2 || !Visible) return;
             // Pictures and text: the time from Konfiguracja; a film: until it ends (a broken film: the same time).
             var wait = items[index].IsVideo && !videoFailed ? LongestVideo : TimeSpan.FromSeconds(Math.Max(3, Seconds));
-            if (DateTime.UtcNow - shownAt > wait) Step(1);
+            if (Synced) { if (DateTime.UtcNow - Together.ShownAt > wait) Together.Next(index, items.Count); }
+            else if (DateTime.UtcNow - shownAt > wait) Step(1);
         };
         rotation.Start();
+        HandleCreated += (_, _) => { if (Synced) Together.Moved += FollowTogether; };
+        HandleDestroyed += (_, _) => Together.Moved -= FollowTogether;
     }
 
-    protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); UpdateVideo(); }
+    private void FollowTogether()
+    {
+        if (IsDisposed || items.Count == 0) return;
+        if (InvokeRequired) { BeginInvoke(new Action(FollowTogether)); return; }
+        if (!Visible) { JumpToTogether(); return; }
+        GoTo(Together.Index % items.Count, 1);
+    }
+
+    /// <summary>A screen coming back (or new messages) joins the common slide without sliding.</summary>
+    private void JumpToTogether()
+    {
+        if (items.Count == 0) return;
+        if (Together.Index >= items.Count) { Together.Index = 0; Together.ShownAt = DateTime.UtcNow; }
+        if (index == Together.Index) return;
+        player?.Stop();
+        index = Together.Index; previous = -1; progress = 1; videoFailed = false;
+        Invalidate();
+    }
+
+    protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (Synced && Visible) JumpToTogether(); UpdateVideo(); }
     protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateVideo(); }
 
     /// <summary>Shows the film of the current slide (once the slide has stopped moving), or stops it.</summary>
@@ -208,7 +249,7 @@ internal sealed class NewsCarousel : Control
         if (player == null)
         {
             player = new NewsVideo();
-            player.Ended += () => { if (items.Count > 1) Step(1); };
+            player.Ended += () => { if (items.Count < 2) return; if (Synced) Together.Next(index, items.Count); else Step(1); };
             player.Failed += message =>
             {
                 // The slide then stays as long as a picture would, with the black placeholder.
@@ -219,7 +260,7 @@ internal sealed class NewsCarousel : Control
             Controls.Add(player.View);
         }
         player.View.Bounds = VideoBounds(item);
-        player.Play(item.VideoSource, item.Sound, loop: items.Count < 2);
+        player.Play(item.VideoSource, item.Sound && !Muted, loop: items.Count < 2);
     }
 
     /// <summary>Where the film plays: the whole screensaver, or the picture's place on the banner (16:9).</summary>
@@ -250,6 +291,7 @@ internal sealed class NewsCarousel : Control
         items = news;
         if (index >= items.Count) index = 0;
         previous = -1; progress = 1; shownAt = DateTime.UtcNow; videoFailed = false;
+        if (Synced) JumpToTogether();
         UpdateVideo();
         Invalidate();
     }

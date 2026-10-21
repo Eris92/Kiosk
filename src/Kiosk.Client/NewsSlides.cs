@@ -21,15 +21,17 @@ internal sealed class NewsSlides : Control
         Changed?.Invoke();
     }
 
-    private readonly NewsCarousel carousel = new() { Dock = DockStyle.Fill, FullScreen = true };
+    private readonly NewsCarousel carousel;
     private readonly Label empty = new()
     {
         Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = KioskTheme.Muted,
         Font = new Font("Segoe UI", 20), Text = "Brak komunikatów"
     };
 
-    internal NewsSlides()
+    /// <param name="sound">Films with sound play it here (the main screen); the other screens stay silent.</param>
+    internal NewsSlides(bool sound = true)
     {
+        carousel = new() { Dock = DockStyle.Fill, FullScreen = true, Synced = true, Muted = !sound };
         BackColor = KioskTheme.Background;
         Controls.Add(carousel);
         Controls.Add(empty);

@@ -126,7 +126,7 @@ internal sealed partial class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) => { timer.Start(); RotateScreens(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         updateTimer.Tick += (_, _) => ExportStats();
         updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };
@@ -1915,9 +1915,18 @@ internal sealed partial class KioskForm : Form
     private void ApplySavedSettings()
     {
         Invalidate(true);
+        RotateScreens();
         StartIdleScreens();
         _ = LoadNewsAsync();
         RefreshChrome();
+    }
+
+    /// <summary>Konfiguracja → Ekrany → Obrót: Windows' orientation of the monitors (before the screens are laid out).</summary>
+    private void RotateScreens()
+    {
+        // The monitors belong to this PC: its own file wins over a server's configuration.
+        try { DisplayRotation.Apply(localConfig is { ScreenRotations.Length: > 0 } local ? local.ScreenRotations : config.ScreenRotations); }
+        catch (Exception ex) { Audit.Write("screen_rotation_failed", ex.Message); }
     }
 
     /// <summary>Reads the saved configuration again (and the server's, when it has a ConfigSource).</summary>
@@ -1936,7 +1945,7 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>From a server's configuration only its address (ConfigSource) is saved into the PC's own file.</summary>
-    private Config ToSave(Config edited) => localConfig is { ConfigSource.Length: > 0 } local ? local with { ConfigSource = edited.ConfigSource } : edited;
+    private Config ToSave(Config edited) => localConfig is { ConfigSource.Length: > 0 } local ? local with { ConfigSource = edited.ConfigSource, ScreenRotations = edited.ScreenRotations } : edited;
 
     private bool updating;
 

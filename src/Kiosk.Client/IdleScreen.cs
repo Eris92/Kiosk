@@ -75,7 +75,7 @@ internal sealed class IdleScreen : Form
         {
             if (NewsSlides.IsAddress(content.Url))
             {
-                var slides = new NewsSlides { Dock = DockStyle.Fill };
+                var slides = new NewsSlides(sound: number == 1) { Dock = DockStyle.Fill };
                 Controls.Add(slides);
                 slides.BringToFront();   // Below any message bars docked at the top.
             }

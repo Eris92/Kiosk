@@ -53,6 +53,14 @@ internal sealed record ScreenContent
     public bool Enabled { get; init; } = true;
 }
 
+/// <summary>Konfiguracja → Ekrany → "Obrót": Windows' orientation of one monitor (1 = the main screen).</summary>
+internal sealed record ScreenTurn
+{
+    public int Screen { get; init; }
+    /// <summary>0, 90, 180 or 270.</summary>
+    public int Degrees { get; init; }
+}
+
 /// <summary>A command in Menu → Polecenia: a program or script run in the background (copy files, sync, restart…).</summary>
 internal sealed record CommandEntry
 {
@@ -97,6 +105,8 @@ internal sealed record Config
     public int IdleAfterSeconds { get; init; } = 5;
     /// <summary>Screens' web pages are reloaded every this many seconds (0 = never).</summary>
     public int ScreenRefreshSeconds { get; init; }
+    /// <summary>Monitors turned on their side: the Kiosk sets their orientation in Windows at start and after saving.</summary>
+    public ScreenTurn[] ScreenRotations { get; init; } = [];
     public CommandEntry[] Commands { get; init; } = [];
     public int LockAfterSeconds { get; init; } = 300;
     public int ChangeUserAfterSeconds { get; init; } = 600;
@@ -242,6 +252,8 @@ internal sealed record Config
         foreach (var c in Commands ?? [])
             if (c.Name.Length == 0 || c.Path.Length == 0) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");
         if (IdleAfterSeconds is < 3 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 3–86400 s.");
+        foreach (var t in ScreenRotations ?? [])
+            if (t.Screen < 1 || !DisplayRotation.Degrees.Contains(t.Degrees)) throw new InvalidDataException("Obrót ekranu: numer od 1 i 0, 90, 180 albo 270 stopni.");
         foreach (var s in IdleScreens ?? [])
         {
             if (s.Screen < 0) throw new InvalidDataException("Numer ekranu nie może być ujemny.");
