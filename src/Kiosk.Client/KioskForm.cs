@@ -134,6 +134,7 @@ internal sealed partial class KioskForm : Form
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
         desktop.Tiles.ActionRequested += item => _ = RunHelpAsync(item);
         desktop.AccountRequested += PortalAccount;
+        desktop.SwitchUserRequested += () => DisconnectWindows("manual_switch_user");
         desktop.PageCloseRequested += () => { helpBrowser?.Close(); CloseCardPage(); };
         FormClosing += (_, e) =>
         {
