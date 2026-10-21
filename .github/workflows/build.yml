@@ -56,8 +56,10 @@ jobs:
           Copy-Item out/client "$package/out/client" -Recurse
           Copy-Item scripts "$package/scripts" -Recurse
           Copy-Item config "$package/config" -Recurse
-          # The example messages are already in out/client/news-example.
-          Remove-Item "$package/config/news" -Recurse
+          # Only what a kiosk PC needs: the example messages are already in out/client/news-example; building,
+          # the video generators and the Session Host launcher (apps.json) belong to the repository, not to the PC.
+          Remove-Item "$package/config/news", "$package/config/apps.json", "$package/scripts/tools", "$package/scripts/Build.ps1",
+            "$package/scripts/Build-CredentialProvider.ps1", "$package/scripts/Start-SessionLauncher.ps1" -Recurse
           Copy-Item README.md "$package/README.md"
           Get-ChildItem package -Recurse -Filter '*.local.json' | Remove-Item
           Compress-Archive -Path "$package/*" -DestinationPath package/Kiosk-win-x64.zip

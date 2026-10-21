@@ -4,3 +4,4 @@ out/
 *.user
 client.local.json
 apps.local.json
+__pycache__/
