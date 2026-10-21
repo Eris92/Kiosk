@@ -95,8 +95,15 @@ internal static class Watchdog
     {
         new Thread(() =>
         {
+            var cleaned = DateTime.MinValue;
             while (!stopping.Wait(TimeSpan.FromSeconds(10)))
             {
+                // Logi: the PC's log and statistics folders, every hour (Retention).
+                if (DateTime.UtcNow - cleaned > TimeSpan.FromHours(1))
+                {
+                    cleaned = DateTime.UtcNow;
+                    try { Retention.RunForMachine(); } catch (Exception ex) { Audit.Write("log_cleanup_failed", ex.Message); }
+                }
                 try { CheckSmartCardService(); } catch (Exception ex) { Audit.Write("watchdog_error", ex.Message); }
                 try { CheckKiosks(); } catch (Exception ex) { Audit.Write("watchdog_error", ex.Message); }
             }

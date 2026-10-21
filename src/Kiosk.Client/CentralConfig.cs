@@ -194,6 +194,11 @@ internal static class CentralConfig
                     File.WriteAllText(Path.Combine(target, Environment.MachineName + "-" + month + ".csv"), Stats.Csv(Stats.ReadFile(file)), new UTF8Encoding(true));
                     count++;
                 }
+                // The server keeps only the months this PC still has (Logi: its limit applies to the copy too).
+                var kept = Directory.GetFiles(Stats.Folder, "????-??.jsonl").Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var old in Directory.GetFiles(target, "*.jsonl").Concat(Directory.GetFiles(target, "*.csv")))
+                    if (Path.GetFileNameWithoutExtension(old) is { Length: >= 7 } name && !kept.Contains(name[^7..]))
+                        try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
                 Audit.Write("stats_export_ok", target);
                 return new CardService.Response { Message = "Wysłano " + count + " mies. do " + target };
             }

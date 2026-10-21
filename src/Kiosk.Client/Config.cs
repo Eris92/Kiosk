@@ -150,6 +150,8 @@ internal sealed record Config
     public string StatsFolder { get; init; } = "";
     /// <summary>Automatic copy of the statistics every N hours (0 = only with "Wyślij teraz").</summary>
     public int StatsExportHours { get; init; } = 24;
+    /// <summary>Konfiguracja → Statystyki → Logi: at most this many MB in each log and statistics folder (0 = no limit).</summary>
+    public int LogLimitMb { get; init; } = 100;
     public NewsOrdering NewsOrder { get; init; }
     public NewsBanner NewsSize { get; init; }
     /// <summary>The bars (e.g. "Nie działa system XXX") also across the top of the screens' content and the lock screen.</summary>
@@ -294,6 +296,7 @@ internal sealed record Config
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (StatsExportHours is < 0 or > 168) throw new InvalidDataException("Eksport statystyk: od 0 do 168 godzin.");
+        if (LogLimitMb is < 0 or > 100000) throw new InvalidDataException("Logi: od 0 do 100000 MB.");
         if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");
         // A bare name (logo.png) is the file next to client.json: on a server it comes with the configuration.

@@ -103,6 +103,9 @@ internal static class Program
                 config = loaded.Effective;
                 KioskTheme.SetAccent(config.AccentColor);
             }
+            // Logi: this user's logs and old unpacked updates, without holding up the start.
+            var logLimit = config.LogLimitMb;
+            _ = Task.Run(() => { try { Retention.Run(logLimit, machine: false); } catch (Exception ex) { Audit.Write("log_cleanup_failed", ex.Message); } });
             Application.Run(new KioskForm(config, path, loaded));
             return 0;
         }

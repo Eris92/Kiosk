@@ -23,6 +23,7 @@ internal sealed class SettingsView : UserControl
     private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
     private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = login i hasło poniżej)" };
+    private readonly NumericUpDown logLimit = new() { Minimum = 0, Maximum = 100000, Width = 90, Increment = 10 };
     private readonly TextBox statsFolder = new() { Width = 520, PlaceholderText = "np. \\\\serwer\\kiosk\\statystyki (puste: Stats obok client.json na serwerze)" };
     private readonly ComboBox statsEvery = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private static readonly (string Name, int Hours)[] StatsSchedule = [("Wyłączony", 0), ("Co godzinę", 1), ("Co 6 godzin", 6), ("Co 12 godzin", 12), ("Raz dziennie", 24), ("Raz w tygodniu", 168)];
@@ -1050,7 +1051,14 @@ internal sealed class SettingsView : UserControl
         foreach (var (name, _) in StatsSchedule) statsEvery.Items.Add(name);
         statsEvery.SelectedIndex = Math.Max(0, Array.FindIndex(StatsSchedule, s => s.Hours == original.StatsExportHours));
         statsFolder.Text = original.StatsFolder;
-        if (Central) { statsFolder.ReadOnly = true; statsEvery.Enabled = false; }   // From the server; the account stays this PC's own.
+        // Logi: the oldest files go first, in every folder (this PC's logs, card sign-in logs, statistics and their copy on the server).
+        var logRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 8, 0, 0), BackColor = Color.Transparent };
+        logRow.Controls.Add(new Label { Text = "Logi i statystyki: najwyżej", AutoSize = true, Margin = new Padding(4, 8, 8, 0) });
+        logRow.Controls.Add(logLimit);
+        logRow.Controls.Add(new Label { Text = "MB w każdym folderze, najstarsze pliki są usuwane (0 = bez limitu). Na serwerze zostaje tyle, ile na komputerze.", AutoSize = true, ForeColor = HelpText, Margin = new Padding(8, 8, 4, 0) });
+        exportPanel.Controls.Add(logRow);
+        logLimit.Value = Math.Clamp(original.LogLimitMb, 0, 100000);
+        if (Central) { statsFolder.ReadOnly = true; statsEvery.Enabled = false; logLimit.Enabled = false; }   // From the server; the account stays this PC's own.
 
         statsTab.Controls.Add(split);
         statsTab.Controls.Add(summary);
@@ -1365,6 +1373,7 @@ internal sealed class SettingsView : UserControl
             NewsSharePointAccount = newsSharePointAccount.Text.Trim(),
             StatsFolder = statsFolder.Text.Trim().Trim('"'),
             StatsExportHours = StatsSchedule[Math.Max(0, statsEvery.SelectedIndex)].Hours,
+            LogLimitMb = (int)logLimit.Value,
             NewsSharePointCount = (int)newsSharePointCount.Value,
             NewsOrder = (NewsOrdering)Math.Max(0, newsOrder.SelectedIndex),
             NewsSize = (NewsBanner)Math.Max(0, newsSize.SelectedIndex),
