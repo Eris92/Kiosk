@@ -4,16 +4,25 @@ using System.Text.Json;
 namespace Kiosk.Client;
 
 /// <summary>
-/// Konfiguracja → Komunikaty: the login and password that sign in to the SharePoint news site when the Kiosk's own
-/// Windows account cannot (a local kiosk account). Kept encrypted for this computer in a file only SYSTEM and
-/// administrators may open; the Kiosk gets it from the Kiosk Card service, like the shared accounts.
+/// The login and password that sign in to the SharePoint news site when the Kiosk's own Windows account cannot (a local
+/// kiosk account): Konto Kiosku (Konfiguracja → Konto Kiosku), or an older separate account saved before it. Kept encrypted
+/// for this computer in a file only SYSTEM and administrators may open; the Kiosk gets it from the Kiosk Card service.
 /// </summary>
 internal static class NewsAccount
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Kiosk.NewsAccount");
     private static string File_ => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "NewsAccount.cred");
 
-    internal static bool Saved => File.Exists(File_);
+    internal static bool LegacySaved => File.Exists(File_);
+    internal static bool Saved => CentralConfig.AccountSaved || LegacySaved;
+
+    /// <summary>Konto Kiosku replaces the older separate account (saved or removed with it).</summary>
+    internal static void RemoveLegacy()
+    {
+        if (!LegacySaved) return;
+        File.Delete(File_);
+        Audit.Write("news_account_removed", "zastąpione Kontem Kiosku");
+    }
 
     /// <summary>Saves (or with an empty login removes) the account; needs an administrator.</summary>
     internal static void Write(CentralConfig.AccountChange change)
@@ -32,6 +41,7 @@ internal static class NewsAccount
         {
             if (!SharedAccounts.IsInstalledKiosk(clientProgram)) return new CardService.Response { Code = -2, Message = "Konto do SharePointa podaje usługa tylko programowi Kiosk z Program Files." };
             if (!Saved) return new CardService.Response { Code = -2, Message = "Nie zapisano loginu i hasła do SharePointa." };
+            if (CentralConfig.ReadAccount() is { } kiosk) return new CardService.Response { Message = kiosk.User, Secret = kiosk.Password };
             var plain = CentralConfig.ReadSecret(File_, Entropy);
             try
             {

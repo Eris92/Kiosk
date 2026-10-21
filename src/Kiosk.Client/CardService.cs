@@ -24,7 +24,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | sharedaccount | newsaccount | fidosignin
+        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | newsaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -81,6 +81,7 @@ internal static class CardService
             if (request.Op == "syncnews") return CentralConfig.SyncNewsForMachine();   // Only the messages folder an administrator configured.
             if (request.Op == "stat") return Stats.Append(request.Source);              // One statistics event (Konfiguracja → Statystyki).
             if (request.Op == "syncstats") return CentralConfig.SyncStatsForMachine();  // This PC's statistics to the server's Stats folder.
+            if (request.Op == "testnetwork") return CentralConfig.TestNetworkForMachine(); // Konto Kiosku → Sprawdź: only the saved folders.
             if (request.Op == "reset")
             {
                 // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.

@@ -1978,7 +1978,7 @@ internal sealed partial class KioskForm : Form
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
-            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey, view.NewsAccountChange, view.StatsAccountChange));
+            Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
             NewsAccount.Forget();
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Audit.Write("settings_saved");

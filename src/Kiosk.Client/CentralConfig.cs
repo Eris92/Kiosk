@@ -172,7 +172,7 @@ internal static class CentralConfig
 
     /// <summary>
     /// Kiosk Card service, "syncstats": this computer's months copied to &lt;folder&gt;\&lt;computer&gt;\ (JSON lines and a CSV for
-    /// Excel), as the account saved in Konfiguracja → Statystyki, else the server's saved account, else the computer.
+    /// Excel), as Konto Kiosku (or an older export account saved before it), else the computer.
     /// Nothing is lost when the share is away: the months stay here and go with the next copy.
     /// </summary>
     internal static CardService.Response SyncStatsForMachine()
@@ -182,10 +182,7 @@ internal static class CentralConfig
             var folder = StatsFolder();
             if (folder == null) return new CardService.Response { Code = -2, Message = "Nie ustawiono folderu statystyk." };
             if (!Directory.Exists(Stats.Folder)) return new CardService.Response { Message = "Brak statystyk do wysłania." };
-            var account = Stats.ReadAccount();
-            var server = Configuration.Load(SharedConfig).ConfigSource;
-            using (account != null ? Connect(folder, new ShareAccount(account.User, account.Password))
-                   : Server(folder) != null && Server(folder) == Server(server) ? Connect(folder) : null)
+            using (AccountSaved ? Connect(folder) : Stats.ReadAccount() is { } older ? Connect(folder, new ShareAccount(older.User, older.Password)) : null)
             {
                 var target = Path.Combine(folder, Environment.MachineName);
                 Directory.CreateDirectory(target);
@@ -320,6 +317,72 @@ internal static class CentralConfig
         return new Disconnect(share);
     }
 
+    /// <summary>Konto Kiosku for the Kiosk Card service (SharePoint's sign-in); null = none saved.</summary>
+    internal static SharedAccounts.Account? ReadAccount()
+    {
+        if (!File.Exists(CredentialFile)) return null;
+        var account = JsonSerializer.Deserialize<ShareAccount>(Unprotect(File.ReadAllBytes(CredentialFile), Entropy));
+        return account == null ? null : new SharedAccounts.Account(account.User, account.Password);
+    }
+
+    /// <summary>The saved login (no password) for Konfiguracja; null when it cannot be read (not an administrator).</summary>
+    internal static string? SavedAccountUser()
+    {
+        try { return ReadAccount()?.User; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Konto Kiosku → "Sprawdź": every folder the Kiosk uses on the network, as that account (typed = not saved yet; null =
+    /// the saved one, or the computer). One line per folder, ✔ or ✖ with the reason; the statistics folder also for writing.
+    /// </summary>
+    internal static string TestNetwork(string configSource, string newsFolder, string statsFolder, AccountChange? typed)
+    {
+        var account = typed is { User.Length: > 0 } ? new ShareAccount(typed.User.Trim(), typed.Password) : null;
+        string Check(string name, string folder, bool write)
+        {
+            folder = folder.Trim().Trim('"');
+            if (folder.Length == 0) return name + ": nie ustawiono";
+            try
+            {
+                using (account != null ? Connect(folder, account) : Connect(folder))
+                {
+                    if (!Directory.Exists(folder))
+                        return "✖ " + name + " (" + folder + "): " + (write ? "folderu nie ma albo brak dostępu" : "brak dostępu do folderu");
+                    if (write)
+                    {
+                        var probe = Path.Combine(folder, ".kiosk-test-" + Environment.MachineName);
+                        File.WriteAllText(probe, DateTime.Now.ToString("s"));
+                        File.Delete(probe);
+                    }
+                    return "✔ " + name + " (" + folder + "): " + (write ? "odczyt i zapis" : "odczyt");
+                }
+            }
+            catch (Exception ex) { return "✖ " + name + " (" + folder + "): " + ex.Message; }
+        }
+        var news = newsFolder.Trim();
+        if (news.Length > 0 && !Path.IsPathFullyQualified(news) && configSource.Trim().Length > 0) news = Path.Combine(configSource.Trim(), news);
+        return string.Join("\n",
+            Check("Konfiguracja z serwera", configSource, false),
+            news.StartsWith(@"\\", StringComparison.Ordinal) || news.Length == 0 ? Check("Komunikaty", news, false) : "Komunikaty: folder lokalny (" + news + ")",
+            Check("Eksport statystyk", statsFolder.Trim().Length > 0 ? statsFolder : configSource.Trim().Length > 0 ? Path.Combine(configSource.Trim(), "Stats") : "", true));
+    }
+
+    /// <summary>Kiosk Card service, "testnetwork": the saved account (or the computer) on the folders of this PC's saved configuration.</summary>
+    internal static CardService.Response TestNetworkForMachine()
+    {
+        try
+        {
+            var own = Configuration.Load(SharedConfig);
+            var configFolder = MachineConfigFolder();
+            var news = Configuration.Load(Path.Combine(configFolder, FileName)).NewsFolder;
+            // "komunikaty" next to the server's client.json: the server's folder, not the copy made at start (as "syncnews").
+            if (Under(news, MachineCache) && own.ConfigSource.Length > 0) news = Path.Combine(own.ConfigSource, Path.GetRelativePath(configFolder, news));
+            return new CardService.Response { Message = TestNetwork(own.ConfigSource, news, StatsFolder() ?? "", null) };
+        }
+        catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
+    }
+
     private sealed class Disconnect(string share) : IDisposable
     {
         public void Dispose() => WNetCancelConnection2(share, 0, true);
@@ -347,10 +410,12 @@ internal static class CentralConfig
         if (secrets.StatsAccount != null) Stats.WriteAccount(secrets.StatsAccount);
     }
 
-    /// <summary>Saves or removes the share's account; needs an administrator (or SYSTEM).</summary>
+    /// <summary>Saves or removes Konto Kiosku; needs an administrator (or SYSTEM). The older separate accounts of the messages and statistics go with it.</summary>
     internal static void WriteAccount(AccountChange change)
     {
         if (File.Exists(CredentialFile)) File.Delete(CredentialFile);
+        NewsAccount.RemoveLegacy();
+        Stats.RemoveAccount();
         if (change.User.Trim().Length == 0) { Audit.Write("config_source_account_removed"); return; }
         var plain = JsonSerializer.SerializeToUtf8Bytes(new ShareAccount(change.User.Trim(), change.Password));
         try { WriteSecret(CredentialFile, plain, Entropy); }

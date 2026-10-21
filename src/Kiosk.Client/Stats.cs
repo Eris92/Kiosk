@@ -131,6 +131,14 @@ internal static class Stats
         Audit.Write("stats_account_saved", change.User.Trim());
     }
 
+    /// <summary>Konto Kiosku replaces this older separate account.</summary>
+    internal static void RemoveAccount()
+    {
+        if (!AccountSaved) return;
+        File.Delete(AccountFile);
+        Audit.Write("stats_account_removed", "zastąpione Kontem Kiosku");
+    }
+
     /// <summary>Only the service (SYSTEM) and administrators can read it; null = none saved.</summary>
     internal static SharedAccounts.Account? ReadAccount()
     {

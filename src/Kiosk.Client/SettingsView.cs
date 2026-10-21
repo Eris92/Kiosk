@@ -23,22 +23,9 @@ internal sealed class SettingsView : UserControl
     private readonly ComboBox newsShow = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Paski i komunikaty", "Tylko paski na górze", "Wyłączone" } };
     private readonly TextBox newsSharePoint = new() { Dock = DockStyle.Fill, PlaceholderText = "https://firma.sharepoint.com/sites/intranet" };
     private readonly TextBox newsSharePointAccount = new() { Dock = DockStyle.Fill, PlaceholderText = "nazwa konta z accounts.kiosk (puste = login i hasło poniżej)" };
-    private readonly TextBox newsUser = new() { Dock = DockStyle.Fill, PlaceholderText = "login, np. kiosk@firma.pl (zapisany: zostaw puste, aby nie zmieniać)" };
-    private readonly TextBox newsPassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, PlaceholderText = "hasło" };
-    private readonly CheckBox removeNewsAccount = new() { Text = "Usuń zapisany login i hasło", AutoSize = true };
     private readonly TextBox statsFolder = new() { Width = 520, PlaceholderText = "np. \\\\serwer\\kiosk\\statystyki (puste: Stats obok client.json na serwerze)" };
     private readonly ComboBox statsEvery = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private static readonly (string Name, int Hours)[] StatsSchedule = [("Wyłączony", 0), ("Co godzinę", 1), ("Co 6 godzin", 6), ("Co 12 godzin", 12), ("Raz dziennie", 24), ("Raz w tygodniu", 168)];
-    private readonly TextBox statsUser = new() { Width = 260, PlaceholderText = "login, np. FIRMA\\kiosk-stat (zapisany: zostaw puste)" };
-    private readonly TextBox statsPassword = new() { Width = 200, UseSystemPasswordChar = true, PlaceholderText = "hasło" };
-    private readonly CheckBox removeStatsAccount = new() { Text = "Usuń zapisany login i hasło", AutoSize = true };
-    /// <summary>The export folder's account: null = unchanged, an empty login = remove.</summary>
-    internal CentralConfig.AccountChange? StatsAccountChange =>
-        removeStatsAccount.Checked ? new("", "") : statsUser.Text.Trim().Length > 0 ? new(statsUser.Text.Trim(), statsPassword.Text) : null;
-
-    /// <summary>Komunikaty → login and password for SharePoint typed in (or "remove"); null = leave it as it is.</summary>
-    internal CentralConfig.AccountChange? NewsAccountChange =>
-        removeNewsAccount.Checked ? new("", "") : newsUser.Text.Trim().Length > 0 ? new(newsUser.Text.Trim(), newsPassword.Text) : null;
     private readonly NumericUpDown newsSharePointCount = new() { Minimum = 1, Maximum = 20, Width = 140 };
     private readonly ComboBox newsOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Na przemian (SharePoint, moje, SharePoint…)", "Najpierw moje z folderu", "Najpierw SharePoint" } };
     private readonly ComboBox newsSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Standardowy", "Duży", "Bardzo duży" } };
@@ -53,11 +40,11 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
-    private readonly TextBox sourceUser = new() { Width = 300, PlaceholderText = @"DOMENA\użytkownik  albo  serwer\użytkownik", Margin = new Padding(4, 0, 4, 4) };
+    private readonly TextBox sourceUser = new() { Width = 300, PlaceholderText = "kiosk@firma.pl  albo  DOMENA\\kiosk", Margin = new Padding(4, 0, 4, 4) };
     private readonly TextBox sourcePassword = new() { Width = 300, UseSystemPasswordChar = true, PlaceholderText = "hasło", Margin = new Padding(4, 0, 4, 4) };
     private readonly CheckBox removeAccount = new() { Text = "Usuń zapisane konto (łącz jako komputer)", AutoSize = true, Margin = new Padding(4, 4, 4, 4) };
 
-    /// <summary>The share's account typed in (or "remove") for the save step; null = leave it as it is.</summary>
+    /// <summary>Konto Kiosku typed in (or "remove") for the save step; null = leave it as it is. One account for the server, messages and statistics.</summary>
     internal CentralConfig.AccountChange? AccountChange =>
         removeAccount.Checked ? new("", "") : sourceUser.Text.Trim().Length > 0 ? new(sourceUser.Text.Trim(), sourcePassword.Text) : null;
     private readonly TextBox accountsKey = new() { Width = 300, UseSystemPasswordChar = true, PlaceholderText = "klucz kont wspólnych", Margin = new Padding(4, 0, 4, 4) };
@@ -583,12 +570,7 @@ internal sealed class SettingsView : UserControl
         folderPicker.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         folderPicker.MinimumSize = Size.Empty;
         AddField(newsFields, "Aktualności ze strony SharePoint (puste = brak)", newsSharePoint);
-        AddField(newsFields, "Konto do SharePointa", newsSharePointAccount);
-        AddField(newsFields, "albo login do SharePointa" + (NewsAccount.Saved ? " (zapisany)" : ""), newsUser);
-        AddField(newsFields, "Hasło do SharePointa", newsPassword);
-        AddField(newsFields, "", removeNewsAccount);
-        removeNewsAccount.Visible = NewsAccount.Saved;
-        removeNewsAccount.CheckedChanged += (_, _) => newsUser.Enabled = newsPassword.Enabled = !removeNewsAccount.Checked;
+        AddField(newsFields, "Inne konto do SharePointa (opcjonalnie)", newsSharePointAccount);
         AddField(newsFields, "Ile aktualności z SharePointa", newsSharePointCount);
         AddField(newsFields, "Kolejność", newsOrder);
         AddField(newsFields, "Zmiana komunikatu co (sekundy)", newsSeconds);
@@ -611,7 +593,7 @@ internal sealed class SettingsView : UserControl
                    "Folder (np. \\\\serwer\\kiosk\\komunikaty) zawiera plik " + News.FileName + ", Kiosk pobiera go co ustawioną liczbę minut; musi być do odczytu dla wszystkich kont. " +
                    "Film (Video, plik MP4): slajd stoi, aż film się skończy, pozostałe zmieniają się co ustawione sekundy. " +
                    "Opis wszystkich pól (Title, Text, Image, Video, Sound, Button, Action, Color, TextColor, Enabled, From / Until) jest na początku przykładowego pliku: " +
-                   "„Użyj przykładu” albo config\\news w paczce. SharePoint: najnowsze aktualności witryny, czytane kontem Windows Kiosku albo kontem podanym niżej."
+                   "„Użyj przykładu” albo config\\news w paczce. SharePoint: najnowsze aktualności witryny, czytane kontem z zakładki Konto Kiosku (albo kontem Windows Kiosku, gdy żadne nie jest zapisane)."
         });
         newsTab.Controls.Add(newsFields);
 
@@ -668,19 +650,9 @@ internal sealed class SettingsView : UserControl
         updatePanel.Controls.Add(configSource);
         updatePanel.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 12, 4, 4),
-            Text = "Konto do serwera (opcjonalnie). Bez niego Kiosk łączy się jako komputer (DOMENA\\KOMPUTER$) – to działa tylko na komputerze w domenie " +
-                   "i gdy udział ma odczyt dla „Komputery domeny”; „Wszyscy” nie obejmuje komputera spoza domeny. Podaj konto tylko do odczytu, może być wspólne. " +
-                   "Hasło jest szyfrowane dla tego komputera i czytelne tylko dla usługi Kiosku i administratorów. " +
-                   (CentralConfig.AccountSaved ? "Konto jest zapisane – wpisz nowe, aby je zmienić." : "Żadne konto nie jest zapisane.")
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 8, 4, 4),
+            Text = "Kiosk łączy się z serwerem kontem z zakładki Konto Kiosku (bez niego jako komputer)."
         });
-        var accountRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-        accountRow.Controls.Add(sourceUser);
-        accountRow.Controls.Add(sourcePassword);
-        updatePanel.Controls.Add(accountRow);
-        removeAccount.Visible = CentralConfig.AccountSaved;
-        removeAccount.CheckedChanged += (_, _) => { sourceUser.Enabled = sourcePassword.Enabled = !removeAccount.Checked; };
-        updatePanel.Controls.Add(removeAccount);
         sourceTest = new Button { Text = "Test", Size = new Size(120, 34), Margin = new Padding(4, 8, 4, 4) };
         KioskTheme.StyleButton(sourceTest);
         var sourceResult = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 8, 4, 4) };
@@ -694,18 +666,22 @@ internal sealed class SettingsView : UserControl
         };
         updatePanel.Controls.Add(sourceTest);
         updatePanel.Controls.Add(sourceResult);
-        updatePanel.Controls.Add(new Label
+        updateTab.Controls.Add(updatePanel);
+        var accountTab = AddAccountTab(tabs, updateTab);
+
+        var accountPanel = (FlowLayoutPanel)accountTab.Controls[0];
+        accountPanel.Controls.Add(new Label { Text = "Klucz kont wspólnych", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 24, 4, 4) });
+        accountPanel.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 16, 4, 4),
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 4),
             Text = "Klucz kont wspólnych. Hasła kont do stron i aplikacji są w pliku " + SharedAccounts.FileName + " obok client.json (na serwerze: jeden plik dla wszystkich komputerów), " +
                    "zaszyfrowane tym kluczem (scripts\\Set-KioskSharedAccount.ps1). Ten komputer trzyma klucz zaszyfrowany dla siebie, czytelny tylko dla usługi Kiosku i administratorów. " +
                    (SharedAccounts.KeySaved ? "Klucz jest zapisany – wpisz nowy, aby go zmienić." : "Klucz nie jest zapisany.")
         });
-        updatePanel.Controls.Add(accountsKey);
+        accountPanel.Controls.Add(accountsKey);
         removeKey.Visible = SharedAccounts.KeySaved;
         removeKey.CheckedChanged += (_, _) => accountsKey.Enabled = !removeKey.Checked;
-        updatePanel.Controls.Add(removeKey);
-        updateTab.Controls.Add(updatePanel);
+        accountPanel.Controls.Add(removeKey);
 
         var statsTab = AddStatsTab(tabs);
 
@@ -742,20 +718,17 @@ internal sealed class SettingsView : UserControl
         {
             Dock = DockStyle.Top, Height = 64, Padding = new Padding(24, 6, 24, 6), ForeColor = KioskTheme.Text, BackColor = Card, Visible = Central,
             Text = "Podgląd – konfiguracja z serwera " + config.ConfigSource + ". Zmiany wprowadza się w plikach na serwerze; " +
-                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera) i login do SharePointa (Komunikaty)."
+                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera) i Konto Kiosku."
         };
         if (Central)
         {
-            foreach (TabPage page in tabs.TabPages) if (page != statsTab) Preview(page);   // Statystyki only reads.
+            foreach (TabPage page in tabs.TabPages) if (page != statsTab && page != accountTab) Preview(page);   // Statystyki only reads; the account is this PC's own.
             autoUpdate.Enabled = false;
             configSource.ReadOnly = false;
             sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
             removeAccount.Enabled = true;
             accountsKey.ReadOnly = false;
             removeKey.Enabled = true;
-            // This PC's own login to SharePoint (Komunikaty) is saved here also with a server's configuration.
-            newsUser.ReadOnly = newsPassword.ReadOnly = false;
-            removeNewsAccount.Enabled = true;
             sourceTest.Enabled = true;
             updateButton.Enabled = true;
         }
@@ -863,6 +836,74 @@ internal sealed class SettingsView : UserControl
     }
 
     /// <summary>
+    /// Konto Kiosku: the one login and password the Kiosk uses on the network – the server with client.json, the messages
+    /// (share and SharePoint) and the statistics export. Saved for this PC also when the configuration comes from a server.
+    /// </summary>
+    private TabPage AddAccountTab(TabControl tabs, TabPage before)
+    {
+        var tab = new TabPage("Konto Kiosku") { Padding = new Padding(16) };
+        tabs.TabPages.Insert(tabs.TabPages.IndexOf(before), tab);
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        panel.Controls.Add(new Label { Text = "Konto, którym Kiosk łączy się z siecią", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 4, 4, 8) });
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 8),
+            Text = "Jedno konto do wszystkiego, co Kiosk pobiera lub wysyła w sieci:\n" +
+                   "• Konfiguracja z serwera (folder z client.json, Aktualizacja) – odczyt,\n" +
+                   "• Komunikaty – udział z " + News.FileName + " (odczyt) i strona SharePoint (logowanie Microsoft),\n" +
+                   "• Statystyki – eksport na dysk (zapis w folderze).\n" +
+                   "Najlepiej podaj login jako adres e-mail (np. kiosk@firma.pl): działa i na udziałach, i w SharePoincie. " +
+                   "Bez konta Kiosk łączy się z udziałami jako komputer (DOMENA\\KOMPUTER$, tylko w domenie), a SharePoint czyta kontem Windows Kiosku. " +
+                   "Hasło jest szyfrowane dla tego komputera i czytelne tylko dla usługi Kiosku i administratorów; zapisuje się po „Zapisz konfigurację”."
+        });
+        panel.Controls.Add(new Label
+        {
+            AutoSize = true, Margin = new Padding(4, 4, 4, 8), Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            Text = CentralConfig.AccountSaved ? "Zapisane konto: " + (CentralConfig.SavedAccountUser() ?? "(nie można odczytać)") + " – wpisz nowe, aby je zmienić."
+                 : NewsAccount.LegacySaved || Stats.AccountSaved ? "Zapisane są jeszcze osobne konta komunikatów lub statystyk – wpisz tu jedno, zastąpi je."
+                 : "Żadne konto nie jest zapisane."
+        });
+        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        row.Controls.Add(sourceUser);
+        row.Controls.Add(sourcePassword);
+        panel.Controls.Add(row);
+        removeAccount.Visible = CentralConfig.AccountSaved || NewsAccount.LegacySaved || Stats.AccountSaved;
+        removeAccount.CheckedChanged += (_, _) => { sourceUser.Enabled = sourcePassword.Enabled = !removeAccount.Checked; };
+        panel.Controls.Add(removeAccount);
+        // Every folder of this Konfiguracja: a typed account is checked from here, the saved one by the Kiosk Card service.
+        var test = new Button { Text = "Sprawdź dostęp", Size = new Size(180, 34), Margin = new Padding(4, 8, 4, 4) };
+        KioskTheme.StyleButton(test);
+        var result = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 8, 4, 4) };
+        test.Click += async (_, _) =>
+        {
+            test.Enabled = false;
+            var typed = removeAccount.Checked ? null : AccountChange;
+            result.Text = "Sprawdzam…";
+            try
+            {
+                string text;
+                if (typed != null)
+                {
+                    var (source, news, stats) = (configSource.Text, newsFolder.Text, statsFolder.Text);
+                    text = "Konto " + typed.User + " (zapisze się po Zapisz):\n" + await Task.Run(() => CentralConfig.TestNetwork(source, news, stats, typed));
+                }
+                else
+                {
+                    var answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "testnetwork" }));
+                    text = answer.Code != 0 ? "✖ " + answer.Message
+                         : (CentralConfig.AccountSaved ? "Zapisane konto" : "Komputer (bez konta)") + ", zapisana konfiguracja:\n" + answer.Message;
+                }
+                if (!IsDisposed) result.Text = text + "\nSharePoint sprawdzisz w Komunikatach na pulpicie (logowanie Microsoft tym kontem).";
+            }
+            finally { if (!IsDisposed) test.Enabled = true; }
+        };
+        panel.Controls.Add(test);
+        panel.Controls.Add(result);
+        tab.Controls.Add(panel);
+        return tab;
+    }
+
+    /// <summary>
     /// Statystyki: sign-ins and opened options from this computer (or from every computer on the server), with no names:
     /// "Osoby" counts different people by their code.
     /// </summary>
@@ -917,8 +958,8 @@ internal sealed class SettingsView : UserControl
         {
             AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 6),
             Text = "Usługa Kiosku kopiuje statystyki tego komputera do folderu (np. udziału) jako <folder>\\<komputer>\\, plik CSV do Excela na każdy miesiąc. " +
-                   "Gdy folder jest niedostępny, dane czekają tutaj i idą przy następnej udanej próbie. Konto: login i hasło z prawem zapisu w folderze " +
-                   "(zaszyfrowane dla tego komputera); bez konta usługa łączy się jako komputer. Ustawienia działają po zapisaniu Konfiguracji."
+                   "Gdy folder jest niedostępny, dane czekają tutaj i idą przy następnej udanej próbie. Konto: z zakładki Konto Kiosku (potrzebuje prawa zapisu w folderze); " +
+                   "bez niego usługa łączy się jako komputer. Ustawienia działają po zapisaniu Konfiguracji."
         });
         var folderRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), BackColor = Color.Transparent };
         folderRow.Controls.Add(new Label { Text = "Folder", AutoSize = true, Margin = new Padding(4, 8, 8, 0) });
@@ -927,13 +968,7 @@ internal sealed class SettingsView : UserControl
         folderRow.Controls.Add(statsEvery);
         exportPanel.Controls.Add(folderRow);
         var accountRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), BackColor = Color.Transparent };
-        accountRow.Controls.Add(new Label { Text = "Konto" + (Stats.AccountSaved ? " (zapisane)" : ""), AutoSize = true, Margin = new Padding(4, 8, 8, 0) });
-        accountRow.Controls.Add(statsUser);
-        accountRow.Controls.Add(statsPassword);
-        accountRow.Controls.Add(removeStatsAccount);
-        removeStatsAccount.Visible = Stats.AccountSaved;
-        removeStatsAccount.CheckedChanged += (_, _) => statsUser.Enabled = statsPassword.Enabled = !removeStatsAccount.Checked;
-        var sendNow = new Button { Text = "Wyślij teraz", AutoSize = true, Margin = new Padding(16, 2, 4, 2) };
+        var sendNow = new Button { Text = "Wyślij teraz", AutoSize = true, Margin = new Padding(4, 2, 4, 2) };
         var sendResult = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 6, 4, 4) };
         sendNow.Click += async (_, _) =>
         {
