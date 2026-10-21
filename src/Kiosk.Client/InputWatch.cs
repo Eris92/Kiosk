@@ -6,10 +6,12 @@ namespace Kiosk.Client;
 /// The time of the last real key or mouse/touch input, seen by low-level hooks on a thread of their own (so a busy
 /// screen never delays them). Used while a message film plays: the film keeps the display awake, and Windows then
 /// also moves its own "last input" time, so the lock and the screensaver would never start.
+/// The hooks miss input aimed at a window of a higher level (the card sign-in screen runs as SYSTEM) and Windows may
+/// drop them silently, so the mouse pointer's position is also watched, and the hooks are renewed every minute.
 /// </summary>
 internal static class InputWatch
 {
-    private const int KeyboardHook = 13, MouseHook = 14;
+    private const int KeyboardHook = 13, MouseHook = 14, WmTimer = 0x0113, PollMilliseconds = 150;
     private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
     private static readonly HookProc Proc = OnInput;   // Kept alive for as long as the hooks are.
     private static long lastInput = Environment.TickCount64;
@@ -27,6 +29,7 @@ internal static class InputWatch
             var module = GetModuleHandle(null);
             var keyboard = SetWindowsHookEx(KeyboardHook, Proc, module, 0);
             var mouse = SetWindowsHookEx(MouseHook, Proc, module, 0);
+            SetTimer(IntPtr.Zero, IntPtr.Zero, PollMilliseconds, IntPtr.Zero);   // WM_TIMER on this thread's queue.
             if (keyboard == IntPtr.Zero || mouse == IntPtr.Zero)
             {
                 Audit.Write("input_watch_failed", Marshal.GetLastWin32Error().ToString());
@@ -36,7 +39,25 @@ internal static class InputWatch
             }
             Interlocked.Exchange(ref lastInput, Environment.TickCount64);
             Running = true;
-            while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0) { TranslateMessage(ref message); DispatchMessage(ref message); }
+            GetCursorPos(out var pointer);
+            int ticks = 0;
+            while (GetMessage(out var message, IntPtr.Zero, 0, 0) > 0)
+            {
+                if (message.Window == IntPtr.Zero && message.Id == WmTimer)
+                {
+                    // The pointer moved: real input, whichever window it went to.
+                    if (GetCursorPos(out var now) && (now.X != pointer.X || now.Y != pointer.Y)) { pointer = now; Interlocked.Exchange(ref lastInput, Environment.TickCount64); }
+                    if (++ticks % (60_000 / PollMilliseconds) == 0)
+                    {
+                        // Windows removes a hook it judged too slow without saying so: put them in again.
+                        UnhookWindowsHookEx(keyboard); UnhookWindowsHookEx(mouse);
+                        keyboard = SetWindowsHookEx(KeyboardHook, Proc, module, 0);
+                        mouse = SetWindowsHookEx(MouseHook, Proc, module, 0);
+                    }
+                    continue;
+                }
+                TranslateMessage(ref message); DispatchMessage(ref message);
+            }
             Running = false;
         }) { IsBackground = true, Name = "Kiosk input watch" };
         thread.Start();
@@ -69,4 +90,7 @@ internal static class InputWatch
     [DllImport("user32.dll")] private static extern bool TranslateMessage(ref Message message);
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref Message message);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? name);
+    [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] private static extern IntPtr SetTimer(IntPtr window, IntPtr id, uint milliseconds, IntPtr callback);
 }
