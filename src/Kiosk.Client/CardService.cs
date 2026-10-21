@@ -13,7 +13,8 @@ namespace Kiosk.Client;
 /// a local pipe. The service does only this (plus changing the PIN or resetting the card for its holder, Szybka pomoc):
 /// check the card PIN, create the Kiosk credential and return its
 /// hmac-secret, always for the relying party "kiosk.local" — never signatures or sign-ins for other sites.
-/// It also installs the latest official Kiosk release on request ("update"), so updating needs no administrator.
+/// It also installs the latest official Kiosk release on request ("update"), so updating needs no administrator,
+/// and is the Kiosk's watchdog (Watchdog.cs): a crashed or hung Kiosk starts again, a stopped smart card service too.
 /// </summary>
 internal static class CardService
 {
@@ -24,7 +25,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | newsaccount | fidosignin
+        public string Op { get; set; } = "";          // watch | unwatch | verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | newsaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -73,6 +74,7 @@ internal static class CardService
         string step = "połączenie";
         try
         {
+            if (request.Op is "watch" or "unwatch") return new Response { Code = -1, Message = "Watchdog działa w usłudze Kiosk Card." }; // Never the card below.
             if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
             if (request.Op == "dotnet") return Updater.InstallRuntime();  // Only the .NET 10 Desktop Runtime, from Microsoft.
             if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
@@ -168,6 +170,7 @@ internal static class CardService
         SetStatus(4); // RUNNING
         var listener = new Thread(Listen) { IsBackground = true };
         listener.Start();
+        Watchdog.Start(stopping);
         stopping.Wait();
         SetStatus(1); // STOPPED
     }
@@ -196,6 +199,9 @@ internal static class CardService
                     // A shared account's password only for the installed Kiosk program, named by Windows (the pipe's client process).
                     : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
                     : request.Op == "newsaccount" ? NewsAccount.ForService(ClientProgram(pipe))
+                    // Watchdog: the Kiosk process Windows names reports in or says goodbye.
+                    : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,
+                        ClientProgram(pipe), request.Source)
                     // Card + PIN sign-in: the PIN screen for the Kiosk process and session Windows names, nobody else.
                     : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe), request.Embed)

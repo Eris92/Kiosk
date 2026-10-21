@@ -125,7 +125,7 @@ internal sealed partial class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); RotateScreens(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) => { timer.Start(); Watchdog.Watch(this); RotateScreens(); StartIdleScreens(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         updateTimer.Tick += (_, _) => ExportStats();
         updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };

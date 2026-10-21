@@ -7,7 +7,8 @@ Windows allows only administrators and services to send FIDO2 commands to a card
 asks this service through a local pipe. The service runs as LocalSystem from Program Files (users cannot change
 it) and only checks the PIN and returns the card's hmac-secret for "kiosk.local" — no sign-ins for other sites.
 It also installs the latest release from github.com/Eris92/Kiosk when Kiosk asks (Konfiguracja → Aktualizacja),
-so updates need no administrator after this script has run once.
+so updates need no administrator after this script has run once. It is also the watchdog: a Kiosk that crashed or
+hangs starts again for its person, and a stopped smart card service (SCardSvr) is started; Windows restarts this service.
 Run as administrator after scripts\Build.ps1. Supports -WhatIf; -Uninstall removes the service.
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -43,6 +44,8 @@ if ($PSCmdlet.ShouldProcess($name, 'register and start service')) {
     $binary = '"{0}" --card-service' -f $exe
     if ($existing) { & sc.exe config $name binPath= $binary start= auto | Out-Null }
     else { New-Service -Name $name -BinaryPathName $binary -DisplayName 'Kiosk Card' -StartupType Automatic -Description 'Sprawdza PIN karty FIDO2 i odblokowuje zapamiętane konto w Kiosku.' | Out-Null }
+    # Windows restarts the service (and with it the Kiosk watchdog) after a crash: 5 s, 10 s, then every minute.
+    & sc.exe failure $name reset= 86400 actions= restart/5000/restart/10000/restart/60000 | Out-Null
     Start-Service -Name $name
 }
 Write-Output "Done. Service $name runs $exe"
