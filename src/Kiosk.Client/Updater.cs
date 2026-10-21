@@ -97,11 +97,85 @@ internal static class Updater
         await Task.Run(() => ZipFile.ExtractToDirectory(zip, extracted)); // Off the window's thread: unpacking takes a while.
         var exe = Path.Combine(extracted, "out", "client", "Kiosk.Client.exe");
         if (!File.Exists(exe)) throw new InvalidDataException("W paczce nie ma out\\client\\Kiosk.Client.exe.");
-        // Without the .NET it needs the new copy would not even start, and this Kiosk would already be closed.
+        // Without the .NET it needs the new copy would not even start, and this Kiosk would already be closed:
+        // installed first (as administrator, or by the Kiosk Card service), else the update stops here.
         if (MissingRuntimes(Path.GetDirectoryName(exe)!) is [_, ..] missing)
-            throw new InvalidDataException(release.Tag + " wymaga " + string.Join(", ", missing) + ". Zainstaluj na tym komputerze " +
-                                           ".NET 10 Desktop Runtime x64 (winget install Microsoft.DotNet.DesktopRuntime.10).");
+        {
+            Audit.Write("runtime_install_started", string.Join(", ", missing));
+            var installed = await Task.Run(() => IsElevated() ? InstallRuntime() : CardService.Call(new CardService.Request { Op = "dotnet" }));
+            if (installed.Code != 0 || MissingRuntimes(Path.GetDirectoryName(exe)!) is [_, ..])
+                throw new InvalidDataException(release.Tag + " wymaga " + string.Join(", ", missing) + ", a instalacja się nie udała (" + installed.Message +
+                                               "). Zainstaluj .NET 10 Desktop Runtime x64: winget install Microsoft.DotNet.DesktopRuntime.10");
+        }
         return Path.GetDirectoryName(exe)!;
+    }
+
+    private const string RuntimePackage = "Microsoft.DotNet.DesktopRuntime.10";
+    private const string RuntimeInstaller = "https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe";
+
+    /// <summary>
+    /// Installs the .NET 10 Desktop Runtime x64 (administrator or the Kiosk Card service): with winget where it works,
+    /// else Microsoft's own installer, run only with a valid Microsoft signature. Nothing of the caller's is used.
+    /// </summary>
+    internal static CardService.Response InstallRuntime()
+    {
+        if (!IsElevated()) return new CardService.Response { Code = -1, Message = "Instalacja .NET wymaga administratora." };
+        var how = "winget";
+        var code = Run("winget", "install --id " + RuntimePackage + " --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity");
+        if (code != 0 && !RuntimeInstalled())
+        {
+            // winget is missing for the system account and on some editions: the installer from Microsoft instead.
+            how = "installer";
+            var folder = Path.Combine(Path.GetTempPath(), "Kiosk-dotnet-" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var file = Path.Combine(folder, "windowsdesktop-runtime-win-x64.exe");
+                using (var client = Client())
+                using (var download = client.GetStreamAsync(RuntimeInstaller).GetAwaiter().GetResult())
+                using (var target = File.Create(file))
+                    download.CopyTo(target);
+                if (!SignedByMicrosoft(file)) return Failed("instalator .NET nie ma ważnego podpisu Microsoft");
+                code = Run(file, "/install /quiet /norestart");
+            }
+            finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+        }
+        // 3010: installed, Windows wants a restart; 1638: a newer version is there already.
+        if (!RuntimeInstalled()) return Failed(how + " zakończył się kodem " + code);
+        Audit.Write("runtime_installed", how + " " + code);
+        return new CardService.Response { Message = ".NET 10 Desktop Runtime zainstalowany." };
+
+        static CardService.Response Failed(string why)
+        {
+            Audit.Write("runtime_install_failed", why);
+            return new CardService.Response { Code = -1, Message = why };
+        }
+    }
+
+    private static bool RuntimeInstalled() =>
+        Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "shared", "Microsoft.WindowsDesktop.App")) &&
+        Directory.EnumerateDirectories(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "shared", "Microsoft.WindowsDesktop.App"), "10.*").Any();
+
+    private static int Run(string file, string arguments)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true })!;
+            return process.WaitForExit(15 * 60000) ? process.ExitCode : -1;
+        }
+        catch (System.ComponentModel.Win32Exception) { return -1; }   // No winget.
+    }
+
+    /// <summary>Windows' own check (Get-AuthenticodeSignature): valid signature, signed by Microsoft Corporation.</summary>
+    private static bool SignedByMicrosoft(string file)
+    {
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
+            "-NoProfile -NonInteractive -Command \"$s = Get-AuthenticodeSignature -LiteralPath $env:KIOSK_FILE; " +
+            "if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match 'O=Microsoft Corporation') { exit 0 } else { exit 1 }\"")
+        { UseShellExecute = false, CreateNoWindow = true };
+        start.Environment["KIOSK_FILE"] = file;   // Not on the command line: no quoting of the path.
+        using var check = Process.Start(start)!;
+        return check.WaitForExit(60000) && check.ExitCode == 0;
     }
 
     /// <summary>The .NET frameworks the Kiosk.Client.exe in <paramref name="folder"/> needs and this PC lacks
