@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Windows.Security.Credentials.UI;
 
 namespace Kiosk.Client;
 
@@ -403,15 +402,14 @@ internal sealed partial class KioskForm : Form
             case UnlockMethod.CardAndWindowsHello:
             {
                 // Windows Hello confirms the person at the device; the Windows session itself is never locked.
-                var availability = await UserConsentVerifier.CheckAvailabilityAsync();
-                if (availability != UserConsentVerifierAvailability.Available)
+                var result = await WindowsHello.VerifyAsync(Handle, "Potwierdź, aby otworzyć sesję Kiosku");
+                if (result == WindowsHello.Result.Verified) return true;
+                if (result is WindowsHello.Result.DeviceNotPresent or WindowsHello.Result.NotConfiguredForUser or WindowsHello.Result.DisabledByPolicy)
                 {
-                    session.Notice = "Windows Hello jest niedostępne (" + availability + "). Zmień sposób logowania w Konfiguracji.";
-                    Audit.Write("unlock_hello_unavailable", availability.ToString());
+                    session.Notice = "Windows Hello jest niedostępne (" + result + "). Zmień sposób logowania w Konfiguracji.";
+                    Audit.Write("unlock_hello_unavailable", result.ToString());
                     return false;
                 }
-                var result = await UserConsentVerifierInterop.RequestVerificationForWindowAsync(Handle, "Potwierdź, aby otworzyć sesję Kiosku");
-                if (result == UserConsentVerificationResult.Verified) return true;
                 session.Notice = "Nie potwierdzono tożsamości (" + result + "). Spróbuj ponownie.";
                 Audit.Write("unlock_hello_failed", result.ToString());
                 return false;

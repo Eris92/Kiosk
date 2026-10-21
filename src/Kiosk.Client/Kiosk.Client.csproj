@@ -1,7 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows Hello through the WinRT ABI (WindowsHello.cs) instead of the 24 MB Windows SDK projection. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- No NuGet API documentation (*.xml) in the package. -->
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
     <!-- Uses the .NET 10 Desktop Runtime installed in Windows (scripts\Build.ps1 publishes without its own .NET). -->
     <SelfContained>false</SelfContained>
     <!-- Designer serialization of public control properties: these controls are built in code, never in the designer. -->
