@@ -8,10 +8,11 @@ param(
 $ErrorActionPreference = 'Stop'
 # $PSScriptRoot is empty in parameter defaults under "powershell -File" on Windows PowerShell 5.1.
 if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot '..\out\client' }
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install .NET 8 SDK or newer first.' }
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install .NET 10 SDK or newer first.' }
 $project = Join-Path $PSScriptRoot '..\src\Kiosk.Client\Kiosk.Client.csproj'
 $versionArguments = if ($Version) { @("-p:InformationalVersion=$Version", '-p:IncludeSourceRevisionInInformationalVersion=false') } else { @() }
-& dotnet publish $project -c Release -r win-x64 --self-contained true -o $OutputPath @versionArguments
+# Without its own .NET: the PC needs the .NET 10 Desktop Runtime x64 (scripts\Install-*.ps1 check for it).
+& dotnet publish $project -c Release -r win-x64 --self-contained false -o $OutputPath @versionArguments
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 # The card sign-in program (card + PIN signs the person in to Windows), .NET Framework 4.8: out\client\fido.
 $fido = Join-Path $PSScriptRoot '..\src\Kiosk.FidoBroker\FidoRun.csproj'

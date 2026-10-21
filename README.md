@@ -67,8 +67,10 @@ https://learn.microsoft.com/en-us/windows/win32/termserv/msrdpclient9notsafefors
 ## Quick test - ready EXE
 
 1. Open Actions -> Build Windows client, open a successful run and download
-   Kiosk-win-x64. Extract the ZIP to C:\Kiosk. The client is self-contained;
-   installing a separate .NET runtime is not required.
+   Kiosk-win-x64. Extract the ZIP to C:\Kiosk. The client needs the
+   .NET 10 Desktop Runtime x64 on the PC (it does not carry its own .NET):
+   `winget install Microsoft.DotNet.DesktopRuntime.10`, or the installer from
+   https://dotnet.microsoft.com/download/dotnet/10.0 (".NET Desktop Runtime", x64).
 2. Edit client/client.json: set Server to your Session Host FQDN.
    Keep TestMode true during testing. IdleSeconds defaults to 300.
 3. Run the read-only checks, then the client:

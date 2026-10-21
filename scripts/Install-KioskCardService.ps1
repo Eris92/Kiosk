@@ -32,9 +32,12 @@ if ($Uninstall) {
 
 $exe = Join-Path $InstallPath 'Kiosk.Client.exe'
 if (-not (Test-Path (Join-Path $SourcePath 'Kiosk.Client.exe'))) { throw "Build Kiosk first (scripts\Build.ps1): $SourcePath" }
+. (Join-Path $PSScriptRoot 'KioskRuntime.ps1')
+Assert-KioskRuntime $SourcePath
 if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
+    Remove-KioskOldRuntime $SourcePath $InstallPath
 }
 if ($PSCmdlet.ShouldProcess($name, 'register and start service')) {
     $binary = '"{0}" --card-service' -f $exe

@@ -97,7 +97,33 @@ internal static class Updater
         await Task.Run(() => ZipFile.ExtractToDirectory(zip, extracted)); // Off the window's thread: unpacking takes a while.
         var exe = Path.Combine(extracted, "out", "client", "Kiosk.Client.exe");
         if (!File.Exists(exe)) throw new InvalidDataException("W paczce nie ma out\\client\\Kiosk.Client.exe.");
+        // Without the .NET it needs the new copy would not even start, and this Kiosk would already be closed.
+        if (MissingRuntimes(Path.GetDirectoryName(exe)!) is [_, ..] missing)
+            throw new InvalidDataException(release.Tag + " wymaga " + string.Join(", ", missing) + ". Zainstaluj na tym komputerze " +
+                                           ".NET 10 Desktop Runtime x64 (winget install Microsoft.DotNet.DesktopRuntime.10).");
         return Path.GetDirectoryName(exe)!;
+    }
+
+    /// <summary>The .NET frameworks the Kiosk.Client.exe in <paramref name="folder"/> needs and this PC lacks
+    /// ("Microsoft.WindowsDesktop.App 10"); none for a self-contained build, which carries its own.</summary>
+    internal static List<string> MissingRuntimes(string folder)
+    {
+        var missing = new List<string>();
+        var config = Path.Combine(folder, "Kiosk.Client.runtimeconfig.json");
+        if (!File.Exists(config) || File.Exists(Path.Combine(folder, "hostfxr.dll"))) return missing;
+        using var json = JsonDocument.Parse(File.ReadAllText(config));
+        var options = json.RootElement.GetProperty("runtimeOptions");
+        List<JsonElement> frameworks = options.TryGetProperty("frameworks", out var list) ? list.EnumerateArray().ToList()
+            : options.TryGetProperty("framework", out var one) ? [one] : [];
+        var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "shared");
+        foreach (var framework in frameworks)
+        {
+            var name = framework.GetProperty("name").GetString() ?? "";
+            var major = (framework.GetProperty("version").GetString() ?? "").Split('.')[0];
+            var installed = Path.Combine(shared, name);
+            if (!Directory.Exists(installed) || !Directory.EnumerateDirectories(installed, major + ".*").Any()) missing.Add(name + " " + major);
+        }
+        return missing;
     }
 
     private static bool launched;
@@ -131,6 +157,9 @@ internal static class Updater
             {
                 // The Kiosk Card service (LocalSystem) installed the latest release itself: no administrator needed.
                 Audit.Write("update_by_service", installed.Message);
+                // An older service leaves its own .NET in place; --apply-update-service removes it, Kiosk starts after that.
+                for (var wait = 0; wait < 60 && File.Exists(Path.Combine(target, "hostfxr.dll")) && !File.Exists(Path.Combine(AppContext.BaseDirectory, "hostfxr.dll")); wait++)
+                    Thread.Sleep(1000);
             }
             else
             {
@@ -187,6 +216,9 @@ internal static class Updater
     internal static int RefreshService()
     {
         if (!IsElevated() || ServiceFolder() is not { } service) return 2;
+        // The service that copied the files may be an older one, which leaves its own .NET behind.
+        try { PruneRuntime(AppContext.BaseDirectory, InstalledFolder); }
+        catch (Exception ex) { Audit.Write("update_failed", ex.Message); }
         try { RunSc("stop"); CopyFolder(AppContext.BaseDirectory, service); }
         catch (Exception ex) { Audit.Write("update_failed", ex.Message); }
         RunSc("start");
@@ -240,6 +272,24 @@ internal static class Updater
                 catch (IOException) when (attempt < 30) { Thread.Sleep(1000); }
             }
         }
+        PruneRuntime(source, target);
+    }
+
+    /// <summary>
+    /// After a self-contained Kiosk, one that uses the .NET installed in Windows: the old copy's own .NET files go.
+    /// With hostfxr.dll left next to Kiosk.Client.exe Windows would still start it as self-contained, and it would fail.
+    /// </summary>
+    private static void PruneRuntime(string source, string target)
+    {
+        if (File.Exists(Path.Combine(source, "hostfxr.dll")) || !File.Exists(Path.Combine(target, "hostfxr.dll"))) return;
+        var stale = Directory.EnumerateFiles(target)
+            .Where(f => f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(f).Equals("createdump.exe", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !File.Exists(Path.Combine(source, Path.GetFileName(f))))
+            .OrderBy(f => Path.GetFileName(f).Equals("hostfxr.dll", StringComparison.OrdinalIgnoreCase)) // Last: it marks the folder as not done yet.
+            .ToList();
+        foreach (var file in stale)
+            try { File.Delete(file); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        Audit.Write("update_runtime_removed", target + " (" + stale.Count + ")");
     }
 
     private static string? ServiceFolder()

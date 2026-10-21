@@ -96,9 +96,12 @@ if ($Uninstall) {
 
 # 1. Files: program for everyone, configuration writable by administrators only.
 if (-not (Test-Path (Join-Path $SourcePath 'Kiosk.Client.exe'))) { throw "Build the client first (scripts\Build.ps1): $SourcePath" }
+. (Join-Path $PSScriptRoot 'KioskRuntime.ps1')
+Assert-KioskRuntime $SourcePath
 if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
+    Remove-KioskOldRuntime $SourcePath $InstallPath
 }
 if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode WindowsShell for a new configuration)')) {
     $directory = Split-Path $ConfigPath

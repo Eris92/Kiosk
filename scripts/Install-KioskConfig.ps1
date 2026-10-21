@@ -48,10 +48,13 @@ if ($Uninstall) {
 
 # 1. Program for everyone.
 if (-not (Test-Path (Join-Path $SourcePath 'Kiosk.Client.exe'))) { throw "No Kiosk build in $SourcePath (unzip Kiosk-win-x64.zip or run scripts\Build.ps1)." }
+. (Join-Path $PSScriptRoot 'KioskRuntime.ps1')
+Assert-KioskRuntime $SourcePath
 if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
     Get-Process Kiosk.Client -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$InstallPath\*" } | Stop-Process -Force
     New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
+    Remove-KioskOldRuntime $SourcePath $InstallPath
 }
 
 # 2. Configuration: copied only when there is none; writable by administrators only (Konfiguracja saves as one).
