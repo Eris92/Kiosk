@@ -91,6 +91,12 @@ internal static class AdminSettings
             form.Close();
         };
         view.CancelRequested += form.Close;
+        view.SwitchUserRequested += () =>
+        {
+            Audit.Write("manual_switch_user", "administrator");
+            try { WindowsSession.Disconnect(); }
+            catch (Exception ex) { MessageBox.Show(form, "Nie udało się przełączyć użytkownika: " + ex.Message, "Konfiguracja Kiosku"); }
+        };
         // The running Kiosk holds the program files: it closes and installs the update itself.
         view.UpdateRequested += _ => { result = UpdateExitCode; form.Close(); };
         form.Controls.Add(view);

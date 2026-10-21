@@ -98,6 +98,8 @@ internal sealed class SettingsView : UserControl
     private readonly Label error = new() { Dock = DockStyle.Bottom, Height = 40, ForeColor = Color.FromArgb(255, 153, 164), Padding = new Padding(16, 8, 16, 0) };
     internal event Action<Config>? SaveRequested;
     internal event Action? CancelRequested;
+    /// <summary>Bottom left: Windows' sign-in screen for another account; this session keeps running.</summary>
+    internal event Action? SwitchUserRequested;
 
     internal SettingsView(Config config, CardIdentity? me = null, Func<Config, bool>? keepsAccess = null)
     {
@@ -704,7 +706,7 @@ internal sealed class SettingsView : UserControl
         tabs.Dock = DockStyle.None;
         pageHost.Controls.Add(tabs);
         pageHost.Resize += (_, _) => tabs.Bounds = new Rectangle(-4, -6, Math.Max(0, pageHost.ClientSize.Width - pageHost.Padding.Right + 8), pageHost.ClientSize.Height + 10);
-        var nav = new FlowLayoutPanel { Dock = DockStyle.Left, Width = 260, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(12, 4, 8, 4), BackColor = Back };
+        var nav = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(0, 4, 0, 4), BackColor = Back };
         foreach (TabPage page in tabs.TabPages)
         {
             var item = new NavItem(page.Text) { Width = 236, Height = 40, Margin = new Padding(0, 0, 0, 4) };
@@ -735,7 +737,14 @@ internal sealed class SettingsView : UserControl
             foreach (var (_, choice, _) in rotations) choice.Enabled = true;   // The monitors are this PC's own.
             rotateNow!.Enabled = true;
         }
-        Controls.Add(pageHost); Controls.Add(nav); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
+        // Bottom left: Windows' "Switch user", also when Ctrl+Alt+Del is turned off (this session keeps running).
+        var switchUser = new Button { Text = "Przełącz użytkownika", Dock = DockStyle.Bottom, Height = 40 };
+        KioskTheme.StyleButton(switchUser);
+        switchUser.Click += (_, _) => SwitchUserRequested?.Invoke();
+        var navColumn = new Panel { Dock = DockStyle.Left, Width = 260, BackColor = Back, Padding = new Padding(12, 0, 8, 12) };
+        navColumn.Controls.Add(nav);
+        navColumn.Controls.Add(switchUser);
+        Controls.Add(pageHost); Controls.Add(navColumn); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
     }
 

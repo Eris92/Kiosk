@@ -100,9 +100,6 @@ internal sealed class NavBar : Control
     internal event Action<string>? SelectionRequested;
     /// <summary>A category with its own action and no entries: the click opens it.</summary>
     internal event Action<HelpAction>? LinkRequested;
-    /// <summary>The last entry, "Przełącz użytkownika": Windows' sign-in screen (also when Ctrl+Alt+Del is turned off).</summary>
-    internal event Action? SwitchUserRequested;
-    private const string SwitchUserPath = "\u0001przelacz";
 
     internal NavBar()
     {
@@ -130,9 +127,6 @@ internal sealed class NavBar : Control
         // "Dolna sekcja": those categories after the others, under a line.
         list = [.. list.Where(e => !TileIcons.InBottomGroup(e.Item1)), .. list.Where(e => TileIcons.InBottomGroup(e.Item1))];
         firstBottom = list.FindIndex(e => TileIcons.InBottomGroup(e.Item1));
-        // Always last, without signing in: the way to another Windows account on a kiosk without Ctrl+Alt+Del.
-        list.Add((SwitchUserPath, "Przełącz użytkownika", KioskIcons.SwitchUser, null, false));
-        if (firstBottom < 0) firstBottom = list.Count - 1;
         entries = list.ToArray();
         if (!entries.Any(e => e.Path.Equals(Selected, StringComparison.OrdinalIgnoreCase))) Selected = "";
         Invalidate();
@@ -164,7 +158,6 @@ internal sealed class NavBar : Control
         base.OnMouseClick(e);
         int index = rows.FindIndex(r => r.Contains(e.Location));
         if (index < 0 || Locked(index)) return;
-        if (entries[index].Path == SwitchUserPath) { SwitchUserRequested?.Invoke(); return; }
         if (entries[index].Link is { } link)
         {
             // After the old page closed (that selects "Strona główna").
@@ -540,8 +533,6 @@ internal sealed partial class DesktopView
     internal event Action? AccountRequested;
     /// <summary>A category was chosen while a page is open: the page closes.</summary>
     internal event Action? PageCloseRequested;
-    /// <summary>Left column → "Przełącz użytkownika".</summary>
-    internal event Action? SwitchUserRequested;
 
     private void InitPortal()
     {
@@ -569,7 +560,6 @@ internal sealed partial class DesktopView
             ArrangeControls();
         });
         nav.LinkRequested += item => Tiles.Run(item);
-        nav.SwitchUserRequested += () => SwitchUserRequested?.Invoke();
         Controls.AddRange(new Control[] { Tiles, nav, portalTitle, portalLine, portalPerson, portalLogin, account });
     }
 
