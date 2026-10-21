@@ -14,6 +14,8 @@ $versionArguments = if ($Version) { @("-p:InformationalVersion=$Version", '-p:In
 # Without its own .NET: the PC needs the .NET 10 Desktop Runtime x64 (scripts\Install-*.ps1 check for it).
 & dotnet publish $project -c Release -r win-x64 --self-contained false -o $OutputPath @versionArguments
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+# WebView2's NuGet copies WebView2Loader.dll a second time into runtimes\win-x64\native; Kiosk loads the one next to it.
+Remove-Item (Join-Path $OutputPath 'runtimes') -Recurse -Force -ErrorAction SilentlyContinue
 # The card sign-in program (card + PIN signs the person in to Windows), .NET Framework 4.8: out\client\fido.
 $fido = Join-Path $PSScriptRoot '..\src\Kiosk.FidoBroker\FidoRun.csproj'
 & dotnet build $fido -c Release -o (Join-Path $OutputPath 'fido') --nologo
