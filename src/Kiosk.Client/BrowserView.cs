@@ -160,7 +160,8 @@ internal sealed class BrowserView : UserControl
     }
 
     /// <summary>Only the page: no bar above it (the element beside a page, part of that page's frame).</summary>
-    internal void HideBars() { toolbar.Visible = false; favorites.Visible = false; }
+    /// <summary>Menu → "Obok": only the document, also without the message line, so it is as tall as the page beside it.</summary>
+    internal void HideBars() { toolbar.Visible = false; favorites.Visible = false; message.Visible = false; }
 
     /// <summary>The page leaves <paramref name="width"/> px free at its right, between its bar and the line under it (the element beside it).</summary>
     internal void SetRightInset(int width) { if (pages.Padding.Right != width) pages.Padding = new Padding(0, 0, Math.Max(0, width), 0); }
