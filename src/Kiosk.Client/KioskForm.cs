@@ -75,6 +75,7 @@ internal sealed partial class KioskForm : Form
     private bool autoUpdating;
     /// <summary>Each load's number: a load that is overtaken (Konfiguracja saved meanwhile) does not show its older result.</summary>
     private int newsLoad;
+    private bool newsShown;
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
     private SharePointNews? sharePointNews;
@@ -1362,19 +1363,40 @@ internal sealed partial class KioskForm : Form
         {
             var show = config.NewsShow;
             List<NewsItem> mine = [];
+            // First load: the last copy of the share at once, the share itself may take a while (or be away).
+            if (show != NewsDisplay.Off && !newsShown)
+                try
+                {
+                    var early = await Task.Run(() => CentralConfig.NewsCopy(folder) is { } copy ? News.Load(copy) : []);
+                    if (early.Count > 0 && !IsDisposed && load == newsLoad)
+                    {
+                        if (show == NewsDisplay.BarsOnly) early = early.Where(n => n.IsBar).ToList();
+                        NewsSlides.Publish(early, config.NewsSeconds);
+                        desktop.SetNews(early, config.NewsSeconds, config.NewsSize);
+                    }
+                }
+                catch (Exception ex) { Audit.Write("news_failed", "kopia: " + ex.Message); }
+            newsShown = true;
             if (show != NewsDisplay.Off)
                 try { mine = await Task.Run(() => News.Load(CentralConfig.NewsFolderFor(folder))); }   // A share: through the Kiosk Card service.
                 catch (Exception ex) { Audit.Write("news_failed", ex.Message); }
             if (show == NewsDisplay.BarsOnly) mine = mine.Where(n => n.IsBar).ToList();
-            List<NewsItem> other = [];
-            if (show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated)
-                other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
             if (IsDisposed || load != newsLoad) return;
-            var all = News.Merge(mine, other, config.NewsOrder);
-            NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty
-            desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
-            screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
-            foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
+            void Show(List<NewsItem> other)
+            {
+                var all = News.Merge(mine, other, config.NewsOrder);
+                NewsSlides.Publish(all, config.NewsSeconds);   // Ekrany with kiosk:komunikaty
+                desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
+                screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
+                foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
+            }
+            bool sharePoint = show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated;
+            // The folder's messages at once; SharePoint (its sign-in can take a while) joins them when it answers.
+            Show(sharePoint && sharePointNews != null ? sharePointNews.Cached : []);
+            if (!sharePoint) return;
+            var other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
+            if (IsDisposed || load != newsLoad) return;
+            Show(other);
         }
         catch (Exception ex)
         {

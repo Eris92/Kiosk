@@ -242,10 +242,25 @@ internal static class CentralConfig
     {
         if (!folder.StartsWith(@"\\", StringComparison.Ordinal) && !Under(folder, MachineCache)) return folder;
         var answer = CardService.Call(new CardService.Request { Op = "syncnews" });
-        if (answer.Code == 0 && Current(NewsCache, News.FileName) is { } copy) return copy;
-        try { if (File.Exists(Path.Combine(folder, News.FileName))) return folder; }
+        if (answer.Code == 0 && Current(NewsCache, News.FileName) is { } copy) return Used(copy, "pobrane z " + answer.Message);
+        try { if (File.Exists(Path.Combine(folder, News.FileName))) return Used(folder, "usługa: " + answer.Message + "; czytam bezpośrednio"); }
         catch (Exception) { }
-        return Current(NewsCache, News.FileName) ?? folder;
+        var last = Current(NewsCache, News.FileName);
+        return Used(last ?? folder, "usługa: " + answer.Message + "; " + (last != null ? "ostatnia kopia" : "brak dostępu i brak kopii"));
+    }
+
+    /// <summary>The last copy of the share's messages (shown at start while the share is fetched); null for a local folder.</summary>
+    internal static string? NewsCopy(string folder) =>
+        folder.StartsWith(@"\\", StringComparison.Ordinal) || Under(folder, MachineCache) ? Current(NewsCache, News.FileName) : null;
+
+    private static string newsReported = "";
+
+    /// <summary>For the Kiosk's log: where the messages came from, once per change (the service's own log is SYSTEM's).</summary>
+    private static string Used(string folder, string how)
+    {
+        var line = folder + " (" + how + ")";
+        if (line != newsReported) { newsReported = line; Audit.Write("news_source", line); }
+        return folder;
     }
 
     /// <summary>The folder whose client.json this PC uses: the server's copy (C:\ProgramData\Kiosk\Central\…) or C:\ProgramData\Kiosk.</summary>

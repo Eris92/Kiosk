@@ -19,6 +19,8 @@ internal sealed class SharePointNews : IDisposable
     private string account = "";
     private bool signInAttached;
     private List<NewsItem> cached = [];
+    /// <summary>The last answer (shown while the next one is fetched).</summary>
+    internal List<NewsItem> Cached => cached;
     private DateTime fetchedAt = DateTime.MinValue;
 
     internal string LastError { get; private set; } = "";
