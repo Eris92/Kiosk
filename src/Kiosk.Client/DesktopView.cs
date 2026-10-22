@@ -146,16 +146,20 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The element beside the page was folded or unfolded.</summary>
     internal void RefreshSide() => ArrangeControls();
 
+    /// <summary>How wide the element beside a page <paramref name="pageWidth"/> px wide is (0 = none).</summary>
+    internal int SideWidth(int pageWidth) =>
+        sideContent == null ? 0 : sideContent is SidePage { Collapsed: true } folded ? folded.StripWidth : pageWidth * 45 / 100;
+
     /// <summary>The page in <paramref name="area"/> of the card; with a second element the page takes 55 % at the left.</summary>
     private void PlacePage(Rectangle area)
     {
         pageContent!.Bounds = area;
         // The page keeps its bar (Zamknij) and countdown across the whole width; the element beside it sits between them,
         // in the right part the page leaves free. Folded: only its ribbon at the right edge.
-        int width = sideContent == null ? 0 : sideContent is SidePage { Collapsed: true } folded ? folded.StripWidth : area.Width * 45 / 100;
+        int width = SideWidth(area.Width);
         if (pageContent is HelpBrowserForm form) form.SetSideInset(width);
-        else if (pageContent is ApplicationView { HostedWindow: var window } && window != IntPtr.Zero)
-            AppNative.PostMessage(window, HelpBrowserForm.SideInsetMessage, (IntPtr)width, IntPtr.Zero);
+        // The person's page (another program): its window leaves the part free, also when it appears later.
+        else if (pageContent is ApplicationView view) view.SideInset = width;
         if (sideContent == null) return;
         sideContent.Bounds = HelpBrowserForm.SideSlot(area, width, DeviceDpi);
         sideContent.BringToFront();

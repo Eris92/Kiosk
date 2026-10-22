@@ -210,7 +210,7 @@ internal sealed partial class KioskForm
         var request = new CardPageHost.Request(title, url, config.HelpCloseSeconds, config.AccentColor,
             HelpBrowserForm.SignInDomains.Concat(HelpPageDomains()).Append(host).ToArray(),
             logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
-            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks);
+            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks, desktop.SideWidth(area.Width));
         var entry = new ApplicationEntry { Name = title, Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
         try
         {

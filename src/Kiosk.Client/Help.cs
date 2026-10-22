@@ -300,6 +300,17 @@ internal sealed class HelpBrowserForm : Form
         return new Rectangle(area.Right - width, area.Top + top, width, Math.Max(0, area.Height - top - bottom));
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // The Kiosk runs under another account (and maybe another integrity level): let its message through.
+        if (TopLevel) ChangeWindowMessageFilterEx(Handle, SideInsetMessage, 1, IntPtr.Zero); // MSGFLT_ALLOW
+        UpdateSideRegion();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ChangeWindowMessageFilterEx(IntPtr window, int message, int action, IntPtr status);
+
     private void UpdateSideRegion()
     {
         if (!TopLevel || !IsHandleCreated) return;

@@ -47,6 +47,25 @@ internal sealed class ApplicationView : Panel
     }
 
     private void OnOverlaysChanged() => SyncOverlay(null, EventArgs.Empty);
+
+    private int sideInset, sentInset = -1;
+    /// <summary>
+    /// Menu → "Obok": how wide the Kiosk's element beside this page is. The page's window (another program) is told
+    /// whenever it changes, and again whenever its window is shown or moved, so a message lost while it was starting does not leave the element covered.
+    /// </summary>
+    internal int SideInset
+    {
+        get => sideInset;
+        set { sideInset = Math.Max(0, value); SendSideInset(force: true); }
+    }
+
+    private void SendSideInset(bool force)
+    {
+        if (HostedWindow == IntPtr.Zero || !force && sentInset == sideInset) return;
+        bool sent = AppNative.PostMessage(HostedWindow, HelpBrowserForm.SideInsetMessage, (IntPtr)sideInset, IntPtr.Zero);
+        if (sentInset != sideInset) Audit.Write("side_inset", sideInset + (sent ? "" : " failed"));
+        sentInset = sideInset;
+    }
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
@@ -201,8 +220,11 @@ internal sealed class ApplicationView : Panel
         AppNative.GetWindowRect(HostedWindow, out var r);
         bool wasVisible = AppNative.IsWindowVisible(HostedWindow);
         if (!wasVisible || r.Left != area.Left || r.Top != area.Top || r.Right - r.Left != area.Width || r.Bottom - r.Top != area.Height)
+        {
             AppNative.SetWindowPos(HostedWindow, IntPtr.Zero, area.Left, area.Top, area.Width, area.Height,
                 (uint)(0x0010 | 0x0004 | 0x0040 | 0x0020)); // NOACTIVATE | NOZORDER | SHOWWINDOW | FRAMECHANGED
+            if (sideInset > 0) SendSideInset(force: true);
+        }
     }
 
     /// <summary>
