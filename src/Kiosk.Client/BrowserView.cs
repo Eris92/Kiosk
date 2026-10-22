@@ -22,6 +22,12 @@ internal sealed class BrowserView : UserControl
     {
         "copyLinkLocation", "copy", "cut", "paste", "pasteAndMatchStyle", "selectAll", "undo", "redo", "back", "forward", "reload"
     };
+    /// <summary>Files that would start something when opened: never downloaded.</summary>
+    private static readonly HashSet<string> BlockedDownloads = new(StringComparer.Ordinal)
+    {
+        ".exe", ".msi", ".msix", ".appx", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".hta", ".scr", ".pif", ".lnk", ".url", ".reg", ".cpl", ".msc", ".jar", ".application", ".appref-ms", ".iso", ".img", ".vhd", ".vhdx"
+    };
     private readonly List<Tab> tabs = new();
     private Tab? active;
     private CoreWebView2Environment? environment;
@@ -282,6 +288,23 @@ internal sealed class BrowserView : UserControl
         PageScripts.Attach(core, kiosk: singlePage && !windowsAccount, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
         core.Settings.AreDevToolsEnabled = false;
+        // No way out of the Kiosk through the browser: Ctrl+P / Ctrl+S / Ctrl+O open Windows' file dialogs, which can
+        // browse and start programs. Reload stays on the toolbar; copy, paste and typing work as before.
+        core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+        core.Settings.HiddenPdfToolbarItems = CoreWebView2PdfToolbarItems.Save | CoreWebView2PdfToolbarItems.SaveAs |
+            (singlePage ? CoreWebView2PdfToolbarItems.Print : CoreWebView2PdfToolbarItems.None);
+        // Downloads: never Edge's flyout (its "Otwórz" and "Pokaż w folderze" start programs and Explorer); programs and
+        // scripts are not downloaded at all, and a guest page downloads nothing.
+        core.DownloadStarting += (_, e) =>
+        {
+            e.Handled = true;
+            var extension = Path.GetExtension(e.ResultFilePath).ToLowerInvariant();
+            if (singlePage || BlockedDownloads.Contains(extension))
+            {
+                e.Cancel = true;
+                Audit.Write("download_blocked", extension);
+            }
+        };
         // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.
         core.Settings.AreDefaultContextMenusEnabled = true;
         core.ContextMenuRequested += (_, e) =>
@@ -290,7 +313,7 @@ internal sealed class BrowserView : UserControl
             for (int i = items.Count - 1; i >= 0; i--)
                 if (!AllowedMenuItems.Contains(items[i].Name)) items.RemoveAt(i);
             var target = e.ContextMenuTarget;
-            if (target.HasLinkUri && IsWebAddress(target.LinkUri) && environment != null)
+            if (!singlePage && target.HasLinkUri && IsWebAddress(target.LinkUri) && environment != null)   // A single page has no tabs to show it in.
             {
                 var link = target.LinkUri;
                 var open = environment.CreateContextMenuItem("Otwórz w nowej karcie", null, CoreWebView2ContextMenuItemKind.Command);
@@ -321,7 +344,7 @@ internal sealed class BrowserView : UserControl
         // account the Kiosk runs under. Windows asks for the card PIN. Certificates of other cards are never offered.
         core.ClientCertificateRequested += (_, e) =>
         {
-            var fromCard = e.MutuallyTrustedCertificates.Where(c => cardCertificates.Contains(c.ToX509Certificate2().Thumbprint)).ToList();
+            var fromCard = e.MutuallyTrustedCertificates.Where(c => { using var x = c.ToX509Certificate2(); return cardCertificates.Contains(x.Thumbprint); }).ToList();
             if (fromCard.Count > 0) e.SelectedCertificate = fromCard[0];
             // Otherwise continue without a certificate: never offer one that is not on this person's card.
             e.Handled = true;

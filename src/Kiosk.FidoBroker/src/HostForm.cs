@@ -258,6 +258,8 @@ namespace FidoRun
                     {
                         log.Write("AccountChoice=CancelledOrFailed; " + error.GetType().Name + "; HRESULT=" + Status.Hex(error.HResult));
                         state.Text = "Wybór konta nie został zakończony. Logowanie Windows nie zostało rozpoczęte. " + error.Message;
+                        // The Kiosk waits for an answer: tell it at once instead of letting it wait for its time limit.
+                        if (options.Broker) KioskBroker.Failed("Logowanie kartą nie może wystartować na tej wersji Windows (" + error.Message + ").");
                         return;
                     }
                 }
@@ -457,7 +459,8 @@ namespace FidoRun
             KeyPreview = true;
             KeyDown += delegate(object sender, KeyEventArgs e)
             {
-                if (e.Control && e.Shift && e.KeyCode == Keys.L) { e.Handled = true; OpenLog(); }
+                // Not in the Kiosk: there this window runs as SYSTEM, and Notepad's Open dialog would start anything as SYSTEM.
+                if (e.Control && e.Shift && e.KeyCode == Keys.L && !options.Broker) { e.Handled = true; OpenLog(); }
             };
 
             TableLayoutPanel outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3 };
@@ -650,7 +653,7 @@ namespace FidoRun
             button.Padding = new Padding(16, 6, 16, 6); button.Margin = new Padding(0, 0, 12, 4);
         }
 
-        private void OpenLog() { System.Diagnostics.Process.Start("notepad.exe", "\"" + log.PathName + "\""); }
+        private void OpenLog() { if (!options.Broker) System.Diagnostics.Process.Start("notepad.exe", "\"" + log.PathName + "\""); }
 
         public void Post(Action action)
         {

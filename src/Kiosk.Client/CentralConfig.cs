@@ -106,13 +106,15 @@ internal static class CentralConfig
     {
         try
         {
-            source = source.Trim().Trim('"');
+            // "//server/share" is a share too: one spelling, so the check against the saved server below sees it.
+            source = source.Trim().Trim('"').Replace('/', '\\');
             if (source.Length == 0 || !Path.IsPathFullyQualified(source)) return new CardService.Response { Code = -2, Message = "podaj pełną ścieżkę, np. \\\\serwer\\kiosk" };
             // The service signs in to the server as the computer (or the saved account): any other server could
             // collect that sign-in. A person may test only the saved server; another one, an administrator.
             var saved = SavedServer();
             var sameServer = saved != null && string.Equals(Server(source), saved, StringComparison.OrdinalIgnoreCase);
-            if (savedAccount && Server(source) != null && !sameServer && !administrator)
+            // Not only with the saved account: the computer's own sign-in must not go to any other server either.
+            if (Server(source) != null && !sameServer && !administrator)
                 return new CardService.Response { Code = -2, Message = "inny serwer niż zapisany – sprawdzi go Konfiguracja administratora (Ctrl+Alt+K)" };
             using (typed is { User.Length: > 0 } ? Connect(source, new ShareAccount(typed.User.Trim(), typed.Password)) : savedAccount && sameServer ? Connect(source) : null)
             {

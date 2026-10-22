@@ -740,7 +740,12 @@ internal sealed partial class DesktopView
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
         // A page starts right after the left column's line: no gap, no second line.
-        if (page) return new Rectangle(side + 1, bar, Width - side - 1, Height - bar);
+        if (page)
+        {
+            // The messages never play on under a page (a film's sound went on behind it).
+            if (News.Visible) News.Visible = false;
+            return new Rectangle(side + 1, bar, Width - side - 1, Height - bar);
+        }
         cardWidth = Math.Min(cardWidth, middle.Width);
         bool news = false;
         if (PortalHome)

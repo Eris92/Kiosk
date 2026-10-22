@@ -243,6 +243,7 @@ internal sealed partial class KioskForm : Form
     private void Park(UserSession session, string reason)
     {
         menu.HideMenu();
+        DismissQuestions();
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
         if (!session.Locked) session.InactiveSince = DateTime.UtcNow;
         session.Locked = true;
@@ -257,6 +258,7 @@ internal sealed partial class KioskForm : Form
         if (ShellMode) { DisconnectWindows(reason); return; }
         if (current is not { Locked: false } session) return;
         menu.HideMenu();
+        DismissQuestions();
         session.Locked = true;
         session.InactiveSince = DateTime.UtcNow - TimeSpan.FromMilliseconds(idleMilliseconds);
         ShowView(desktop);
@@ -369,6 +371,8 @@ internal sealed partial class KioskForm : Form
     private async Task<FidoSignIn.Outcome?> SignInWithCardAsync()
     {
         verifying = true;
+        // The PIN screen is drawn in the card, where a Szybka pomoc page would hide it.
+        helpBrowser?.Close();
         desktop.ShowSignIn(true);
         try { return await FidoSignIn.SignInAsync(desktop.SignInPlace, desktop.DeviceDpi); }
         finally { verifying = false; desktop.ShowSignIn(false); cardKey = reader.Snapshot(config.ReaderName); }
@@ -461,7 +465,7 @@ internal sealed partial class KioskForm : Form
 
     private void CloseSession(UserSession session, string reason)
     {
-        if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
+        if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
         session.Logon = null;
@@ -486,15 +490,46 @@ internal sealed partial class KioskForm : Form
 
     private bool ConfirmEnd(IEnumerable<UserSession> affected) =>
         !affected.Any(s => s.HasWork) ||
-        MessageBox.Show(this, "Zakończyć sesję? Niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte.",
-            "Wyloguj", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        Ask("Zakończyć sesję? Niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte.", "Wyloguj");
 
     private bool ConfirmClose(string key)
     {
         string? question = key == NotesKey && current?.Notes?.Dirty == true ? "Zamknąć notatnik? Niezapisany tekst zostanie usunięty." :
             key.StartsWith("app:") ? "Zamknąć aplikację? Niezapisane dane mogą zostać utracone." :
             key.StartsWith("rdp:") ? "Rozłączyć ten pulpit zdalny?" : null;
-        return question == null || MessageBox.Show(this, question, "Zamknij okno", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        return question == null || Ask(question, "Zamknij okno");
+    }
+
+    /// <summary>
+    /// A Tak/Nie question of the person working now. Answered "Tak" only counts while the same person still works:
+    /// a card taken away or the lock closes the question (see <see cref="DismissQuestions"/>) and it reads as "Nie".
+    /// </summary>
+    private bool Ask(string question, string title)
+    {
+        var asker = current;
+        return MessageBox.Show(this, question, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes &&
+            current == asker && (asker == null || !asker.Locked);
+    }
+
+    private ContextMenuStrip? taskMenu;
+
+    /// <summary>
+    /// The lock, a card taken away or a session closed: questions and menus of the person who left close with "Nie",
+    /// so nobody else finds them over the lock screen (they block the window, and their "Tak" would act for someone else).
+    /// </summary>
+    private void DismissQuestions()
+    {
+        taskMenu?.Close();
+        AppNative.EnumThreadWindows(AppNative.GetCurrentThreadId(), (window, _) =>
+        {
+            var name = new System.Text.StringBuilder(16);
+            if (AppNative.GetClassName(window, name, name.Capacity) > 0 && name.ToString() == "#32770")
+            {
+                AppNative.PostMessage(window, 0x0111, (IntPtr)7, IntPtr.Zero);   // WM_COMMAND IDNO (a Tak/Nie box has no Anuluj)
+                AppNative.PostMessage(window, 0x0111, (IntPtr)2, IntPtr.Zero);   // IDCANCEL: other questions, file dialogs
+            }
+            return true;
+        }, IntPtr.Zero);
     }
 
     // ---------------------------------------------------------------- screens while nobody works
@@ -569,7 +604,8 @@ internal sealed partial class KioskForm : Form
         if (screens.Length < 2) menuStrip.Items.Add(new ToolStripMenuItem("Podłączony jest jeden ekran") { Enabled = false });
         menuStrip.Items.Add(new ToolStripSeparator());
         menuStrip.Items.Add(closeItem);
-        menuStrip.Closed += (_, _) => BeginInvoke(menuStrip.Dispose);
+        menuStrip.Closed += (_, _) => { if (taskMenu == menuStrip) taskMenu = null; BeginInvoke(menuStrip.Dispose); };
+        taskMenu = menuStrip;
         menuStrip.Show(button, point);
     }
 
@@ -748,10 +784,12 @@ internal sealed partial class KioskForm : Form
     private void UpdateMainIdle()
     {
         // While Konfiguracja is open the screens accept input, so an administrator can sign their pages in (read-only account).
-        foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settingsView != null;
+        // Only while that administrator still works: Konfiguracja left open under the lock makes no screen usable for others.
+        bool settings = settingsView != null && CanUseApps;
+        foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.Interactive = settings;
         if (mainIdle == null || mainIdle.IsDisposed) return;
         // Signed in and working, checking a PIN or in Konfiguracja: the Kiosk stays. Locked or nobody there: back to the content.
-        bool someone = current is { Locked: false } || verifying || settingsView != null || desktop.AskingPin || helpBrowser != null || SelfService && cardLogon != null || CardJustPlaced;
+        bool someone = current is { Locked: false } || verifying || settings || desktop.AskingPin || helpBrowser != null || SelfService && cardLogon != null || CardJustPlaced;
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
@@ -971,7 +1009,7 @@ internal sealed partial class KioskForm : Form
     private void RunCommand(CommandEntry command)
     {
         if (current is not { } session) return;
-        if (command.Confirm && MessageBox.Show(this, "Uruchomić polecenie „" + command.Name + "”?", "Polecenie", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (command.Confirm && !Ask("Uruchomić polecenie „" + command.Name + "”?", "Polecenie")) return;
         var ext = Path.GetExtension(command.Path).ToLowerInvariant();
         var system = Environment.SystemDirectory;
         var (program, arguments) = ext switch
@@ -1025,7 +1063,7 @@ internal sealed partial class KioskForm : Form
         string text = sessions.Values.Any(x => x.HasWork)
             ? "Wszystkie sesje zostaną zakończone: niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte."
             : "Wszystkie sesje zostaną zakończone.";
-        if (MessageBox.Show(this, text, action, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (!Ask(text, action)) return;
         Audit.Write(restart ? "computer_restart_requested" : "computer_shutdown_requested", current?.Identity.Name ?? "");
         if (config.TestMode) { notice = "Tryb testowy: komputer nie został " + (restart ? "uruchomiony ponownie." : "wyłączony."); RefreshChrome(); return; }
         closeConfirmed = true;
@@ -1054,7 +1092,9 @@ internal sealed partial class KioskForm : Form
             Text = "„Uruchom ponownie” zamyka Kiosk i od razu otwiera go od nowa (np. po zmianie konfiguracji).",
             Buttons = { restart, close, TaskDialogButton.Cancel }
         };
+        var asker = current;
         var result = TaskDialog.ShowDialog(this, page);
+        if (current != asker || asker?.Locked == true) return;   // Closed by the lock: nothing happens.
         if (result == close) { Audit.Write("client_close_requested"); Close(); }
         else if (result == restart)
         {

@@ -26,6 +26,12 @@ internal sealed class CtapCard : IDisposable
     internal CtapCard(string reader)
     {
         Check(SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context), "Brak usługi kart");
+        try { Connect(reader); }
+        catch { Dispose(); throw; }   // No card, no FIDO applet: the reader is released (the service runs for months).
+    }
+
+    private void Connect(string reader)
+    {
         // Right after another program (or a card reset) used the card it can refuse briefly: reconnect and retry.
         for (int attempt = 1; ; attempt++)
         {

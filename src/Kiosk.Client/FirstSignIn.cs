@@ -34,7 +34,8 @@ internal static class FirstSignIn
         int back;
         lock (gate)
         {
-            if (kioskSession < 0 || session == kioskSession || DateTime.UtcNow > armedUntil) return;
+            // Only the sign-in on this PC's screen: an administrator's remote session at that moment is left alone.
+            if (kioskSession < 0 || session == kioskSession || DateTime.UtcNow > armedUntil || session != WTSGetActiveConsoleSessionId()) return;
             back = kioskSession;
             kioskSession = -1;
         }

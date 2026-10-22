@@ -10,6 +10,10 @@ internal static class Program
     private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        // As the Windows shell the Kiosk must not vanish over one unexpected error in a click or a timer: it is logged.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => Audit.Write("unhandled_error", e.Exception.GetType().Name + ": " + e.Exception.Message);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Audit.Write("fatal_error", e.ExceptionObject.ToString() ?? "");
         if (args.Length > 0 && args[0] == "--app-host-fixture")
         {
             using var fixture = new Form { Text = "Kiosk host test", Size = new Size(480, 320) };
@@ -62,7 +66,7 @@ internal static class Program
         {
             if (selfTest)
             {
-                using var form = new KioskForm(new Config { RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
+                using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
                 {
@@ -95,7 +99,8 @@ internal static class Program
                 try { first = instance.WaitOne(TimeSpan.FromSeconds(15)); }
                 catch (AbandonedMutexException) { first = true; }
             }
-            if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
+            // Already running here (e.g. the watchdog and Windows both started it after a crash): this copy leaves quietly.
+            if (!first) { Audit.Write("already_running"); return 0; }
             // A new installation asks once: this PC's own configuration, or a server's (FirstRunSetup).
             if (FirstRunSetup.RunIfNeeded(path, loaded.Local))
             {
@@ -247,7 +252,7 @@ internal sealed class CardReader : IDisposable
         if (result != 0) { Reset(); return null; }
         var names = new char[size];
         if (Native.SCardListReaders(context, null, names, ref size) != 0) { Reset(); return null; }
-        var states = new string(names).Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        var states = new string(names).Split('\0', StringSplitOptions.RemoveEmptyEntries)
             .Select(n => new Native.ReaderState { Reader = n, Atr = new byte[36] }).ToArray();
         if (states.Length == 0) return [];
         if (Native.SCardGetStatusChange(context, 0, states, (uint)states.Length) != 0) { Reset(); return null; }

@@ -52,12 +52,21 @@ internal static class CardService
         {
             using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut);
             pipe.Connect(3000);
+            // Only the real service answers (it runs in session 0, where a signed-in user cannot start anything):
+            // a program that took the pipe's name first never sees a PIN.
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var server) || !ProcessIdToSessionId(server, out var serverSession) || serverSession != 0)
+                return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie odpowiada (nieznany serwer potoku)." };
             var line = JsonSerializer.SerializeToUtf8Bytes(request);
             pipe.Write(line);
             pipe.WriteByte((byte)'\n');
             pipe.Flush();
             using var reader = new StreamReader(pipe, Encoding.UTF8);
             return JsonSerializer.Deserialize<Response>(reader.ReadLine() ?? "{}") ?? new Response { Code = -1, Message = "Pusta odpowiedź usługi." };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // The service restarting (an update) or a broken answer: an error the caller shows, not a crash.
+            return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie odpowiedziała: " + ex.Message };
         }
         catch (TimeoutException)
         {
@@ -184,12 +193,44 @@ internal static class CardService
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
         while (!stopping.IsSet)
         {
+            NamedPipeServerStream? pipe = null;
             try
             {
-                using var pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 4, PipeTransmissionMode.Byte, PipeOptions.None, 4096, 4096, security);
+                pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+                    PipeTransmissionMode.Byte, PipeOptions.None, 4096, 4096, security);
                 pipe.WaitForConnection();
+                // Each client on its own thread: a slow request (a server share, an update) or a client that sends
+                // nothing never holds up the PIN, the sign-in or the watchdog's reports. The next instance waits at once.
+                var client = pipe;
+                pipe = null;
+                ThreadPool.QueueUserWorkItem(_ => Serve(client));
+            }
+            catch (Exception) { pipe?.Dispose(); Thread.Sleep(200); } // One bad client must not stop the service.
+        }
+    }
+
+    /// <summary>One request of a kind at a time: the card (two PIN checks at once would confuse it), the shared files, an update.</summary>
+    private static readonly object cardWork = new(), fileWork = new(), updateWork = new();
+
+    private static object Gate(string op) => op switch
+    {
+        "update" or "dotnet" => updateWork,
+        "syncconfig" or "syncnews" or "stat" or "syncstats" or "testnetwork" => fileWork,
+        _ => cardWork,
+    };
+
+    private static void Serve(NamedPipeServerStream pipe)
+    {
+        using (pipe)
+        {
+            // A client that connects and sends nothing is cut off.
+            using var silent = new System.Threading.Timer(_ => { try { pipe.Dispose(); } catch (Exception) { } }, null, 10_000, Timeout.Infinite);
+            try
+            {
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
                 var line = reader.ReadLine();
+                silent.Change(Timeout.Infinite, Timeout.Infinite);
+                if (line is { Length: > 65536 }) return;
                 var request = line == null ? null : JsonSerializer.Deserialize<Request>(line);
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }
                     // The session comes from Windows (the pipe's client), not from the request.
@@ -205,15 +246,17 @@ internal static class CardService
                     // Card + PIN sign-in: the PIN screen for the Kiosk process and session Windows names, nobody else.
                     : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe), request.Embed)
-                    : Handle(request);
+                    : Locked(Gate(request.Op), () => Handle(request));
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');
                 pipe.Flush();
                 pipe.WaitForPipeDrain();
             }
-            catch (Exception) { Thread.Sleep(200); } // One bad client must not stop the service.
+            catch (Exception) { } // One bad client must not stop the service.
         }
     }
+
+    private static Response Locked(object gate, Func<Response> action) { lock (gate) return action(); }
 
     private static string? ClientProgram(NamedPipeServerStream pipe)
     {
@@ -254,5 +297,7 @@ internal static class CardService
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr RegisterServiceCtrlHandlerEx(string name, HandlerEx handler, IntPtr context);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetServiceStatus(IntPtr handle, ref ServiceStatus status);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientSessionId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out int session);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ProcessIdToSessionId(uint process, out uint session);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
 }

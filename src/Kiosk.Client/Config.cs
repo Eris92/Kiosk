@@ -177,7 +177,8 @@ internal sealed record Config
     public string ConfigSource { get; init; } = "";
     /// <summary>Pages the Kiosk clicks through or signs in to by itself (cookies, sign-in with a shared account).</summary>
     public PageAction[] PageActions { get; init; } = [];
-    public bool TestMode { get; init; } = true;
+    /// <summary>Tryb testowy: everybody may close the Kiosk, Uruchom ponownie / Wyłącz do nothing. Off unless set.</summary>
+    public bool TestMode { get; init; }
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
     internal const int CurrentVersion = 5;

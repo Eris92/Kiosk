@@ -63,7 +63,16 @@ internal sealed record PageAction
     {
         if (Url.Trim().Length == 0 || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
         var rule = Url.Trim();
-        if (rule.Contains("://")) return url.StartsWith(rule, StringComparison.OrdinalIgnoreCase);
+        if (rule.Contains("://"))
+        {
+            // The same scheme and host exactly (https://portal.firma.pl must not match portal.firma.pl.evil.com),
+            // then the path from a "/" boundary: the shared account's password is typed only where it belongs.
+            if (!Uri.TryCreate(rule, UriKind.Absolute, out var allowed) || allowed.Scheme != uri.Scheme ||
+                !allowed.Host.Equals(uri.Host, StringComparison.OrdinalIgnoreCase) || allowed.Port != uri.Port) return false;
+            var path = allowed.AbsolutePath.TrimEnd('/');
+            return path.Length == 0 || uri.AbsolutePath.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                uri.AbsolutePath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
+        }
         rule = rule.TrimEnd('/').ToLowerInvariant();
         var host = uri.Host.ToLowerInvariant();
         return host == rule || host.EndsWith("." + rule, StringComparison.Ordinal);

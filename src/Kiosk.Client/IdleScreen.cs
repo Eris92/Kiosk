@@ -23,7 +23,12 @@ internal sealed class IdleScreen : Form
     internal bool Interactive
     {
         get => Enabled;
-        set { if (Enabled != value) Enabled = value; }
+        set
+        {
+            if (Enabled != value) Enabled = value;
+            // A Chromium program is its own window over this one: Enabled here does not reach it.
+            if (app != null) app.InputEnabled = value;
+        }
     }
     internal DateTime ShownAt { get; private set; }
 
@@ -47,7 +52,13 @@ internal sealed class IdleScreen : Form
             Bounds = Target.Bounds;
         };
         // A program that closed by itself (or crashed) is started again.
-        watch.Tick += async (_, _) => { if (app != null && app.Started && !app.Refresh()) await RestartAppAsync(); };
+        watch.Tick += async (_, _) =>
+        {
+            if (app == null || !app.Started || app.Refresh() || IsDisposed) return;
+            // A program that cannot start again must not take the whole Kiosk (the Windows shell) down with it.
+            try { await RestartAppAsync(); }
+            catch (Exception ex) { Audit.Write("idle_screen_error", ex.Message); }
+        };
     }
 
     private readonly List<AlertBar> bars = [];
@@ -90,6 +101,8 @@ internal sealed class IdleScreen : Form
                 await web.EnsureCoreWebView2Async(environment);
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                web.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;   // No print / save dialogs.
+                web.CoreWebView2.DownloadStarting += (_, e) => { e.Handled = true; e.Cancel = true; };
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.
                 PageScripts.Attach(web.CoreWebView2, kiosk: true);
                 web.CoreWebView2.Navigate(content.Url);
@@ -114,6 +127,7 @@ internal sealed class IdleScreen : Form
         app = new ApplicationView();
         Controls.Add(app);
         app.BringToFront();   // Below any message bars docked at the top.
+        app.InputEnabled = Enabled;
         await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
     }
 

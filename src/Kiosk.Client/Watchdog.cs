@@ -36,7 +36,8 @@ internal static class Watchdog
             _ = Task.Run(() =>
             {
                 if (CardService.Call(new CardService.Request { Op = "watch", Source = arguments }).Code == 0) registered = true;
-                else skip = 20; // No service: ask again in 5 minutes.
+                // No service: ask again in 5 minutes. Once watched, never pause: missed reports would read as a hung Kiosk.
+                else if (!registered) skip = 20;
             });
         }
         timer.Tick += (_, _) => Beat();

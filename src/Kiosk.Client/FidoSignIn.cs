@@ -20,8 +20,10 @@ internal sealed class FidoSignIn : IDisposable
     internal const string Folder = "fido";
     private const string Program = "FidoRun.exe";
     private readonly string pipe;
+    /// <summary>The sign-in program the service started: only its pipe is believed (0 = not known).</summary>
+    private readonly uint server;
 
-    private FidoSignIn(string pipe) { this.pipe = pipe; }
+    private FidoSignIn(string pipe, uint server) { this.pipe = pipe; this.server = server; }
 
     internal string Sid { get; private set; } = "";
     internal string WindowsName { get; private set; } = "";
@@ -50,7 +52,7 @@ internal sealed class FidoSignIn : IDisposable
         try { started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin", Embed = embed })); }
         catch (Exception ex) { Audit.Write("fido_prepare_failed", LastError = ex.Message); return null; }
         if (started.Code != 0) { Audit.Write("fido_prepare_failed", LastError = started.Message); return null; }
-        var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId);
+        var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId, uint.TryParse(started.Message, out var pid) ? pid : 0);
         try
         {
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
@@ -124,6 +126,9 @@ internal sealed class FidoSignIn : IDisposable
     {
         using var client = new NamedPipeClientStream(".", pipe, PipeDirection.InOut);
         client.Connect(connectMs);
+        // Another program that took this pipe's name first could answer "signed in as an administrator": not believed.
+        if (server != 0 && (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var answering) || answering != server))
+            return "ERROR Logowanie kartą: odpowiedział nieznany program.";
         var bytes = Encoding.UTF8.GetBytes(request + "\n");
         client.Write(bytes);
         client.Flush();
@@ -194,6 +199,7 @@ internal sealed class FidoSignIn : IDisposable
 
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
     [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool OpenProcessToken(IntPtr process, uint access, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token);

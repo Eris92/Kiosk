@@ -10,6 +10,8 @@
     <DebugType>embedded</DebugType>
     <!-- Uses the .NET 10 Desktop Runtime installed in Windows (scripts\Build.ps1 publishes without its own .NET). -->
     <SelfContained>false</SelfContained>
+    <!-- DOTNET_STARTUP_HOOKS cannot load foreign code into the Kiosk (the service trusts the installed Kiosk program). -->
+    <StartupHookSupport>false</StartupHookSupport>
     <!-- Designer serialization of public control properties: these controls are built in code, never in the designer. -->
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
     <UseWindowsForms>true</UseWindowsForms>
