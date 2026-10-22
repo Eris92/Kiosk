@@ -6,7 +6,8 @@ function Get-KioskMissingRuntime([string]$SourcePath) {
     if (-not (Test-Path $config) -or (Test-Path (Join-Path $SourcePath 'hostfxr.dll'))) { return }
     $options = (Get-Content $config -Raw | ConvertFrom-Json).runtimeOptions
     $frameworks = @($options.frameworks) + @($options.framework) | Where-Object { $_ }
-    $shared = Join-Path $env:ProgramFiles 'dotnet\shared'
+    # 64-bit .NET also from a 32-bit PowerShell (some deployment tools), where ProgramFiles is Program Files (x86).
+    $shared = Join-Path $(if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }) 'dotnet\shared'
     foreach ($framework in $frameworks) {
         $major = ($framework.version -split '\.')[0]
         if (-not (Get-ChildItem (Join-Path $shared $framework.name) -Directory -Filter "$major.*" -ErrorAction SilentlyContinue)) { "$($framework.name) $major" }
