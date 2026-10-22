@@ -88,12 +88,17 @@ jobs:
         env:
           KIOSK_SIGNING_KEY: ${{ secrets.KIOSK_SIGNING_KEY }}
         run: |
-          if (-not $env:KIOSK_SIGNING_KEY) { Write-Warning 'KIOSK_SIGNING_KEY is not set: this package is unsigned and installed Kiosks will not install it.'; exit 0 }
+          # A package installed Kiosks would refuse is never published.
+          if (-not $env:KIOSK_SIGNING_KEY) { throw 'KIOSK_SIGNING_KEY is not set: installed Kiosks would refuse an unsigned package.' }
           $der = [Convert]::FromBase64String(($env:KIOSK_SIGNING_KEY -replace '-----[^-]+-----', '' -replace '\s', ''))
           $key = [System.Security.Cryptography.ECDsaCng]::new([System.Security.Cryptography.CngKey]::Import($der, [System.Security.Cryptography.CngKeyBlobFormat]::Pkcs8PrivateBlob))
           $hash = (Get-FileHash package/Kiosk-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           $data = [Text.Encoding]::UTF8.GetBytes("$env:KIOSK_VERSION`n$hash")
           $signature = $key.SignData($data, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+          $pem = [regex]::Match((Get-Content src/Kiosk.Client/Updater.cs -Raw), '-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----').Value -replace '[ \t]+', ''
+          $public = [System.Security.Cryptography.ECDsa]::Create()
+          $public.ImportFromPem($pem)
+          if (-not $public.VerifyData($data, $signature, [System.Security.Cryptography.HashAlgorithmName]::SHA256)) { throw 'KIOSK_SIGNING_KEY does not match the public key in Updater.cs.' }
           [Convert]::ToBase64String($signature) | Set-Content package/Kiosk-win-x64.zip.sig -NoNewline -Encoding ascii
           Write-Output "Signed $env:KIOSK_VERSION ($hash)"
       - name: Publish release

@@ -94,9 +94,14 @@ internal static class Updater
     /// <summary>
     /// The public half of the key the build in GitHub signs each package with (secret KIOSK_SIGNING_KEY). The signature
     /// covers the tag and the package's SHA-256, so an old package cannot pass as a new release either.
-    /// Empty until the owner's key is set up: packages are then not checked yet (logged as update_unsigned_allowed).
+    /// The owner's key (scripts\New-KioskSigningKey.ps1); its private half is the GitHub secret KIOSK_SIGNING_KEY.
     /// </summary>
-    private const string SigningKey = "";
+    private const string SigningKey = """
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElQiilb9sgWxDGnrOAXqS7K25kgnC
+        KX9+i5+46zCT5bptnDLwowE4x2r/iqCYY7Gampw6iTFdpmqqR2iJXT03NQ==
+        -----END PUBLIC KEY-----
+        """;
 
     private static async Task VerifySignatureAsync(Release release, string zip)
     {
