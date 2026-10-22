@@ -120,7 +120,7 @@ internal static class Updater
         if (!key.VerifyData(signed, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
         {
             Audit.Write("update_signature_bad", release.Tag);
-            throw new InvalidDataException("Podpis wydania " + release.Tag + " się nie zgadza – nie instaluję go.");
+            throw new InvalidDataException("Podpis wydania " + release.Tag + " się nie zgadza – nie instaluję go. Gdy ta wersja Kiosku ma inny klucz, zainstaluj raz paczkę z GitHub ręcznie (Install-KioskShell.ps1).");
         }
         Audit.Write("update_signature_ok", release.Tag);
     }

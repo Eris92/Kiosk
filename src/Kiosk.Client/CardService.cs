@@ -57,7 +57,8 @@ internal static class CardService
             pipe.Connect(3000);
             // Only the real service answers (it runs in session 0, where a signed-in user cannot start anything):
             // a program that took the pipe's name first never sees a PIN.
-            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var server) || !ProcessIdToSessionId(server, out var serverSession) || serverSession != 0)
+            // Windows names the server's session itself (a standard user may not open a SYSTEM process to ask it).
+            if (!GetNamedPipeServerSessionId(pipe.SafePipeHandle, out var serverSession) || serverSession != 0)
                 return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie odpowiada (nieznany serwer potoku)." };
             var line = JsonSerializer.SerializeToUtf8Bytes(request);
             pipe.Write(line);
@@ -305,7 +306,6 @@ internal static class CardService
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr RegisterServiceCtrlHandlerEx(string name, HandlerEx handler, IntPtr context);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetServiceStatus(IntPtr handle, ref ServiceStatus status);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientSessionId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out int session);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ProcessIdToSessionId(uint process, out uint session);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerSessionId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint session);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint process);
 }
