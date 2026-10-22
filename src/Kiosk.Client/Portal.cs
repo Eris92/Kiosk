@@ -49,8 +49,12 @@ internal static class TileIcons
     internal static bool InBottomGroup(string path) => bottom.Contains(path);
 
     /// <summary>Menu → Kategorie: the icons chosen there, by the category's path and by its own name.</summary>
+    private static MenuCategory[]? categoriesSet;
+
     internal static void SetCategories(MenuCategory[] categories)
     {
+        if (ReferenceEquals(categoriesSet, categories)) return;   // The same configuration: nothing to rebuild.
+        categoriesSet = categories;
         var icons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var category in categories)
             if (ByName(category.Icon) is { } glyph)

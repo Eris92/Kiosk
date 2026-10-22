@@ -64,7 +64,8 @@ internal sealed class ApplicationView : Panel
     internal int SideInset
     {
         get => sideInset;
-        set { sideInset = Math.Max(0, value); SendSideInset(force: true); }
+        // Set on every layout of the card: told again only when it changes (a shown or moved window is told anyway).
+        set { var width = Math.Max(0, value); if (width == sideInset && sentInset == width) return; sideInset = width; SendSideInset(force: true); }
     }
 
     private void SendSideInset(bool force)
@@ -409,7 +410,12 @@ internal sealed class ApplicationView : Panel
             foreach (var dialog in parkedDialogs) if (AppNative.IsWindow(dialog)) AppNative.ShowWindow(dialog, 5);   // SW_SHOW
             parkedDialogs.Clear();
         }
-        if (overlay) SyncOverlay(null, EventArgs.Empty);
+        if (overlay)
+        {
+            SyncOverlay(null, EventArgs.Empty);
+            // A hidden view's window stays hidden: no need to follow it 12× a second meanwhile.
+            if (Visible) overlaySync.Start(); else overlaySync.Stop();
+        }
     }
 
     /// <summary>The program's visible windows other than its main one: its job's, or (no job) those owned by the main one.</summary>

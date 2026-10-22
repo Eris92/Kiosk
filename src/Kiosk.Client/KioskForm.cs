@@ -1512,7 +1512,9 @@ internal sealed partial class KioskForm : Form
 
     private void ShowView(Control view)
     {
-        foreach (Control child in surface.Controls) child.Visible = child == view;
+        surface.SuspendLayout();
+        foreach (Control child in surface.Controls) if (child.Visible != (child == view)) child.Visible = child == view;
+        surface.ResumeLayout(false);
         view.BringToFront();
         view.Focus();
         (view as ApplicationView)?.BringToUser();

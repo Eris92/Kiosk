@@ -17,7 +17,14 @@ internal sealed class BrowserView : UserControl
         internal bool Blocked { get; set; }
     }
 
-    private const string ProfileName = "kiosk";
+    /// <summary>"kiosk" in a person's own folder; a page of its own (InPrivate) in the Kiosk's shared browser otherwise.</summary>
+    private readonly string profileName;
+    /// <summary>
+    /// InPrivate pages (guests, Szybka pomoc, screens) share one browser per Kiosk process, each in its own InPrivate
+    /// profile: a page opens without starting a whole Edge each time, and still keeps nothing from another page.
+    /// </summary>
+    private static Task<CoreWebView2Environment>? sharedEnvironment;
+    private bool shared;
     private static readonly HashSet<string> AllowedMenuItems = new(StringComparer.Ordinal)
     {
         "copyLinkLocation", "copy", "cut", "paste", "pasteAndMatchStyle", "selectAll", "undo", "redo", "back", "forward", "reload"
@@ -90,9 +97,11 @@ internal sealed class BrowserView : UserControl
         sharedFolder = profileFolder != null;
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
+        shared = profileFolder == null && !windowsAccount;
         userDataFolder = profileFolder ?? (windowsAccount
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
-            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N")));
+            : SharedFolder);
+        profileName = shared ? "page-" + Guid.NewGuid().ToString("N") : "kiosk";
         this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
@@ -246,7 +255,7 @@ internal sealed class BrowserView : UserControl
             if (delegated.Length > 0) arguments.Add("--auth-negotiate-delegate-allowlist=\"" + string.Join(",", delegated) + "\"");
             if (arguments.Count > 0) environmentOptions.AdditionalBrowserArguments = string.Join(" ", arguments);
         }
-        environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
+        environment = shared ? await SharedEnvironmentAsync() : await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
         if (IsDisposed) return;
         await AddTabAsync(url);
         message.Text = "";
@@ -279,7 +288,7 @@ internal sealed class BrowserView : UserControl
         SelectTab(tab);
 
         var options = environment.CreateCoreWebView2ControllerOptions();
-        options.ProfileName = ProfileName;
+        options.ProfileName = profileName;
         options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
         await web.EnsureCoreWebView2Async(environment, options);
         if (web.IsDisposed) return null;
@@ -463,21 +472,49 @@ internal sealed class BrowserView : UserControl
         else message.Text = "Podaj adres http:// lub https://.";
     }
 
-    protected override void Dispose(bool disposing)
+    private static string SharedFolder => Path.Combine(Path.GetTempPath(), "KioskBrowser", Environment.ProcessId.ToString());
+
+    /// <summary>The shared InPrivate browser; started again after its processes ended (crash, update of Edge).</summary>
+    private static Task<CoreWebView2Environment> SharedEnvironmentAsync()
     {
-        base.Dispose(disposing);
-        if (!disposing || windowsAccount || sharedFolder) return; // A Windows user's own profile stays, like a normal browser.
-        // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
-        var folder = userDataFolder;
-        _ = Task.Run(async () =>
+        if (sharedEnvironment is { IsFaulted: false, IsCanceled: false } ready) return ready;
+        RemoveOldFolders();
+        sharedEnvironment = CreateShared();
+        return sharedEnvironment;
+
+        static async Task<CoreWebView2Environment> CreateShared()
         {
-            for (int attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
+            var created = await CoreWebView2Environment.CreateAsync(null, SharedFolder, new CoreWebView2EnvironmentOptions());
+            created.BrowserProcessExited += (_, _) => sharedEnvironment = null;
+            return created;
+        }
+    }
+
+    /// <summary>Folders of earlier Kiosk processes (InPrivate pages keep nothing there, but Edge's own files stay behind).</summary>
+    private static void RemoveOldFolders()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
+        _ = Task.Run(() =>
+        {
+            try
             {
-                try { Directory.Delete(folder, true); }
-                catch (IOException) { await Task.Delay(1000); }
-                catch (UnauthorizedAccessException) { await Task.Delay(1000); }
+                foreach (var folder in Directory.GetDirectories(root))
+                {
+                    var name = Path.GetFileName(folder);
+                    if (int.TryParse(name, out var pid) && Running(pid)) continue;
+                    try { Directory.Delete(folder, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                }
             }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
         });
+
+        static bool Running(int pid)
+        {
+            try { using var process = System.Diagnostics.Process.GetProcessById(pid); return process.ProcessName.Equals("Kiosk.Client", StringComparison.OrdinalIgnoreCase); }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
     }
 }
 

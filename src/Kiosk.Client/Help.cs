@@ -287,6 +287,8 @@ internal sealed class HelpBrowserForm : Form
     /// </summary>
     internal void SetSideInset(int width)
     {
+        // The Kiosk repeats it whenever it lays out the card: a new window shape (a repaint over the page) only on a change.
+        if (Math.Max(0, width) == sideInset && IsHandleCreated) return;
         sideInset = Math.Max(0, width);
         browser.SetRightInset(sideInset);
         UpdateSideRegion();

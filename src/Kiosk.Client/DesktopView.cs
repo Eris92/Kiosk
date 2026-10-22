@@ -386,6 +386,8 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The desktop corner from Konfiguracja: name, line under it and logo; empty ones are hidden.</summary>
     internal void SetBranding(string title, string line, string logoFile)
     {
+        // Called on every refresh of the Kiosk (4× a second): the whole layout only when something changed.
+        if (brand.Text == title && subtitle.Text == line && logoFile == logoPath) return;
         brand.Text = title;
         subtitle.Text = line;
         if (logoFile != logoPath)
