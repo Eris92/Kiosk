@@ -17,6 +17,8 @@ internal sealed partial class KioskForm
     private FidoSignIn? signInScreen;
     private Task<FidoSignIn?>? signInStarting;
     private DateTime signInFailedAt;
+    /// <summary>Card sign-in screens that did not start in a row: each waits longer (10 s, 20 s… up to 5 minutes).</summary>
+    private int signInStartFailures;
     /// <summary>A Szybka pomoc result (card reset, PIN change…) is shown in the card instead of the sign-in until then.</summary>
     private DateTime noticeUntil;
 
@@ -44,14 +46,17 @@ internal sealed partial class KioskForm
                 ? fault.GetType().Name + ": " + fault.Message : FidoSignIn.LastError;
             if (signInStarting.Exception != null) Audit.Write("fido_prepare_failed", signInStarting.Exception.GetBaseException().ToString());
             signInStarting = null;
-            if (ready == null) { signInFailedAt = DateTime.UtcNow; notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…"; RefreshChrome(); return; }
+            if (ready == null) { signInFailedAt = DateTime.UtcNow; signInStartFailures++; notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…"; RefreshChrome(); return; }
             signInScreen = ready;
+            signInStartFailures = 0;
             notice = null;
             _ = WaitForCardSignInAsync(ready);
             RefreshChrome();
             return;
         }
-        if (DateTime.UtcNow - signInFailedAt < TimeSpan.FromSeconds(10)) return;
+        // A PC where it cannot start (e.g. Windows refuses the card sign-in there) is not asked again every minute.
+        var pause = TimeSpan.FromSeconds(Math.Min(300, 10 << Math.Min(5, Math.Max(0, signInStartFailures - 1))));
+        if (DateTime.UtcNow - signInFailedAt < pause) return;
         Audit.Write("fido_prepare_start");
         try { signInStarting = FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi); }
         catch (Exception ex) { signInStarting = Task.FromException<FidoSignIn?>(ex); }

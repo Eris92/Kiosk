@@ -118,6 +118,13 @@ namespace FidoRun
         // worked, the same retry from a background window never reached the card).
         private void TakeForeground(string reason)
         {
+            // Inside the Kiosk only while its sign-in place is on screen: a hidden place (a page or Szybka pomoc open,
+            // a person working) must not take the keyboard from what the person is typing into.
+            if (Embedded && !IsWindowVisible(options.EmbedParent))
+            {
+                log.Write("PinFromClient=ForegroundSkipped; Reason=" + reason + "; PlaceHidden=True");
+                return;
+            }
             BringToFront();
             Activate();
             SetForegroundWindow(Handle);
@@ -132,6 +139,7 @@ namespace FidoRun
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
 
