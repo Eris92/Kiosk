@@ -59,7 +59,7 @@ internal static class ConfigManager
             rootBox.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Reload(); } };
             top.Controls.Add(rootBox);
             top.Controls.Add(Small("Wybierz…", PickRoot));
-            top.Controls.Add(Small("Odśwież", Reload));
+            top.Controls.Add(Small("Odśwież", () => Reload()));
 
             list.Columns.Add("Konfiguracja", 240);
             list.Columns.Add("Zmieniona", 160);
