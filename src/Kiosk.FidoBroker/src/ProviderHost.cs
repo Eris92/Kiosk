@@ -643,7 +643,7 @@ namespace FidoRun
                     view.StatusText("Zalogowano: " + outcome.Name);
                     log.Write("Outcome=WindowsTokenCreated");
                     string targetSid = options.ResolveTargetSid(outcome.Sid);
-                    if ((options.ExpectedSid != null || options.Mode == "session" || options.Mode == "launch-edge" || options.Broker) && targetSid == null)
+                    if ((options.ExpectedSid != null || options.Broker) && targetSid == null)
                     {
                         Program.Result = 5;
                         log.Write("Outcome=TargetSidMismatch; Expected=" + options.ExpectedSid);
@@ -664,18 +664,6 @@ namespace FidoRun
                             ? AccountCredentialFilter.SelectedAccountLabel : outcome.Name;
                         KioskBroker.SignedIn(outcome, targetSid, brokerAccount);
                         view.BrokerSignedIn(brokerAccount);
-                    }
-                    else if (options.Mode == "session" || options.Mode == "launch-edge")
-                    {
-                        // Retain the token and let the user open Edge from the button,
-                        // instead of launching the browser automatically after logon.
-                        DiagnosticSession.Start(outcome, targetSid, log.Write);
-                        string displayAccount=options.AccountPicker && !String.IsNullOrWhiteSpace(AccountCredentialFilter.SelectedAccountLabel)
-                            ? AccountCredentialFilter.SelectedAccountLabel : outcome.Name;
-                        // The PIN screen opens Edge itself; the diagnostic window waits for the button.
-                        if (!options.PinScreen)
-                            view.StatusText("Zalogowano: " + displayAccount + ". Kliknij \"Otwórz Edge\", aby uruchomić przeglądarkę.");
-                        view.EdgeReady(outcome.Sid, displayAccount);
                     }
                 }
             }

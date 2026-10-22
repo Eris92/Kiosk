@@ -18,13 +18,11 @@ namespace FidoRun
         public string DisplayMode = "native";
         public string ExpectedSid;
         public bool UseAuthenticatedAccount;
-        public bool WatchCard;
         public bool AccountPicker;
         public bool NativeAccount;
         public bool DiagnosticUi;
-        public string StartUrl = "https://entra.microsoft.com/";
-        // The full-screen PIN screen replaces the diagnostic window whenever the card is watched.
-        public bool PinScreen { get { return (WatchCard || Broker) && !DiagnosticUi && Mode != "inspect"; } }
+        // The Kiosk's PIN screen replaces the diagnostic window.
+        public bool PinScreen { get { return Broker && !DiagnosticUi; } }
         // Started by the Kiosk Card service for the Kiosk process ClientPid (see KioskBroker).
         public bool Broker { get { return Mode == "kiosk-broker"; } }
         public int ClientPid;
@@ -56,7 +54,6 @@ namespace FidoRun
                 if (key == "--help" || key == "-h") { result.Help = true; continue; }
                 if (key == "--account-picker") { result.AccountPicker = true; continue; }
                 if (key == "--no-account-picker") { result.NativeAccount = true; continue; }
-                if (key == "--kiosk") { result.WatchCard = true; continue; }
                 if (key == "--diagnostic-ui") { result.DiagnosticUi = true; continue; }
                 if (key == "--pin-from-client") { result.PinFromClient = true; continue; }
                 if (!seen.Add(key)) throw new ArgumentException("Duplicate argument: " + key);
@@ -69,7 +66,6 @@ namespace FidoRun
                     case "--user-array": result.UserArray = value.ToLowerInvariant(); break;
                     case "--display-state": result.DisplayMode = value.ToLowerInvariant(); break;
                     case "--expected-sid": result.ExpectedSid = value; break;
-                    case "--url": result.StartUrl = ParseStartUrl(value); break;
                     case "--embed":
                         ParseEmbed(value, result);
                         break;
@@ -88,36 +84,12 @@ namespace FidoRun
                     default: throw new ArgumentException("Unknown argument: " + key);
                 }
             }
-            // A local installation can choose the target account for double-click startup.
-            // Explicit modes keep their command-line behavior, including authenticate-only.
-            string targetFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "FidoRun.target-sid");
-            if (!result.Help && File.Exists(targetFile))
-            {
-                string configured = File.ReadAllText(targetFile).Trim();
-                if (String.Equals(configured, "authenticated", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.UseAuthenticatedAccount = true;
-                    // The kiosk config (target-sid = authenticated) enables card-removal
-                    // watching by default, so removing the key ends the session.
-                    result.WatchCard = true;
-                }
-                else if (!seen.Contains("--mode") && result.ExpectedSid == null && !result.UseAuthenticatedAccount)
-                    result.ExpectedSid = new SecurityIdentifier(configured).Value;
-                if (!seen.Contains("--mode")) result.Mode = "launch-edge";
-            }
-            string urlFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "FidoRun.start-url");
-            if (!result.Help && !seen.Contains("--url") && File.Exists(urlFile))
-            {
-                string configuredUrl = File.ReadAllText(urlFile).Trim();
-                if (configuredUrl.Length > 0) result.StartUrl = ParseStartUrl(configuredUrl);
-            }
-            if (result.Mode != "inspect" && result.Mode != "authenticate" && result.Mode != "launch-edge" && result.Mode != "diagnose" && result.Mode != "session" && result.Mode != "kiosk-broker")
-                throw new ArgumentException("Mode must be inspect, authenticate, launch-edge, diagnose, session, or kiosk-broker.");
+            if (result.Mode != "inspect" && result.Mode != "authenticate" && result.Mode != "diagnose" && result.Mode != "kiosk-broker")
+                throw new ArgumentException("Mode must be inspect, authenticate, diagnose, or kiosk-broker.");
             if (result.Broker)
             {
                 // The Kiosk watches the card and ends the session itself; the broker only signs in and starts programs.
                 if (result.ClientPid <= 0) throw new ArgumentException("kiosk-broker requires --client-pid.");
-                result.WatchCard = false;
                 result.UseAuthenticatedAccount = true;
             }
             if (result.Scenario != "logon" && result.Scenario != "credui-current")
@@ -127,10 +99,8 @@ namespace FidoRun
             DisplayState.ForHost(result.DisplayMode, true);
             if (result.NativeAccount && result.AccountPicker)
                 throw new ArgumentException("Choose either --account-picker or --no-account-picker.");
-            if (!result.NativeAccount && (result.Mode == "launch-edge" || result.Mode == "session" || result.Broker))
+            if (!result.NativeAccount && result.Broker)
                 result.AccountPicker = true;
-            if ((result.Mode == "launch-edge" || result.Mode == "session") && String.IsNullOrWhiteSpace(result.ExpectedSid) && !result.UseAuthenticatedAccount)
-                throw new ArgumentException("launch-edge and session require --target authenticated or --expected-sid.");
             return result;
         }
 
@@ -146,16 +116,6 @@ namespace FidoRun
             for (int i = 0; i < 4; i++)
                 if (parts[i + 2].Length != 6 || !Int32.TryParse(parts[i + 2], System.Globalization.NumberStyles.HexNumber, null, out result.EmbedColors[i]))
                     throw new ArgumentException("Bad --embed colour.");
-        }
-
-        // Edge receives the address as one command-line argument, so only plain https URLs pass.
-        public static string ParseStartUrl(string value)
-        {
-            Uri uri;
-            if (!Uri.TryCreate((value ?? "").Trim(), UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttps
-                || uri.AbsoluteUri.IndexOfAny(new[] { ' ', '"', '\t' }) >= 0)
-                throw new ArgumentException("Start URL must be an absolute https:// address.");
-            return uri.AbsoluteUri;
         }
     }
 
@@ -274,15 +234,10 @@ namespace FidoRun
                 if (options.Help)
                 {
                     Console.WriteLine("FidoRun 0.1.29 native Windows FIDO provider host (x64, .NET Framework 4.8).");
-                    Console.WriteLine("FidoRun.exe [--mode inspect|authenticate|launch-edge|diagnose|session] [--scenario logon|credui-current]");
+                    Console.WriteLine("FidoRun.exe [--mode inspect|authenticate|diagnose|kiosk-broker] [--scenario logon|credui-current]");
                     Console.WriteLine("            [--user-array empty|none] [--display-state native|legacy|none]");
-                    Console.WriteLine("            [--expected-sid S-1-...] [--timeout 30..300] [--kiosk] [--diagnostic-ui] [--url https://...]");
-                    Console.WriteLine("--kiosk watches the card reader: removing the card ends the session, closes the");
-                    Console.WriteLine("        browser and relaunches to await the next card. Enabled by FidoRun.target-sid=authenticated.");
-                    Console.WriteLine("        It shows the full-screen PIN screen and opens Edge right after sign-in.");
-                    Console.WriteLine("--diagnostic-ui keeps the diagnostic window (fields, log, Open Edge button) in kiosk mode.");
-                    Console.WriteLine("--url sets the page Edge opens (default https://entra.microsoft.com/, or FidoRun.start-url).");
-                    Console.WriteLine("Without --mode, FidoRun.target-sid selects launch-edge; use authenticated to follow the signed-in key account.");
+                    Console.WriteLine("            [--expected-sid S-1-...] [--target authenticated] [--timeout 30..300] [--diagnostic-ui]");
+                    Console.WriteLine("kiosk-broker (--client-pid N) is started by the Kiosk Card service for the Kiosk's card sign-in.");
                     Console.WriteLine("--target authenticated uses the SID returned by Windows FIDO logon. --expected-sid restricts it to one account.");
                     Console.WriteLine("diagnose tests an internal CTAP RPC export without credential-provider callbacks or authentication.");
                     return 0;
@@ -292,7 +247,6 @@ namespace FidoRun
                 if (!Environment.UserInteractive) throw new InvalidOperationException("An interactive desktop is required.");
                 Layout.Check();
                 if (options.ExpectedSid != null) options.ExpectedSid = new SecurityIdentifier(options.ExpectedSid).Value;
-                WindowsLogon.StartUrl = options.StartUrl;
                 using (TraceLog log = new TraceLog())
                 using (ManualResetEvent finished = new ManualResetEvent(false))
                 {

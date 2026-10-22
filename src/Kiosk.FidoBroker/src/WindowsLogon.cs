@@ -71,8 +71,6 @@ namespace FidoRun
 
     internal static class WindowsLogon
     {
-        // Set once at startup from Options.StartUrl (already validated as a plain https URL).
-        internal static string StartUrl = "https://entra.microsoft.com/";
         internal static readonly Guid FidoProvider = new Guid("f8a1793b-7873-4046-b2a7-1f318747f427");
 
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -120,8 +118,6 @@ namespace FidoRun
         private static extern bool CreateProcessWithTokenW(SafeAccessTokenHandle token, uint logonFlags,
             string application, StringBuilder commandLine, uint creationFlags, IntPtr environment,
             string workingDirectory, ref StartupInfo startup, out ProcessInformation process);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool GetProcessMitigationPolicy(IntPtr process, int policy, out uint flags, int size);
 
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", ExactSpelling = true)]
@@ -155,37 +151,6 @@ namespace FidoRun
             }
             finally { Marshal.FreeHGlobal(groups); }
             return logonSid;
-        }
-
-        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-        [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
-        private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint WaitForInputIdle(IntPtr process, uint milliseconds);
-        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-        [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
-
-        private static void ObserveProcess(ProcessInformation process, Action<string> log)
-        {
-            uint wait = WaitForSingleObject(process.Process, 3000);
-            if (wait == 0)
-            {
-                uint exitCode;
-                if (GetExitCodeProcess(process.Process, out exitCode))
-                    log("EdgeProcessState=Exited; PID=" + process.ProcessId
-                        + "; ExitCode=0x" + exitCode.ToString("X8") + "; ExitCodeDecimal=" + exitCode
-                        + "; BrowserWindowConfirmed=False");
-                else
-                    log("EdgeExitCode=Unavailable; Win32=" + Marshal.GetLastWin32Error());
-            }
-            else if (wait == 0x102)
-                log("EdgeProcessState=RunningAfterObservation; PID=" + process.ProcessId
-                    + "; ObservationMs=3000; BrowserWindowConfirmed=False");
-            else
-                log("EdgeProcessObservation=Failed; WaitResult=0x" + wait.ToString("X8")
-                    + "; Win32=" + Marshal.GetLastWin32Error());
         }
 
         internal static void ValidateSerialization(CredentialSerialization serialization)
@@ -478,125 +443,8 @@ namespace FidoRun
                 Sid = outcome.Sid, Name = outcome.Name, Token = GetBrowserToken(outcome.Token) };
         }
 
-        // Read-only diagnostic: run dsregcmd /status as the authenticated token and report
-        // whether the FIDO logon session carries an Entra PRT (the prerequisite for browser
-        // web SSO). Launches only the fixed system tool dsregcmd; captures to the user's own
-        // profile temp and deletes it. Never exports the token or runs arbitrary commands.
-        internal static string ReportPrtStatus(LogonOutcome outcome, Action<string> log)
-        {
-            if (outcome == null || !outcome.Success) return "ERROR No authenticated token is available.";
-            string profile;
-            using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\" + outcome.Sid))
-                profile = key == null ? null : (string)key.GetValue("ProfileImagePath");
-            string outDir = String.IsNullOrWhiteSpace(profile)
-                ? Path.GetTempPath()
-                : Path.Combine(Environment.ExpandEnvironmentVariables(profile), "AppData", "Local", "Temp");
-            string outFile = Path.Combine(outDir, "fidorun-dsreg-" + Guid.NewGuid().ToString("N") + ".txt");
-            string cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
-            StringBuilder command = new StringBuilder("cmd.exe /c dsregcmd /status > \"" + outFile + "\" 2>&1");
-            StartupInfo startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfo)), Desktop = "WinSta0\\Default" };
-            using (SafeAccessTokenHandle token = GetBrowserToken(outcome.Token, log))
-            using (GuiAccessLease guiAccess = GuiAccessLease.Acquire(DescribeGuiToken(token, log), log, false))
-            {
-                ProcessInformation process;
-                // 0x08000000 = CREATE_NO_WINDOW; LOGON_WITH_PROFILE so the user hive is loaded.
-                if (!CreateProcessWithTokenW(token, 1, cmd, command, 0x08000000, IntPtr.Zero,
-                    Environment.SystemDirectory, ref startup, out process))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Launching dsregcmd failed.");
-                try { WaitForSingleObject(process.Process, 30000); }
-                finally
-                {
-                    if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread);
-                    if (process.Process != IntPtr.Zero) CloseHandle(process.Process);
-                }
-            }
-            string result = "ERROR dsregcmd produced no output.";
-            try
-            {
-                for (int i = 0; i < 20 && !File.Exists(outFile); i++) System.Threading.Thread.Sleep(100);
-                if (File.Exists(outFile))
-                {
-                    System.Collections.Generic.List<string> keep = new System.Collections.Generic.List<string>();
-                    foreach (string line in File.ReadAllLines(outFile))
-                    {
-                        string s = line.Trim();
-                        if (s.StartsWith("AzureAdJoined", StringComparison.OrdinalIgnoreCase)
-                            || s.StartsWith("WorkplaceJoined", StringComparison.OrdinalIgnoreCase)
-                            || s.StartsWith("TenantName", StringComparison.OrdinalIgnoreCase)
-                            || s.StartsWith("AzureAdPrt", StringComparison.OrdinalIgnoreCase)
-                            || s.StartsWith("EnterprisePrt", StringComparison.OrdinalIgnoreCase))
-                            keep.Add(s);
-                    }
-                    result = keep.Count == 0 ? "OK dsregcmd ran but reported no PRT/join fields." : "OK " + String.Join(" | ", keep.ToArray());
-                }
-            }
-            finally { try { if (File.Exists(outFile)) File.Delete(outFile); } catch (IOException) { } }
-            log("PrtStatus=" + result);
-            return result;
-        }
-
-        // Grant the authenticated user full control of its ephemeral Edge data directory,
-        // so the browser (running as that user) can write there. The directory is created
-        // by FidoRun and used only for this launch.
-        private static void GrantDirectoryFullControl(string path, SecurityIdentifier sid)
-        {
-            System.IO.DirectoryInfo info = new System.IO.DirectoryInfo(path);
-            System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
-            security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(sid,
-                System.Security.AccessControl.FileSystemRights.FullControl,
-                System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
-                System.Security.AccessControl.PropagationFlags.None,
-                System.Security.AccessControl.AccessControlType.Allow));
-            info.SetAccessControl(security);
-        }
-
-        // Best-effort cleanup so the kiosk does not accumulate ephemeral Edge data.
-        // Removes session-* directories not touched in the last two hours.
-        private static void SweepOldEphemeralDirs(Action<string> log)
-        {
-            try
-            {
-                string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "FidoRun");
-                if (!Directory.Exists(root)) return;
-                foreach (string dir in Directory.GetDirectories(root, "session-*"))
-                {
-                    try
-                    {
-                        if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > TimeSpan.FromHours(2))
-                            Directory.Delete(dir, true);
-                    }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
-                }
-            }
-            catch (Exception error) { log("EphemeralSweep=Skipped; " + error.GetType().Name); }
-        }
-
-        // End-of-session cleanup for the kiosk: terminate the authenticated user's browser.
-        // Impersonating that (standard) user means only its own processes are accessible, so
-        // other users' Edge windows are left untouched.
-        internal static void CloseBrowsersForSession(LogonOutcome outcome, Action<string> log)
-        {
-            if (outcome == null || !outcome.Success) return;
-            try
-            {
-                WindowsIdentity.RunImpersonated(outcome.Token, delegate
-                {
-                    foreach (System.Diagnostics.Process edge in System.Diagnostics.Process.GetProcessesByName("msedge"))
-                        using (edge)
-                        {
-                            try { if (!edge.HasExited) edge.Kill(); }
-                            catch { /* another user's process or already gone */ }
-                        }
-                });
-                log("KioskSession=BrowsersClosed; SID=" + outcome.Sid);
-            }
-            catch (Exception error) { log("KioskSession=BrowserCloseFailed; " + error.Message); }
-        }
-
         // Kiosk broker: any program as the signed-in person, suspended (the Kiosk resumes it once its window is
-        // ready to be embedded). Same token rules and desktop access as LaunchEdge.
+        // ready to be embedded).
         internal static ProcessInformation StartAsUser(LogonOutcome outcome, string application, string commandLine,
             string directory, ushort show, Action<string> log)
         {
@@ -643,103 +491,5 @@ namespace FidoRun
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool TerminateProcess(IntPtr process, uint code);
-
-        internal static void LaunchEdge(LogonOutcome outcome, string expectedSid, Action<string> log)
-        {
-            if (!outcome.Success) throw new InvalidOperationException("No authenticated Windows token is available.");
-            string target = new SecurityIdentifier(expectedSid).Value;
-            if (!String.Equals(target, outcome.Sid, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Authenticated SID does not match the explicitly requested target SID.");
-            using (WindowsIdentity current = WindowsIdentity.GetCurrent())
-                if (current.User.Value == target)
-                    throw new InvalidOperationException("The native provider authenticated the current Windows user, not a different account.");
-
-            string edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", "msedge.exe");
-            if (!File.Exists(edge)) edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", "msedge.exe");
-            if (!File.Exists(edge)) throw new FileNotFoundException("Machine-wide Microsoft Edge was not found.");
-            using (SafeAccessTokenHandle token = GetBrowserToken(outcome.Token, log))
-            using (GuiAccessLease guiAccess = GuiAccessLease.Acquire(DescribeGuiToken(token, log), log, true))
-            {
-                log("BrowserToken: RequestedAccess=0x" + BrowserTokenAccess.ToString("X4")
-                    + "; Type=" + ReadTokenInt(token, 8)
-                    + "; SessionId=" + ReadTokenInt(token, 12)
-                    + "; ElevationType=" + ReadTokenInt(token, 18)
-                    + "; Elevated=" + ReadTokenInt(token, 20));
-                log("ProcessLaunch: Api=CreateProcessWithTokenW; LogonWithProfile=True; CallerSessionId="
-                    + System.Diagnostics.Process.GetCurrentProcess().SessionId + "; Application=" + edge);
-                StartupInfo startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfo)), Desktop = "WinSta0\\Default" };
-                ProcessInformation process;
-                StringBuilder command = new StringBuilder("\"" + edge + "\" --new-window --start-maximized " + StartUrl);
-                string targetProfile;
-                using (Microsoft.Win32.RegistryKey profileKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                    "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\" + target))
-                {
-                    targetProfile = profileKey == null ? null : (string)profileKey.GetValue("ProfileImagePath");
-                }
-                if (!String.IsNullOrWhiteSpace(targetProfile))
-                    targetProfile = Environment.ExpandEnvironmentVariables(targetProfile);
-                // --no-first-run keeps the first-run UI from blocking the automatic account
-                // sign-in on a fresh profile.
-                command.Append(" --no-first-run --no-default-browser-check");
-                // Normal browser launch must not allocate a diagnostic console.
-                log("EdgeConsoleLogging=False");
-                if (Environment.GetEnvironmentVariable("FIDORUN_EDGE_DIAGNOSTIC_PROFILE") == "1" && !String.IsNullOrWhiteSpace(targetProfile))
-                {
-                    string diagnosticProfile = Path.Combine(targetProfile, "AppData", "Local", "FidoRun", "EdgeDiagnostic");
-                    command.Append(" --user-data-dir=\"").Append(diagnosticProfile).Append("\"");
-                    log("EdgeProfile=Diagnostic; Path=" + diagnosticProfile);
-                }
-                bool captureStartup = Environment.GetEnvironmentVariable("FIDORUN_CAPTURE_STARTUP") == "1";
-                log("EdgeCommandLine=" + command);
-                if (!CreateProcessWithTokenW(token, 1, edge, command, 0x08000000u | (captureStartup ? 4u : 0u), IntPtr.Zero,
-                    Environment.SystemDirectory, ref startup, out process))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcessWithTokenW failed.");
-                try
-                {
-                    log("EdgeProcessCreated=True; PID=" + process.ProcessId);
-                    guiAccess.HoldUntilExit(process.Process, edge);
-                    uint mitigation;
-                    if (GetProcessMitigationPolicy(process.Process, 4, out mitigation, 4))
-                        log("EdgeWin32kSystemCallPolicy=0x" + mitigation.ToString("X8"));
-                    if (captureStartup)
-                        log("EdgeStartupSuspended=True; ThreadId=" + process.ThreadId);
-                    // Query only: read SID and elevation without a membership-check token duplication.
-                    SafeAccessTokenHandle childToken;
-                    if (!OpenProcessToken(process.Process, 0x0008, out childToken))
-                    {
-                        log("EdgeTokenVerification=Unavailable; Win32=" + Marshal.GetLastWin32Error() + "; RequestedAccess=TOKEN_QUERY; ProcessCreated=True; exit status follows.");
-                        return;
-                    }
-                    using (childToken)
-                    using (WindowsIdentity child = new WindowsIdentity(childToken.DangerousGetHandle()))
-                    {
-                        if (child.User.Value != target || ReadTokenInt(childToken, 20) != 0)
-                            throw new InvalidOperationException("Edge process verification failed.");
-                        log("EdgeTokenVerified=True; PID=" + process.ProcessId + "; SID=" + child.User.Value + "; Elevated=False");
-                    }
-                    log("Verify edge://version -> Profile Path, then test the required browser session.");
-                }
-                catch (Exception error)
-                {
-                    log("EdgeTokenVerification=Failed; ProcessCreated=True; PID=" + process.ProcessId
-                        + "; Exception=" + error.GetType().Name);
-                    throw;
-                }
-                finally
-                {
-                    try
-                    {
-                        ObserveProcess(process, log);
-                        uint idle = WaitForInputIdle(process.Process, 10000);
-                        log("EdgeInputIdle=0x" + idle.ToString("X8") + "; DesktopAccessLifetime=BrowserProcess");
-                    }
-                    finally
-                    {
-                        if (process.Thread != IntPtr.Zero) CloseHandle(process.Thread);
-                        if (process.Process != IntPtr.Zero) CloseHandle(process.Process);
-                    }
-                }
-            }
-        }
     }
 }

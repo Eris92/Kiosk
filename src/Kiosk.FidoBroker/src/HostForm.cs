@@ -39,7 +39,6 @@ namespace FidoRun
         private Timer restartTimer;
         private readonly Label state = new Label();
         private readonly Button submit = new Button();
-        private readonly Button openEdge = new Button();
         private readonly Dictionary<uint, Control> inputs = new Dictionary<uint, Control>();
         private readonly Dictionary<uint, Control> containers = new Dictionary<uint, Control>();
         private readonly Dictionary<uint, FieldData> fieldData = new Dictionary<uint, FieldData>();
@@ -48,8 +47,6 @@ namespace FidoRun
         private bool preparingFields, serializationAvailable, fieldUpdatesFailed;
         private ProviderHost host;
         private bool rendering, closing, canSubmit, working;
-        private CardMonitor cardMonitor;
-        private bool kioskRestarting;
         private AccountCredentialFilter accountFilter;
 
         private bool Hidden { get { return options.Broker && options.PinFromClient; } }
@@ -200,8 +197,7 @@ namespace FidoRun
             pinScreen = options.PinScreen;
             // Inside the Kiosk's card: the Kiosk's own sizes at the Kiosk's DPI (smaller only when it does not fit).
             if (Embedded) scale = options.EmbedDpi / 96f;
-            bool edgeCapable = options.Mode == "launch-edge" || options.Mode == "session";
-            if (pinScreen) BuildPinScreen(edgeCapable); else BuildDiagnosticWindow(edgeCapable);
+            if (pinScreen) BuildPinScreen(); else BuildDiagnosticWindow();
             if (Hidden)
             {
                 // The Kiosk shows its own PIN screen; this window only hosts the native provider. It is fully
@@ -280,9 +276,7 @@ namespace FidoRun
             FormClosing += delegate
             {
                 if (fitTimer != null) { fitTimer.Dispose(); fitTimer = null; }
-                if (cardMonitor != null) { try { cardMonitor.Dispose(); } catch { } cardMonitor = null; }
                 if (restartTimer != null) { restartTimer.Dispose(); restartTimer = null; }
-                DiagnosticSession.Stop();
                 closing = true;
                 if (!pinScreen) log.Line -= AddLog;
                 foreach (Control input in inputs.Values) if (input is TextBox) ((TextBox)input).Clear();
@@ -379,7 +373,7 @@ namespace FidoRun
 
         private static Color Rgb(int value) { return Color.FromArgb((value >> 16) & 255, (value >> 8) & 255, value & 255); }
 
-        private void BuildDiagnosticWindow(bool edgeCapable)
+        private void BuildDiagnosticWindow()
         {
             Text = "FidoRun 0.1.29 - native FIDO provider host";
             Font = new Font("Segoe UI", 10f);
@@ -422,15 +416,10 @@ namespace FidoRun
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(0, 6, 0, 2) };
             submit.Text = "Zaloguj kluczem FIDO"; submit.AutoSize = true; submit.Enabled = false; submit.Margin = new Padding(0, 0, 8, 4);
             submit.Click += delegate { if (host != null) host.Submit(); };
-            openEdge.Text = "Otwórz Edge"; openEdge.AutoSize = true; openEdge.Enabled = false; openEdge.Visible = edgeCapable; openEdge.Margin = new Padding(0, 0, 8, 4);
-            openEdge.Click += delegate { OpenEdgeClicked(); };
             Button cancel = new Button { Text = "Anuluj", AutoSize = true, Margin = new Padding(0, 0, 8, 4) };
             cancel.Click += delegate { if (host != null) host.Cancel(); };
-            Button openLog = new Button { Text = "Pokaż log", AutoSize = true, Margin = new Padding(0, 0, 8, 4) };
-            openLog.Click += delegate { OpenLog(); };
             buttons.Controls.Add(submit);
-            if (edgeCapable) buttons.Controls.Add(openEdge);
-            buttons.Controls.Add(cancel); buttons.Controls.Add(openLog);
+            buttons.Controls.Add(cancel);
             root.Controls.Add(buttons, 0, 3);
 
             state.AutoSize = true; state.Margin = new Padding(0, 2, 0, 4); state.Text = "Uruchamianie dostawcy FIDO...";
@@ -443,9 +432,8 @@ namespace FidoRun
             Controls.Add(root);
         }
 
-        // Full-screen kiosk screen: one centred card with the native PIN field. Diagnostics stay
-        // in the log file (Ctrl+Shift+L opens it); Edge opens by itself after sign-in.
-        private void BuildPinScreen(bool edgeCapable)
+        // The Kiosk's card sign-in: one card with the native PIN field. Diagnostics stay in the log file.
+        private void BuildPinScreen()
         {
             Color accent = Color.FromArgb(0, 95, 184);
             Color surface = Color.White, text = Color.FromArgb(32, 32, 32), muted = Color.FromArgb(80, 80, 80);
@@ -464,12 +452,6 @@ namespace FidoRun
             StartPosition = FormStartPosition.Manual;
             BackColor = Embedded ? surface : Color.FromArgb(232, 237, 243);
             ForeColor = text;
-            KeyPreview = true;
-            KeyDown += delegate(object sender, KeyEventArgs e)
-            {
-                // Not in the Kiosk: there this window runs as SYSTEM, and Notepad's Open dialog would start anything as SYSTEM.
-                if (e.Control && e.Shift && e.KeyCode == Keys.L && !options.Broker) { e.Handled = true; OpenLog(); }
-            };
 
             TableLayoutPanel outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3 };
             outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -513,17 +495,10 @@ namespace FidoRun
             StylePrimary(submit, accent);
             submit.Text = "Zaloguj"; submit.Enabled = false;
             submit.Click += delegate { if (host != null) host.Submit(); };
-            StylePrimary(openEdge, accent);
-            openEdge.Text = "Otwórz Edge"; openEdge.Enabled = false; openEdge.Visible = false;
-            openEdge.Click += delegate { OpenEdgeClicked(); };
-            Button restart = new Button { Text = options.Broker ? "Anuluj" : "Zacznij od nowa", AutoSize = true, FlatStyle = FlatStyle.Flat, Padding = new Padding(12, 6, 12, 6), Margin = new Padding(0, 0, 12, 4) };
+            Button restart = new Button { Text = "Anuluj", AutoSize = true, FlatStyle = FlatStyle.Flat, Padding = new Padding(12, 6, 12, 6), Margin = new Padding(0, 0, 12, 4) };
             restart.FlatAppearance.BorderColor = Embedded ? muted : Color.FromArgb(180, 180, 180);
             restart.ForeColor = text;
-            restart.Click += delegate
-            {
-                if (options.Broker) { KioskBroker.Failed("Anulowano logowanie kartą."); Close(); }
-                else Restart("Uruchamianie logowania od nowa...", true);
-            };
+            restart.Click += delegate { KioskBroker.Failed("Anulowano logowanie kartą."); Close(); };
             if (options.Broker)
             {
                 // Over the Kiosk's own full-screen window until the person has signed in.
@@ -531,7 +506,6 @@ namespace FidoRun
                 if (!options.PinFromClient && !Embedded) Shown += delegate { Activate(); };
             }
             buttons.Controls.Add(submit);
-            if (edgeCapable) buttons.Controls.Add(openEdge);
             buttons.Controls.Add(restart);
             card.Controls.Add(buttons, 0, 4);
 
@@ -660,8 +634,6 @@ namespace FidoRun
             button.BackColor = accent; button.ForeColor = Color.White;
             button.Padding = new Padding(16, 6, 16, 6); button.Margin = new Padding(0, 0, 12, 4);
         }
-
-        private void OpenLog() { if (!options.Broker) System.Diagnostics.Process.Start("notepad.exe", "\"" + log.PathName + "\""); }
 
         public void Post(Action action)
         {
@@ -924,35 +896,6 @@ namespace FidoRun
             });
         }
 
-        // Enabled once a FIDO logon has produced a retained token session. In kiosk mode this
-        // also starts watching the card reader so removing the card ends the session.
-        public void EdgeReady(string sid, string account)
-        {
-            Post(delegate
-            {
-                signedInAccount = account;
-                if (openEdge.Visible) openEdge.Enabled = true;
-                if (options.WatchCard && cardMonitor == null)
-                {
-                    cardMonitor = new CardMonitor(delegate { Post(KioskEndAndRestart); }, log.Write);
-                    cardMonitor.Start();
-                    log.Write("KioskCardWatch=Started; remove the card to end the session.");
-                }
-                if (pinScreen)
-                {
-                    // The PIN was the user's consent; the browser follows without another click.
-                    submit.Visible = false;
-                    fields.Visible = false;
-                    providerStatus.Text = "Zalogowano: " + account;
-                    providerFeedback.Text = "Wyjmij kartę z czytnika, aby się wylogować.";
-                    openEdge.Text = "Otwórz Edge ponownie";
-                    openEdge.Visible = true;
-                    log.Write("PinScreen=SignedIn; EdgeOpensAutomatically=True");
-                    OpenEdgeClicked();
-                }
-            });
-        }
-
         // Kiosk broker: signed in; the window goes away and the process keeps the token for the Kiosk.
         public void BrokerSignedIn(string account)
         {
@@ -972,80 +915,18 @@ namespace FidoRun
             });
         }
 
-        private void KioskEndAndRestart()
-        {
-            Restart("Karta wyjęta. Zamykanie sesji i oczekiwanie na następną kartę...", true);
-        }
-
-        // After a failed Windows logon the native tile cannot be reused, so the PIN screen
-        // shows the reason for a moment and then starts a fresh instance.
+        // After a failed Windows logon the native tile cannot be reused: the Kiosk shows the reason and offers to
+        // try again with a fresh broker.
         public void RestartAfterFailure(string message)
         {
-            if (options.Broker)
-            {
-                // The Kiosk shows the reason and offers to try again.
-                KioskBroker.Failed(message);
-                Post(delegate
-                {
-                    state.Text = message;
-                    restartTimer = new Timer { Interval = 4000 };
-                    restartTimer.Tick += delegate { restartTimer.Stop(); Close(); };
-                    restartTimer.Start();
-                });
-                return;
-            }
-            if (!pinScreen) return;
+            if (!options.Broker) return;
+            KioskBroker.Failed(message);
             Post(delegate
             {
-                if (kioskRestarting || restartTimer != null) return;
-                state.Text = message + " Logowanie uruchomi się ponownie za chwilę.";
-                restartTimer = new Timer { Interval = 6000 };
-                restartTimer.Tick += delegate { restartTimer.Stop(); Restart("Uruchamianie logowania od nowa...", true); };
+                state.Text = message;
+                restartTimer = new Timer { Interval = 4000 };
+                restartTimer.Tick += delegate { restartTimer.Stop(); Close(); };
                 restartTimer.Start();
-            });
-        }
-
-        private void Restart(string message, bool endSession)
-        {
-            if (kioskRestarting) return;
-            kioskRestarting = true;
-            StatusText(message);
-            System.Threading.ThreadPool.QueueUserWorkItem(delegate
-            {
-                if (endSession) { try { DiagnosticSession.EndSessionForKiosk(log.Write); } catch { } }
-                try
-                {
-                    // Relaunch a fresh instance so the next user gets a clean session.
-                    string[] parts = Environment.GetCommandLineArgs();
-                    System.Text.StringBuilder args = new System.Text.StringBuilder();
-                    for (int i = 1; i < parts.Length; i++)
-                    {
-                        if (args.Length > 0) args.Append(' ');
-                        args.Append(parts[i].IndexOf(' ') >= 0 ? "\"" + parts[i] + "\"" : parts[i]);
-                    }
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                        Application.ExecutablePath, args.ToString()) { UseShellExecute = false });
-                    log.Write("KioskRestart=Launched; awaiting next card.");
-                }
-                catch (Exception error) { log.Write("KioskRestart=Failed; " + error.Message); }
-                Post(delegate { Close(); });
-            });
-        }
-
-        private void OpenEdgeClicked()
-        {
-            openEdge.Enabled = false;
-            StatusText("Otwieranie Edge...");
-            System.Threading.ThreadPool.QueueUserWorkItem(delegate
-            {
-                string result;
-                try { result = DiagnosticSession.RequestEdge(false); }
-                catch (Exception error) { result = "ERROR " + error.Message; }
-                if (pinScreen)
-                    result = result.StartsWith("OK", StringComparison.Ordinal)
-                        ? "Edge jest otwarty na koncie " + signedInAccount + "."
-                        : "Nie udało się otworzyć Edge: " + (result.StartsWith("ERROR ", StringComparison.Ordinal) ? result.Substring(6) : result);
-                Post(delegate { StatusText(result); if (openEdge.Visible) openEdge.Enabled = true; });
             });
         }
 
