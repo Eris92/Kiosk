@@ -69,7 +69,7 @@ internal sealed record Config
     public bool RequireCredentialPrompt { get; init; } = true;
     public string AutoConnectRdpName { get; init; } = "";
     public int ConnectTimeoutSeconds { get; init; } = 60;
-    public bool TestMode { get; init; } = true;
+    public bool TestMode { get; init; }
     /// <summary>2: the built-in Notatnik is an entry in Applications (older files get it added once).</summary>
     public int ConfigVersion { get; init; }
     internal const int CurrentVersion = 2;
@@ -81,7 +81,10 @@ internal sealed record Config
 
     internal Config Migrate()
     {
-        if (RdpConnections == null) throw new InvalidDataException("Lista RDP nie może być null.");
+        if (ConfigVersion > CurrentVersion || ConfigVersion < 0)
+            throw new InvalidDataException("Wersja konfiguracji nie jest obsługiwana przez ten Kiosk.");
+        if (RdpConnections == null || Applications == null || Applications.Any(a => a == null))
+            throw new InvalidDataException("Listy połączeń i aplikacji nie mogą zawierać null.");
         return this with
         {
             RdpConnections = RdpConnections.Length == 0 && !string.IsNullOrWhiteSpace(Server)
@@ -97,7 +100,7 @@ internal sealed record Config
 
     public void Validate()
     {
-        if (ReaderName == null || AutoConnectRdpName == null || RdpConnections == null || Bookmarks == null || Applications == null)
+        if (ReaderName == null || AutoConnectRdpName == null || RdpConnections == null || Bookmarks == null || Applications == null || IdleScreens == null)
             throw new InvalidDataException("Konfiguracja zawiera pustą listę lub wartość null.");
         if (LockAfterSeconds is < 10 or > 86400 || ChangeUserAfterSeconds is < 0 or > 86400 ||
             ConnectTimeoutSeconds is < 10 or > 300)
@@ -117,13 +120,20 @@ internal sealed record Config
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
         if (IdleAfterSeconds is < 3 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 3–86400 s.");
-        foreach (var s in IdleScreens ?? [])
+        foreach (var s in IdleScreens)
         {
+            if (s == null || s.Url == null || s.Path == null || s.Arguments == null)
+                throw new InvalidDataException("Konfiguracja ekranu nie może zawierać null.");
             if (s.Screen < 0) throw new InvalidDataException("Numer ekranu nie może być ujemny.");
             if (s.Url.Length > 0 && !(Uri.TryCreate(s.Url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp)))
                 throw new InvalidDataException("Strona dla ekranu " + s.Screen + " musi być adresem HTTP/HTTPS.");
             if (s.Url.Length == 0 && s.Path.Length == 0) throw new InvalidDataException("Ekran " + s.Screen + " potrzebuje strony albo aplikacji.");
+            if (s.Url.Length > 0 && s.Path.Length > 0) throw new InvalidDataException("Wybierz stronę albo aplikację dla ekranu, nie obie naraz.");
+            if (s.Path.Length > 0 && (!Path.IsPathFullyQualified(s.Path) || !string.Equals(Path.GetExtension(s.Path), ".exe", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("Aplikacja ekranu wymaga pełnej ścieżki do pliku EXE.");
         }
+        if (IdleScreens.Select(s => s.Screen).Distinct().Count() != IdleScreens.Length)
+            throw new InvalidDataException("Każdy numer ekranu można skonfigurować tylko raz.");
         if (!KioskTheme.IsColor(AccentColor)) throw new InvalidDataException("Kolor przewodni musi mieć postać #RRGGBB.");
         if (AdminCards == null || AdminCards.Any(a => a == null || string.IsNullOrWhiteSpace(a.Id) || a.Name == null))
             throw new InvalidDataException("Każda karta administratora wymaga identyfikatora.");

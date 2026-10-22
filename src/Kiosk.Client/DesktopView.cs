@@ -30,13 +30,16 @@ internal static class KioskTheme
     /// <summary>Readable text on an accent fill.</summary>
     internal static Color OnAccent => Luminance(Accent) > 0.45 ? Background : Color.White;
     internal static event Action? Changed;
+    private static readonly Font ButtonFont = new("Segoe UI", 10, FontStyle.Bold);
 
     internal static bool IsColor(string? value) =>
         value != null && System.Text.RegularExpressions.Regex.IsMatch(value, "^#[0-9A-Fa-f]{6}$");
 
     internal static void SetAccent(string? hex)
     {
-        Accent = ColorTranslator.FromHtml(IsColor(hex) ? hex! : DefaultAccent);
+        var color = ColorTranslator.FromHtml(IsColor(hex) ? hex! : DefaultAccent);
+        if (color == Accent) return;
+        Accent = color;
         Changed?.Invoke();
     }
 
@@ -55,7 +58,7 @@ internal static class KioskTheme
         button.FlatAppearance.MouseDownBackColor = primary ? AccentPressed : Color.FromArgb(49, 67, 93);
         button.BackColor = primary ? Accent : Surface;
         button.ForeColor = primary ? OnAccent : Text;
-        button.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        button.Font = ButtonFont;
         button.Cursor = Cursors.Hand;
         button.UseVisualStyleBackColor = false;
     }
@@ -225,8 +228,9 @@ internal sealed class DesktopView : UserControl
     /// </summary>
     internal Task<string?> AskPinAsync(string message, Func<bool>? cardPresent)
     {
+        if (IsDisposed || Disposing) return Task.FromResult<string?>(null);
         pinRequest?.TrySetResult(null);
-        pinRequest = new TaskCompletionSource<string?>();
+        pinRequest = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         pinCardPresent = cardPresent;
         pinPrompt.Text = message;
         foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = true;
@@ -247,6 +251,7 @@ internal sealed class DesktopView : UserControl
         pinBox.Clear();
         pinWatch.Stop();
         pinRequest = null;
+        pinCardPresent = null;
         foreach (var c in new Control[] { pinPrompt, pinBox, pinOk, pinCancel }) c.Visible = false;
         resume.Visible = locked;
         hint.Visible = true;
@@ -269,12 +274,22 @@ internal sealed class DesktopView : UserControl
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { clockTimer.Dispose(); pinWatch.Dispose(); pinRequest?.TrySetResult(null); KioskTheme.Changed -= OnThemeChanged; }
+        if (disposing)
+        {
+            clockTimer.Dispose(); pinWatch.Dispose();
+            var request = pinRequest;
+            pinRequest = null;
+            pinCardPresent = null;
+            pinBox.Clear();
+            request?.TrySetResult(null);
+            KioskTheme.Changed -= OnThemeChanged;
+        }
         base.Dispose(disposing);
     }
 
     private sealed class StatusCard : Panel
     {
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         internal bool Locked { get; set; }
 
         internal StatusCard()
@@ -345,6 +360,7 @@ internal sealed class MenuTile : Button
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
     }
 
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal string Category
     {
         get => category;

@@ -60,12 +60,27 @@ internal static class ScreenLayouts
     internal static Dictionary<string, int> Load(string personId)
     {
         try { return JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(FileFor(personId))) ?? new(); }
-        catch (Exception ex) when (ex is IOException or JsonException) { return new(); }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return new(); }
     }
 
     internal static void Save(string personId, Dictionary<string, int> layout)
     {
-        try { File.WriteAllText(FileFor(personId), JsonSerializer.Serialize(layout)); }
-        catch (IOException ex) { Audit.Write("layout_save_error", ex.Message); }
+        string? temporary = null;
+        try
+        {
+            var path = FileFor(personId);
+            temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(layout));
+            File.Move(temporary, path, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("layout_save_error", ex.Message); }
+        finally
+        {
+            if (temporary != null)
+            {
+                try { File.Delete(temporary); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("layout_cleanup_error", ex.Message); }
+            }
+        }
     }
 }

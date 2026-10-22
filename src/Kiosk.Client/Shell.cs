@@ -23,8 +23,7 @@ internal sealed class TaskButton : Button
     }
 
     internal bool Primary { get; }
-    internal string Key { get; init; } = "";
-
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Active
     {
         get => active;
@@ -72,7 +71,7 @@ internal sealed class Taskbar : Panel
     private readonly List<TabButton> tasks = new();
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
-    private string taskSignature = "";
+    private (string Key, string Title)[] taskWindows = [];
 
     internal TaskButton MenuButton { get; } = new("☰   Menu", primary: true);
     internal TaskButton LockButton { get; } = new("Zablokuj");
@@ -122,10 +121,13 @@ internal sealed class Taskbar : Panel
     /// <summary>Rebuilds window buttons only when the set of windows or the active one changes.</summary>
     internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active)> windows)
     {
-        var signature = string.Join("|", windows.Select(w => w.Key + "=" + w.Title));
-        if (signature != taskSignature)
+        bool changed = windows.Count != taskWindows.Length;
+        for (int i = 0; !changed && i < windows.Count; i++)
+            changed = windows[i].Key != taskWindows[i].Key || windows[i].Title != taskWindows[i].Title;
+        if (changed)
         {
-            taskSignature = signature;
+            taskWindows = windows.Select(w => (w.Key, w.Title)).ToArray();
+            SuspendLayout();
             foreach (var task in tasks) { Controls.Remove(task); task.Dispose(); }
             tasks.Clear();
             foreach (var window in windows)
@@ -139,6 +141,7 @@ internal sealed class Taskbar : Panel
                 tasks.Add(button);
                 Controls.Add(button);
             }
+            ResumeLayout(false);
             ArrangeControls();
         }
         for (int i = 0; i < tasks.Count; i++) tasks[i].Active = windows[i].Active;
@@ -293,6 +296,7 @@ internal sealed class TabButton : Control
     internal event Action? CloseRequested;
     internal event Action<Point>? MenuRequested;
 
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Active
     {
         get => active;

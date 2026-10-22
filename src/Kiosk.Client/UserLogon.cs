@@ -8,7 +8,8 @@ namespace Kiosk.Client;
 /// "Zaloguj" as the person's own Windows / Entra ID account, like runas: Windows' credential dialog asks for
 /// the login and password, Windows checks them, and Kiosk then starts that person's programs (Edge, apps) as
 /// them, with their profile, bookmarks and SSO. The password is kept only in this process's memory, encrypted
-/// with CryptProtectMemory, until the Kiosk session is closed; it is never written anywhere.
+/// with CryptProtectMemory, until the Kiosk session is closed. Optional CardVault enrollment stores an
+/// encrypted copy protected by the card's FIDO2 hmac-secret.
 /// </summary>
 internal sealed class UserLogon : IDisposable
 {
@@ -16,6 +17,7 @@ internal sealed class UserLogon : IDisposable
     private readonly string? domain;
     private byte[]? secret; // UTF-16 password, CryptProtectMemory(SAME_PROCESS), padded to 16 bytes.
     private readonly int length;
+    private readonly object secretLock = new();
 
     /// <summary>The account as Windows shows it, e.g. AzureAD\JanKowalski.</summary>
     internal string DisplayName { get; }
@@ -28,13 +30,20 @@ internal sealed class UserLogon : IDisposable
         this.domain = domain;
         DisplayName = displayName;
         this.length = length;
-        secret = new byte[(length * 2 + 15) / 16 * 16];
+        secret = new byte[Math.Max(16, (length * 2 + 15) / 16 * 16)];
         Encoding.Unicode.GetBytes(password, 0, length, secret, 0);
-        if (!CryptProtectMemory(secret, secret.Length, 0)) throw new Win32Exception();
+        if (!CryptProtectMemory(secret, secret.Length, 0))
+        {
+            int error = Marshal.GetLastWin32Error();
+            Array.Clear(secret);
+            secret = null;
+            throw new Win32Exception(error);
+        }
     }
 
     internal string User => user;
     internal string Sid { get; private set; } = "";
+    internal bool IsAdministrator { get; private set; }
     /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
     internal string? ProfileDirectory =>
         Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
@@ -44,6 +53,8 @@ internal sealed class UserLogon : IDisposable
     /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
     internal static UserLogon? TryLogon(string login, string? domain, char[] password, int length, out int code)
     {
+        if (length < 0 || length >= password.Length || password[length] != '\0' || Array.IndexOf(password, '\0', 0, length) >= 0)
+            throw new ArgumentException("The password must be NUL-terminated at its declared length.", nameof(password));
         bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
         code = ok ? 0 : Marshal.GetLastWin32Error();
         // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
@@ -51,14 +62,20 @@ internal sealed class UserLogon : IDisposable
         {
             token.Dispose();
             ok = LogonUser(login, "AzureAD", password, 2, 0, out token);
-            if (ok) domain = "AzureAD";
+            if (ok) { domain = "AzureAD"; code = 0; }
             else code = Marshal.GetLastWin32Error();
         }
         using (token)
         {
             if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
             using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
-            return new UserLogon(login, domain, password, length, identity.Name) { Sid = identity.User?.Value ?? "" };
+            return new UserLogon(login, domain, password, length, identity.Name)
+            {
+                Sid = identity.User?.Value ?? "",
+                // Only the token returned by successful Windows authentication establishes administrator membership.
+                IsAdministrator = identity.Groups?.Contains(new System.Security.Principal.SecurityIdentifier(
+                    System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null)) == true
+            };
         }
     }
 
@@ -129,8 +146,12 @@ internal sealed class UserLogon : IDisposable
     /// <summary>The password for the RDP control; the caller clears it as soon as it is handed over.</summary>
     internal char[] Reveal()
     {
-        if (secret == null) throw new ObjectDisposedException(nameof(UserLogon));
-        var copy = (byte[])secret.Clone();
+        byte[] copy;
+        lock (secretLock)
+        {
+            if (secret == null) throw new ObjectDisposedException(nameof(UserLogon));
+            copy = (byte[])secret.Clone();
+        }
         try
         {
             if (!CryptUnprotectMemory(copy, copy.Length, 0)) throw new Win32Exception();
@@ -141,7 +162,7 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(copy); }
     }
 
-    public void Dispose() { if (secret != null) { Array.Clear(secret); secret = null; } }
+    public void Dispose() { lock (secretLock) { if (secret != null) { Array.Clear(secret); secret = null; } } }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }

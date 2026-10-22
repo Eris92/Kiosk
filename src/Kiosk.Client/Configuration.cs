@@ -23,12 +23,16 @@ internal sealed record ApplicationEntry
 
 internal static class Configuration
 {
+    private static readonly JsonSerializerOptions ReadOptions = new()
+    {
+        UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
+        MaxDepth = 16
+    };
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
     internal static Config Load(string path)
     {
-        var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path), new JsonSerializerOptions
-        {
-            UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
-        }) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
+        if (new FileInfo(path).Length > 4 * 1024 * 1024) throw new InvalidDataException("Konfiguracja jest zbyt duża (maksymalnie 4 MB).");
+        var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path), ReadOptions) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
         config = config.Migrate(); config.Validate(); return config;
     }
     internal static bool IsWebUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
@@ -40,8 +44,11 @@ internal static class Configuration
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(temporary, path, true);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(config, WriteOptions));
+            // ReplaceFile preserves the destination ACL; a rename-over could
+            // unintentionally make an administrator-managed config writable.
+            if (File.Exists(path)) File.Replace(temporary, path, null);
+            else File.Move(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }

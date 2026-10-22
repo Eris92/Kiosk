@@ -14,16 +14,29 @@ internal sealed class IdleScreen : Form
     private readonly System.Windows.Forms.Timer watch = new() { Interval = 5000 };
     private WebView2? web;
     private ApplicationView? app;
+    private Label? failure;
     private bool starting;
+    private bool restartingApp;
+    private bool disposed;
 
     internal Screen Target { get; }
     private readonly int number;
 
     /// <summary>Normally view only; true while Konfiguracja is open, so the page can be signed in (read-only account).</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Interactive
     {
         get => Enabled;
-        set { if (Enabled != value) Enabled = value; }
+        set
+        {
+            if (Enabled == value || disposed) return;
+            Enabled = value;
+            if (!IsHandleCreated) return;
+            // Admins must be able to focus/type into the screen page while configuring its account.
+            const long noActivate = 0x08000000;
+            long style = AppNative.GetWindowLongPtr(Handle, -20).ToInt64();
+            AppNative.SetWindowLongPtr(Handle, -20, new IntPtr(value ? style & ~noActivate : style | noActivate));
+        }
     }
     internal DateTime ShownAt { get; private set; }
 
@@ -47,12 +60,16 @@ internal sealed class IdleScreen : Form
             Bounds = Target.Bounds;
         };
         // A program that closed by itself (or crashed) is started again.
-        watch.Tick += async (_, _) => { if (app != null && app.Started && !app.Refresh()) await RestartAppAsync(); };
+        watch.Tick += async (_, _) =>
+        {
+            if (!disposed && content.Url.Length == 0 && (app == null || app.Started && !app.PollLifetime()))
+                await RestartAppAsync();
+        };
     }
 
     private async Task StartAsync()
     {
-        if (starting) return;
+        if (starting || disposed) return;
         starting = true;
         try
         {
@@ -63,29 +80,65 @@ internal sealed class IdleScreen : Form
                 // A lasting profile per screen: the read-only account signed in once stays signed in.
                 var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Screens", "Ekran" + number);
                 var environment = await CoreWebView2Environment.CreateAsync(null, folder);
+                if (disposed) return;
                 await web.EnsureCoreWebView2Async(environment);
+                if (disposed) return;
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                web.CoreWebView2.Settings.IsPasswordAutosaveEnabled = false;
+                web.CoreWebView2.Settings.IsGeneralAutofillEnabled = false;
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.
+                web.CoreWebView2.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
                 web.CoreWebView2.Navigate(content.Url);
             }
             else await RestartAppAsync();
-            watch.Start();
         }
         catch (Exception ex)
         {
-            Controls.Add(new Label { Text = "Nie udało się pokazać treści ekranu: " + ex.Message, Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, TextAlign = ContentAlignment.MiddleCenter });
-            Audit.Write("idle_screen_error", ex.Message);
+            if (disposed) return;
+            if (web != null) { Controls.Remove(web); web.Dispose(); web = null; }
+            ShowError(ex);
         }
         finally { starting = false; }
     }
 
     private async Task RestartAppAsync()
     {
-        if (app != null) { Controls.Remove(app); app.Dispose(); }
-        app = new ApplicationView();
-        Controls.Add(app);
-        await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
+        if (restartingApp || disposed) return;
+        restartingApp = true;
+        watch.Stop();
+        try
+        {
+            if (app != null) { Controls.Remove(app); app.Dispose(); }
+            app = new ApplicationView();
+            Controls.Add(app);
+            await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
+            if (disposed) return;
+            if (failure != null) failure.Visible = false;
+            watch.Interval = 5000;
+        }
+        catch (Exception ex)
+        {
+            if (disposed) return;
+            if (app != null) { Controls.Remove(app); app.Dispose(); app = null; }
+            ShowError(ex);
+            watch.Interval = 30000; // A broken executable must not be relaunched continuously.
+        }
+        finally
+        {
+            restartingApp = false;
+            if (!disposed) watch.Start();
+        }
+    }
+
+    private void ShowError(Exception exception)
+    {
+        failure ??= new Label { Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, BackColor = KioskTheme.Background, TextAlign = ContentAlignment.MiddleCenter };
+        if (failure.Parent == null) Controls.Add(failure);
+        failure.Text = "Nie udało się pokazać treści ekranu: " + exception.Message;
+        failure.Visible = true;
+        failure.BringToFront();
+        Audit.Write("idle_screen_error", exception.Message);
     }
 
     /// <summary>Moving to a screen with another scale: Windows suggests a size; the window must still cover its screen.</summary>
@@ -97,16 +150,17 @@ internal sealed class IdleScreen : Form
         get
         {
             var p = base.CreateParams;
-            p.ExStyle |= 0x08000000 | 0x80; // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW: never takes focus, not in Alt+Tab
+            p.ExStyle |= 0x80; // WS_EX_TOOLWINDOW: not in Alt+Tab.
+            if (!Interactive) p.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE only while the screen is view only.
             return p;
         }
     }
 
-    protected override bool ShowWithoutActivation => true;
+    protected override bool ShowWithoutActivation => !Interactive;
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { watch.Dispose(); web?.Dispose(); app?.Dispose(); }
+        if (disposing) { disposed = true; watch.Dispose(); }
         base.Dispose(disposing);
     }
 }

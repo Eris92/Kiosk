@@ -23,7 +23,9 @@ internal static class WindowsSession
             System.Security.Cryptography.X509Certificates.StoreName.My, System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser))
         {
             store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
-            thumbprints = store.Certificates.Where(c => c.HasPrivateKey).Select(c => c.Thumbprint).ToArray();
+            var certificates = store.Certificates;
+            try { thumbprints = certificates.Where(c => c.HasPrivateKey).Select(c => c.Thumbprint).ToArray(); }
+            finally { foreach (var certificate in certificates) certificate.Dispose(); }
         }
         return new CardIdentity("win:" + identity.User?.Value, name, upn) { Thumbprints = thumbprints };
     }
@@ -42,8 +44,8 @@ internal static class WindowsSession
     /// <summary>True while nobody is looking at this session (after Disconnect, until the person signs in again).</summary>
     internal static bool IsDisconnected()
     {
-        if (!WTSQuerySessionInformation(IntPtr.Zero, CurrentSession, 8, out var buffer, out _)) return false; // WTSConnectState
-        try { return Marshal.ReadInt32(buffer) == 4; } // WTSDisconnected
+        if (!WTSQuerySessionInformation(IntPtr.Zero, CurrentSession, 8, out var buffer, out var bytes)) return false; // WTSConnectState
+        try { return buffer != IntPtr.Zero && bytes >= sizeof(int) && Marshal.ReadInt32(buffer) == 4; } // WTSDisconnected
         finally { WTSFreeMemory(buffer); }
     }
 

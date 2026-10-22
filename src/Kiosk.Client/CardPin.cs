@@ -113,7 +113,7 @@ internal static class CardPin
                         if (NCryptGetProperty(key, "SmartCardKeyCertificate", null, 0, out var size, Silent) != 0 || size == 0) continue;
                         var data = new byte[size];
                         if (NCryptGetProperty(key, "SmartCardKeyCertificate", data, size, out _, Silent) != 0) continue;
-                        try { certificates.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2(data)); }
+                        try { certificates.Add(System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(data)); }
                         catch (CryptographicException) { }
                     }
                 }

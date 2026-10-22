@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using Windows.Security.Credentials.UI;
 
 namespace Kiosk.Client;
@@ -12,7 +11,7 @@ namespace Kiosk.Client;
 /// session at once; reinserting a card brings its session back. Sessions expire after
 /// ChangeUserAfterSeconds of inactivity. Nothing here touches the Windows lock screen.
 /// </summary>
-internal sealed class KioskForm : Form
+internal sealed partial class KioskForm : Form
 {
     private sealed class RdpSession
     {
@@ -39,7 +38,7 @@ internal sealed class KioskForm : Form
         internal DateTime InactiveSince { get; set; } = DateTime.UtcNow;
         internal string? Notice { get; set; }
         internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0;
-        /// <summary>The card's account (UPN from its certificate) is in this PC's local Administrators group.</summary>
+        /// <summary>True only for the authenticated Windows shell identity, never a claimed certificate UPN.</summary>
         internal bool IsWindowsAdmin { get; set; }
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
         internal UserLogon? Logon { get; set; }
@@ -48,6 +47,7 @@ internal sealed class KioskForm : Form
         internal Dictionary<string, int>? Layout { get; set; }
         /// <summary>The screens' content was opened as this person (editable) after their first unlock.</summary>
         internal bool ScreensOpened { get; set; }
+        internal bool Closed { get; set; }
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
@@ -72,6 +72,10 @@ internal sealed class KioskForm : Form
     private DateTime? disconnectedSince;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
     private string? notice;
+    private ChromeState? lastChrome;
+    private readonly record struct ChromeState(UserSession? Current, Control? View, bool Locked, bool Verified,
+        bool Verifying, bool RequireRemoval, int Sessions, int Windows, string? Notice, string? SessionNotice,
+        string Name, string ReaderStatus);
 
     private bool CanUseApps => current is { Locked: false };
 
@@ -138,7 +142,16 @@ internal sealed class KioskForm : Form
                 {
                     cardKey = key;
                     if (key == null) CardRemoved();
-                    else CardInserted(identifyCard() ?? UncertifiedCard());
+                    else
+                    {
+                        var identity = identifyCard() ?? UncertifiedCard();
+                        if (identity != null) CardInserted(identity);
+                        else
+                        {
+                            if (current != null) Park(current, "card_identity_unavailable");
+                            notice = "Nie można ustalić identyfikatora karty. Wyjmij ją i spróbuj ponownie.";
+                        }
+                    }
                 }
             }
             if (current is { Locked: false })
@@ -171,10 +184,12 @@ internal sealed class KioskForm : Form
     }
 
     /// <summary>A card without certificates (e.g. FIDO2): its UID keeps cards of the same model in separate sessions.</summary>
-    private CardIdentity UncertifiedCard()
+    private CardIdentity? UncertifiedCard()
     {
         var uid = CardPin.ReadUid(reader.ActiveReader);
-        return new CardIdentity(uid != null ? "uid:" + uid : "card:" + reader.ActiveReader + "|" + reader.ActiveAtr, "Karta");
+        // ATR identifies a card model, not a person. Never merge two cards into
+        // one parked session just because the reader/model happen to match.
+        return string.IsNullOrWhiteSpace(uid) ? null : new CardIdentity("uid:" + uid, "Karta");
     }
 
     private void CardRemoved()
@@ -187,12 +202,12 @@ internal sealed class KioskForm : Form
     private void CardInserted(CardIdentity identity)
     {
         if (requireRemoval) return;
-        if (current?.Identity.Id == identity.Id) return;
+        // This method runs only for a new PC/SC insertion generation. Even the
+        // same card must be locked and re-verified after a rapid remove/reinsert.
         if (current != null) Park(current, "card_changed");
         if (!sessions.TryGetValue(identity.Id, out var session))
         {
             session = new UserSession { Identity = identity };
-            _ = CheckWindowsAdministratorAsync(session);
             sessions[identity.Id] = session;
             Audit.Write("session_started", identity.Name);
         }
@@ -259,9 +274,10 @@ internal sealed class KioskForm : Form
             Audit.Write("unlock_error", ex.Message);
         }
         finally { verifying = false; }
+        if (session.Closed || IsDisposed) { session.Logon?.Dispose(); session.Logon = null; return; }
         if (!ok || current != session) { RefreshChrome(); return; }
         // The card may have been swapped while the dialog was open.
-        if (!cardPresent() || (identifyCard()?.Id ?? session.Identity.Id) != session.Identity.Id)
+        if (!cardPresent() || (identifyCard() ?? UncertifiedCard())?.Id != session.Identity.Id)
         {
             cardKey = null; // Re-evaluate the card on the next tick.
             RefreshChrome();
@@ -273,6 +289,11 @@ internal sealed class KioskForm : Form
             // Like runas: the person's own account, checked by Windows; asked once per Kiosk session.
             try { session.Logon = UserLogon.Prompt(Handle, "Podaj login (np. jan@firma.pl) i hasło swojego konta. Aplikacje, przeglądarka i pulpity zdalne uruchomią się jako Ty."); }
             catch (Exception ex) { session.Notice = "Nie udało się zalogować: " + ex.Message; Audit.Write("signin_error", ex.Message); }
+            if (session.Closed || current != session || !cardPresent())
+            {
+                session.Logon?.Dispose(); session.Logon = null;
+                cardKey = null; return;
+            }
             if (session.Logon == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             Audit.Write("signed_in_as_user", session.Logon.DisplayName);
             // Remember the account for this card: next time the card and its PIN are enough.
@@ -294,6 +315,11 @@ internal sealed class KioskForm : Form
             }
             catch (Exception ex) { session.Notice = "Karta nie została zapamiętana: " + ex.Message; Audit.Write("card_enroll_failed", ex.Message); }
             finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
+        }
+        if (session.Closed || IsDisposed || current != session || !cardPresent() ||
+            (identifyCard() ?? UncertifiedCard())?.Id != session.Identity.Id)
+        {
+            cardKey = null; return;
         }
         Unlock(session);
     }
@@ -405,6 +431,7 @@ internal sealed class KioskForm : Form
 
     private void CloseSession(UserSession session, string reason)
     {
+        session.Closed = true;
         if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
@@ -423,7 +450,16 @@ internal sealed class KioskForm : Form
     private bool CheckCard()
     {
         if (!CanUseApps) return false;
-        if (reader.Snapshot(config.ReaderName) == null) { cardKey = null; return false; }
+        if (!ShellMode)
+        {
+            var observed = reader.Snapshot(config.ReaderName);
+            if (observed == null || observed != cardKey)
+            {
+                // A different card may arrive between timer ticks and a menu click.
+                if (current != null) Park(current, "card_changed_before_launch");
+                cardKey = null; return false;
+            }
+        }
         notice = null;
         return true;
     }
@@ -609,7 +645,7 @@ internal sealed class KioskForm : Form
                 }
                 else
                 {
-                    var entry = content.Url.Length > 0 ? EdgeForScreen(session.Logon!, n, content.Url)
+                    var entry = content.Url.Length > 0 ? EdgeForScreen(n, content.Url)
                         : new ApplicationEntry { Name = title, Path = content.Path, Arguments = content.Arguments };
                     session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
                     if (n > 1) session.Layout["app:" + title] = n; // Opens on its own screen.
@@ -625,7 +661,7 @@ internal sealed class KioskForm : Form
 
     /// <summary>The person's own Edge (their signed-in profile, SSO) for a screen. When their Edge already runs, it opens
     /// the window in that copy and the Kiosk view takes the new window over.</summary>
-    private static ApplicationEntry EdgeForScreen(UserLogon logon, int n, string url)
+    private static ApplicationEntry EdgeForScreen(int n, string url)
     {
         return new ApplicationEntry
         {
@@ -721,6 +757,11 @@ internal sealed class KioskForm : Form
     private void RefreshChrome()
     {
         RefreshHosts();
+        var state = new ChromeState(current, visibleView, current?.Locked == true, current?.Verified == true,
+            verifying, requireRemoval, sessions.Count, current?.Windows.Count ?? 0, notice, current?.Notice,
+            current?.Name ?? "", reader.Status);
+        if (lastChrome == state) return;
+        lastChrome = state;
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
@@ -898,63 +939,75 @@ internal sealed class KioskForm : Form
         bool asLoggedOnUser = logon != null && connection.Authentication == RdpAuthentication.WindowsCurrentUser;
         if (asLoggedOnUser) promptForCredentials = false;
         var host = new RdpHost { Dock = DockStyle.Fill, Visible = false };
-        ((ISupportInitialize)host).BeginInit();
-        surface.Controls.Add(host);
-        ((ISupportInitialize)host).EndInit();
-        host.CreateControl();
-        dynamic client = host.Client;
-        client.Server = connection.Server;
-        if (connection.UserName.Length > 0) client.UserName = connection.UserName;
-        client.DesktopWidth = Math.Max(800, surface.Width);
-        client.DesktopHeight = Math.Max(600, surface.Height);
-        dynamic settings = client.AdvancedSettings7;
-        settings.RDPPort = connection.Port;
-        settings.EnableCredSspSupport = true;
-        settings.AuthenticationLevel = 1; // Reject server authentication failures.
-        settings.RedirectSmartCards = true; // The card (or Windows Hello virtual card) signs in inside the session.
-        settings.RedirectDrives = false;
-        settings.RedirectPrinters = false;
-        settings.RedirectClipboard = false;
-        settings.EnableAutoReconnect = false;
-        client.FullScreen = false;
-        settings.SmartSizing = true;
-        settings.DisplayConnectionBar = false;
-        settings.HotKeyFullScreen = 0;
-        var credentials = (IRdpCredentials)(object)client;
-        // RequireCredentialPrompt=false lets Windows use the signed-in (card / Hello / Entra) identity
-        // without forcing the dialog; prompting is still allowed when no such credential exists.
-        credentials.SetPromptForCredentials(promptForCredentials);
-        credentials.SetPromptForCredsOnClient(true);
-        credentials.SetAllowPromptingForCredentials(true);
-        credentials.SetAllowCredentialSaving(false);
-        if (credentials.GetPromptForCredentials() != promptForCredentials || !credentials.GetPromptForCredsOnClient() ||
-            !credentials.GetAllowPromptingForCredentials() || credentials.GetAllowCredentialSaving())
-            throw new InvalidOperationException("Nie udało się zastosować zasad pytania o poświadczenia RDP.");
-        if (asLoggedOnUser)
+        try
         {
-            client.UserName = logon!.Login;
-            var password = logon.Reveal();
-            try { settings.ClearTextPassword = new string(password, 0, Array.IndexOf(password, '\0')); }
-            finally { Array.Clear(password); }
+            ((ISupportInitialize)host).BeginInit();
+            surface.Controls.Add(host);
+            ((ISupportInitialize)host).EndInit();
+            host.CreateControl();
+            dynamic client = host.Client;
+            client.Server = connection.Server;
+            if (connection.UserName.Length > 0) client.UserName = connection.UserName;
+            client.DesktopWidth = Math.Max(800, surface.Width);
+            client.DesktopHeight = Math.Max(600, surface.Height);
+            dynamic settings = client.AdvancedSettings7;
+            settings.RDPPort = connection.Port;
+            settings.EnableCredSspSupport = true;
+            settings.AuthenticationLevel = 1; // Reject server authentication failures.
+            settings.RedirectSmartCards = true; // The card (or Windows Hello virtual card) signs in inside the session.
+            settings.RedirectDrives = false;
+            settings.RedirectPrinters = false;
+            settings.RedirectClipboard = false;
+            settings.EnableAutoReconnect = false;
+            client.FullScreen = false;
+            settings.SmartSizing = true;
+            settings.DisplayConnectionBar = false;
+            settings.HotKeyFullScreen = 0;
+            var credentials = (IRdpCredentials)(object)client;
+            // RequireCredentialPrompt=false lets Windows use the signed-in (card / Hello / Entra) identity
+            // without forcing the dialog; prompting is still allowed when no such credential exists.
+            credentials.SetPromptForCredentials(promptForCredentials);
+            credentials.SetPromptForCredsOnClient(true);
+            credentials.SetAllowPromptingForCredentials(true);
+            credentials.SetAllowCredentialSaving(false);
+            if (credentials.GetPromptForCredentials() != promptForCredentials || !credentials.GetPromptForCredsOnClient() ||
+                !credentials.GetAllowPromptingForCredentials() || credentials.GetAllowCredentialSaving())
+                throw new InvalidOperationException("Nie udało się zastosować zasad pytania o poświadczenia RDP.");
+            if (asLoggedOnUser)
+            {
+                client.UserName = logon!.Login;
+                var password = logon.Reveal();
+                try { settings.ClearTextPassword = new string(password, 0, Array.IndexOf(password, '\0')); }
+                finally { Array.Clear(password); }
+            }
+            if (connection.Authentication == RdpAuthentication.EntraId)
+            {
+                var extended = (IRdpExtendedSettings)(object)client;
+                object enabled = true;
+                // Write-only for this property: the control rejects reading it back (E_UNEXPECTED),
+                // so a successful put is the confirmation.
+                extended.SetProperty("EnableRdsAadAuth", ref enabled);
+            }
+            return host;
         }
-        if (connection.Authentication == RdpAuthentication.EntraId)
+        catch
         {
-            var extended = (IRdpExtendedSettings)(object)client;
-            object enabled = true;
-            // Write-only for this property: the control rejects reading it back (E_UNEXPECTED),
-            // so a successful put is the confirmation.
-            extended.SetProperty("EnableRdsAadAuth", ref enabled);
+            surface.Controls.Remove(host); host.Dispose(); throw;
         }
-        return host;
     }
 
     /// <summary>An application closed with its own × (or exited): remove its Kiosk window and taskbar button.</summary>
     private void MonitorApplications()
     {
-        foreach (var session in sessions.Values.ToArray())
-        foreach (var (name, view) in session.Applications.ToArray())
-            if (view.Started && !view.Refresh())
-                CloseWindow("app:" + name, "application_exited", session);
+        ApplicationView.BeginPollCycle();
+        try
+        {
+            foreach (var session in sessions.Values.ToArray())
+            foreach (var (name, view) in session.Applications.ToArray())
+                if (view.Started && !view.PollLifetime())
+                    CloseWindow("app:" + name, "application_exited", session);
+        }
+        finally { ApplicationView.EndPollCycle(); }
     }
 
     private void MonitorRdp()
@@ -1058,8 +1111,14 @@ internal sealed class KioskForm : Form
 
     private async Task StartApplicationAsync(UserSession session, ApplicationEntry entry)
     {
+        if (sessions.Values.Any(other => other != session && (other.Logon?.Sid ?? "") == (session.Logon?.Sid ?? "") &&
+            other.Applications.Values.Any(view => string.Equals(view.LaunchPath, Path.GetFullPath(entry.Path), StringComparison.OrdinalIgnoreCase))))
+        {
+            notice = "Ten program działa już w zachowanej sesji innej karty na tym samym koncie Windows. Zakończ tę sesję lub użyj osobnych kont w trybie WindowsShell.";
+            throw new InvalidOperationException(notice);
+        }
         var key = "app:" + entry.Name;
-        var requested = new ApplicationView();
+        var requested = new ApplicationView(session);
         session.Applications[entry.Name] = requested;
         AddWindow(session, key, entry.Name, requested);
         try
@@ -1085,17 +1144,8 @@ internal sealed class KioskForm : Form
     {
         settings ??= config;
         if (settings.AdminCards.Any(a => a.Id == session.Identity.Id)) return true;
-        if (settings.AllowWindowsAdministrators && session.IsWindowsAdmin) return true;
+        if (settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || session.Logon?.IsAdministrator == true)) return true;
         return settings.TestMode && settings.AdminCards.Length == 0;
-    }
-
-    private async Task CheckWindowsAdministratorAsync(UserSession session)
-    {
-        var upn = session.Identity.Upn;
-        if (upn.Length == 0) return;
-        session.IsWindowsAdmin = await Task.Run(() => LocalAdministrators.Contains(upn));
-        if (session.IsWindowsAdmin) Audit.Write("windows_administrator", session.Identity.Name);
-        RefreshChrome();
     }
 
     private void OpenSettings()
@@ -1110,7 +1160,12 @@ internal sealed class KioskForm : Form
         view.SaveRequested += updated =>
         {
             Configuration.Save(configPath, updated);
-            config = updated;
+            bool modeChanged = updated.SessionMode != config.SessionMode;
+            // A live change must not convert an existing card session into the
+            // Windows identity session. Apply that transition only at startup.
+            config = updated with { SessionMode = config.SessionMode };
+            lastChrome = null;
+            if (modeChanged) notice = "Zmiana trybu sesji zacznie działać po ponownym uruchomieniu Kiosku.";
             KioskTheme.SetAccent(updated.AccentColor);
             Invalidate(true);
             Audit.Write("settings_saved");
@@ -1120,296 +1175,6 @@ internal sealed class KioskForm : Form
         AddWindow(session, SettingsKey, "Konfiguracja", view);
     }
 
-    // ---------------------------------------------------------------- self-test
-
-    internal void SmokeTest()
-    {
-        timer.Stop();
-        if (Marshal.SizeOf<Native.ReaderState>() != 64 ||
-            Marshal.OffsetOf<Native.ReaderState>(nameof(Native.ReaderState.EventState)).ToInt32() != 20)
-            throw new InvalidOperationException("Unexpected PCSC x64 structure layout.");
-        if (!CardReader.IsUsableCard(0x122) || !CardReader.IsUsableCard(0xA2) ||
-            !CardReader.IsUsableCard(0x422) || CardReader.IsUsableCard(0x222) ||
-            CardReader.IsUsableCard(0x12) || CardReader.IsUsableCard(0x28))
-            throw new InvalidOperationException("PCSC card-state regression test failed.");
-        var physicalAndVirtual = new[]
-        {
-            new Native.ReaderState { Reader = "ACS", EventState = 0x422, Atr = new byte[36] },
-            new Native.ReaderState { Reader = "UICC", EventState = 0x22, Atr = new byte[36] },
-            new Native.ReaderState { Reader = "Windows Hello", EventState = 0x422, Atr = new byte[36] }
-        };
-        if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Count(s => CardReader.IsUsableCard(s.EventState)) != 1 ||
-            CardReader.MonitoredReaders(physicalAndVirtual, "").Count(s => CardReader.IsUsableCard(s.EventState)) != 3 ||
-            CardReader.MonitoredReaders(physicalAndVirtual, "Missing").Length != 0)
-            throw new InvalidOperationException("PCSC reader-selection regression test failed.");
-        physicalAndVirtual[0].EventState = 0x12;
-        if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
-            throw new InvalidOperationException("Virtual reader masked physical card removal.");
-
-        // Older single-server files migrate to the connection list and the lock / retention timers.
-        var legacy = JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120}")!.Migrate();
-        legacy.Validate();
-        if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
-            legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
-            !legacy.Applications.Single().IsBuiltInNotes || legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 1)
-            throw new InvalidOperationException("Legacy configuration migration failed.");
-        foreach (var invalid in new[]
-        {
-            legacy with { ChangeUserAfterSeconds = -1 },
-            legacy with { LockAfterSeconds = 5 },
-            legacy with { AutoConnectRdpName = "Missing" },
-            legacy with { UnlockMethod = (UnlockMethod)42 },
-            legacy with { AccentColor = "zielony" },
-            legacy with { RdpConnections = [legacy.RdpConnections[0], legacy.RdpConnections[0]] },
-            legacy with { RdpConnections = [new RdpConnection { Name = "E", Server = "10.0.0.1", Authentication = RdpAuthentication.EntraId }] }
-        })
-        {
-            try { invalid.Validate(); throw new Exception("Invalid configuration was accepted."); }
-            catch (InvalidDataException) { }
-        }
-
-        // A black accent stays visible: lines switch to light text, labels on it turn white.
-        KioskTheme.SetAccent("#000000");
-        if (KioskTheme.AccentLine != KioskTheme.Text || KioskTheme.OnAccent.ToArgb() != Color.White.ToArgb()) throw new InvalidOperationException("Black accent is not readable.");
-        KioskTheme.SetAccent("#FACC15");
-        if (KioskTheme.OnAccent != KioskTheme.Background || KioskTheme.AccentLine != KioskTheme.Accent) throw new InvalidOperationException("Light accent is not readable.");
-        KioskTheme.SetAccent(config.AccentColor);
-
-        var sites = new SitePolicy(true, [new Bookmark { Name = "Portal", Url = "https://www.portal.example.pl/start" }], ["login.microsoftonline.com"]);
-        if (!sites.Allows("https://portal.example.pl/") || !sites.Allows("https://app.portal.example.pl/x") ||
-            !sites.Allows("https://login.microsoftonline.com/common") || sites.Allows("https://www.google.com/") ||
-            sites.Allows("https://evilportal.example.pl/") || sites.Allows("file:///C:/") || !new SitePolicy(false, [], []).Allows("https://any.example/"))
-            throw new InvalidOperationException("Browser site policy failed.");
-        using (var restricted = new BrowserView([new Bookmark { Name = "Portal", Url = "https://portal.example.pl/" }], sites))
-            if (restricted.Controls.OfType<FlowLayoutPanel>().Any() || restricted.Controls.OfType<Panel>().SelectMany(p => p.Controls.OfType<TextBox>()).Any())
-                throw new InvalidOperationException("Address bar visible in bookmarks-only mode.");
-
-        _ = Native.IdleMilliseconds();
-        // Validate every dynamic COM setting for each sign-in mode without initiating a connection.
-        foreach (var authentication in Enum.GetValues<RdpAuthentication>())
-        foreach (var prompt in new[] { true, false })
-        {
-            var host = CreateRdp(new RdpConnection { Name = "Test", Server = "pc.example.local", Authentication = authentication }, prompt);
-            try { if ((int)host.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test."); }
-            finally { surface.Controls.Remove(host); host.Dispose(); }
-        }
-    }
-
-    internal async Task EmbeddedSmokeTestAsync()
-    {
-        var alice = new CardIdentity("cert:A", "Alicja Test");
-        var bob = new CardIdentity("cert:B", "Bartek Test");
-        identifyCard = () => current?.Identity;
-        cardPresent = () => true;
-        config = config with { UnlockMethod = UnlockMethod.Card, ChangeUserAfterSeconds = 600 };
-
-        CardInserted(alice);
-        var aliceSession = current;
-        if (aliceSession?.Identity != alice || aliceSession.Locked) throw new InvalidOperationException("Card did not open a session.");
-        ShowNotes();
-        var noteView = aliceSession.Notes!;
-        const string sample = "Notatka testowa: zażółć gęślą jaźń\r\nDruga linia";
-        noteView.Editor.Text = sample;
-        var path = Path.Combine(AppContext.BaseDirectory, "self-test-note.txt");
-        noteView.SaveFile(path);
-        noteView.Editor.Clear();
-        noteView.LoadFile(path);
-        if (noteView.Editor.Text != sample || noteView.Dirty) throw new InvalidOperationException("Notes file round-trip failed.");
-
-        var browserView = new BrowserView([new Bookmark { Name = "Test bookmark", Url = "https://bookmark.invalid/" }]);
-        aliceSession.Browser = browserView;
-        AddWindow(aliceSession, BrowserKey, "Przeglądarka", browserView);
-        await browserView.InitializeAsync("about:blank").WaitAsync(TimeSpan.FromSeconds(25));
-        var navigated = new TaskCompletionSource<bool>();
-        string navigationUri = "";
-        browserView.Web.CoreWebView2.NavigationStarting += (_, e) => navigationUri = e.Uri;
-        browserView.Web.CoreWebView2.NavigationCompleted += (_, e) =>
-        {
-            if (e.IsSuccess) navigated.TrySetResult(true);
-            else navigated.TrySetException(new InvalidOperationException("Embedded navigation failed: " + e.WebErrorStatus + " / " + navigationUri));
-        };
-        browserView.Web.NavigateToString("<html><head><title>Kiosk smoke test</title></head><body><h1>Przeglądarka wewnątrz Kiosku</h1></body></html>");
-        await navigated.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var text = await browserView.Web.ExecuteScriptAsync("document.body.innerText");
-        if (!text.Contains("Kiosku") || !browserView.Web.CoreWebView2.Profile.IsInPrivateModeEnabled)
-            throw new InvalidOperationException("Embedded page or InPrivate profile failed.");
-        // Tabs: a second tab shares the same InPrivate profile (one sign-in), closing it returns to the first.
-        var firstPage = browserView.Web;
-        await browserView.OpenTabAsync().WaitAsync(TimeSpan.FromSeconds(20));
-        if (browserView.TabCount != 2 || browserView.Web == firstPage ||
-            browserView.Web.CoreWebView2.Profile.ProfileName != firstPage.CoreWebView2.Profile.ProfileName || !browserView.Web.CoreWebView2.Profile.IsInPrivateModeEnabled)
-            throw new InvalidOperationException("Browser tab failed.");
-        browserView.CloseActiveTab();
-        if (browserView.TabCount != 1 || browserView.Web != firstPage) throw new InvalidOperationException("Closing a tab failed.");
-
-        // Taskbar: one button per window; clicking switches without losing state.
-        if (taskbar.TaskCount != 2) throw new InvalidOperationException("Taskbar does not list open windows.");
-        ActivateWindow(NotesKey);
-        if (!noteView.Visible || browserView.Visible || noteView.Editor.Text != sample)
-            throw new InvalidOperationException("Notes switch lost state.");
-        ActivateWindow(NotesKey);
-        if (!desktop.Visible || noteView.Visible) throw new InvalidOperationException("Clicking the active window did not show the desktop.");
-        ActivateWindow(BrowserKey);
-        if (!browserView.Visible || noteView.Visible || browserView.Parent != surface)
-            throw new InvalidOperationException("Browser view is not embedded.");
-        var bookmarkNavigation = new TaskCompletionSource<string>();
-        browserView.Web.CoreWebView2.NavigationStarting += (_, e) => { e.Cancel = true; bookmarkNavigation.TrySetResult(e.Uri); };
-        var bookmarkButton = browserView.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().Single();
-        bookmarkButton.PerformClick();
-        if (await bookmarkNavigation.Task.WaitAsync(TimeSpan.FromSeconds(5)) != "https://bookmark.invalid/")
-            throw new InvalidOperationException("Bookmark navigation failed.");
-
-        // Konfiguracja is for admins: a listed card, a Windows administrator, or anyone while the list is empty in test mode.
-        var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
-        var bobSession = new UserSession { Identity = bob };
-        if (!IsAdmin(aliceSession, adminTest) || IsAdmin(bobSession, adminTest) ||
-            !IsAdmin(bobSession, config with { TestMode = true, AdminCards = [] }) || IsAdmin(bobSession, config with { TestMode = false, AdminCards = [] }))
-            throw new InvalidOperationException("Admin card check failed.");
-        bobSession.IsWindowsAdmin = true;
-        if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
-            throw new InvalidOperationException("Windows administrator check failed.");
-        if (!LocalAdministrators.Matches(@"INVESTA\k.lechmyc", "k.lechmyc", "investa.pl") || !LocalAdministrators.Matches(@"AzureAD\JanKowalski", "JanKowalski", "AzureAD") ||
-            LocalAdministrators.Matches(@"OTHER\k.lechmyc", "k.lechmyc", "investa.pl") || LocalAdministrators.Matches("Kris", "Kris", "x.pl"))
-            throw new InvalidOperationException("Administrators group matching failed.");
-        _ = LocalAdministrators.Contains("nobody@example.invalid"); // Reads the real group without failing.
-
-        menu.Populate("test", BuildMenu());
-        if (menu.ItemCount < config.RdpConnections.Length + 3) throw new InvalidOperationException("Menu is incomplete.");
-
-        // In-app lock hides every window; resume with the same card restores the last one.
-        Lock("self_test_lock", 0);
-        if (!aliceSession.Locked || !desktop.Visible || browserView.Visible || taskbar.TaskCount != 0 || taskbar.MenuButton.Enabled)
-            throw new InvalidOperationException("Lock did not hide the session.");
-        await VerifyAndUnlockAsync();
-        if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
-
-        // Shared PC: removing the card keeps the session; another card gets its own empty session.
-        CardRemoved();
-        if (current != null || browserView.IsDisposed || noteView.IsDisposed || browserView.Visible || !desktop.Visible)
-            throw new InvalidOperationException("Card removal did not park the session.");
-        CardInserted(bob);
-        if (current?.Identity != bob || current.Windows.Count != 0 || taskbar.TaskCount != 0 || sessions.Count != 2 || noteView.Visible)
-            throw new InvalidOperationException("Second card did not get its own session.");
-        CardRemoved();
-        CardInserted(alice);
-        if (current != aliceSession || aliceSession.Locked || !browserView.Visible || noteView.Editor.Text != sample || taskbar.TaskCount != 2)
-            throw new InvalidOperationException("Returning card did not restore its session.");
-
-        // Parked sessions expire after the retention time.
-        sessions[bob.Id].InactiveSince = DateTime.UtcNow.AddHours(-1);
-        ExpireSessions();
-        if (sessions.ContainsKey(bob.Id) || sessions.Count != 1) throw new InvalidOperationException("Parked session did not expire.");
-
-        // Logout closes only this person's session and asks for the card to be removed.
-        Logout("self_test_logout");
-        if (!noteView.IsDisposed || !browserView.IsDisposed || sessions.Count != 0 || current != null || !desktop.Visible || taskbar.MenuButton.Enabled)
-            throw new InvalidOperationException("Session cleanup failed.");
-        requireRemoval = false;
-        CardInserted(alice);
-        ShowNotes();
-        if (current!.Notes!.Editor.TextLength != 0) throw new InvalidOperationException("Notes leaked to the next session.");
-        CloseAllSessions("fresh_notes_smoke_test");
-        identifyCard = IdentifyPresentCard;
-        cardPresent = () => reader.Snapshot(config.ReaderName) != null;
-    }
-
-    internal async Task ApplicationSmokeTestAsync()
-    {
-        // Card PIN unlock runs in a child process; a missing reader must fail cleanly, without a dialog.
-        var pin = await CardPin.VerifyAsync("Kiosk self-test missing reader", Handle, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
-        if (pin.Code != CardPin.NoKey || pin.Message.Length == 0) throw new InvalidOperationException("Card PIN check: " + pin.Code + " " + pin.Message);
-        if (CardPin.ReadIdentity("Kiosk self-test missing reader") != null) throw new InvalidOperationException("Identity read from a missing reader.");
-
-        var entry = new ApplicationEntry { Name = "Test", Path = Environment.ProcessPath!, Arguments = "--app-host-fixture" };
-        var testConfig = config with
-        {
-            Applications = [entry],
-            Bookmarks = [new Bookmark { Name = "Google", Url = "https://www.google.com" }],
-            RdpConnections = [new RdpConnection { Name = "Biuro", Server = "rds.example.local" },
-                new RdpConnection { Name = "Entra", Server = "pc.example.local", Authentication = RdpAuthentication.EntraId, UserName = "jan@example.com" }],
-            AutoConnectRdpName = "Biuro", RequireCredentialPrompt = false, UnlockMethod = UnlockMethod.CardAndPin,
-            ConfigVersion = Config.CurrentVersion, EnableBrowser = false,
-            LockAfterSeconds = 60, ChangeUserAfterSeconds = 30, AccentColor = "#3DDC84",
-            BrowserOnlyBookmarks = true, BrowserAllowedDomains = ["login.microsoftonline.com"],
-            AdminCards = [new AdminCard { Name = "Admin", Id = "cert:ADMIN" }], AllowWindowsAdministrators = false
-        };
-        var configFile = Path.Combine(AppContext.BaseDirectory, "self-test-config.json");
-        Configuration.Save(configFile, testConfig);
-        var restored = Configuration.Load(configFile);
-        if (restored.Applications.Single() != entry || restored.Bookmarks.Single() != testConfig.Bookmarks.Single() ||
-            !restored.RdpConnections.SequenceEqual(testConfig.RdpConnections) || restored.AutoConnectRdpName != "Biuro" ||
-            restored.RequireCredentialPrompt || restored.UnlockMethod != UnlockMethod.CardAndPin ||
-            restored.LockAfterSeconds != 60 || restored.ChangeUserAfterSeconds != 30 || restored.AccentColor != "#3DDC84" || !restored.BrowserOnlyBookmarks || restored.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || restored.EnableBrowser)
-            throw new InvalidOperationException("Configuration round-trip failed.");
-        try
-        {
-            (testConfig with { Bookmarks = [new Bookmark { Name = "Bad", Url = "file:///C:/Windows" }] }).Validate();
-            throw new Exception("Invalid bookmark was accepted.");
-        }
-        catch (InvalidDataException) { }
-        using (var settings = new SettingsView(restored))
-        {
-            surface.Controls.Add(settings);
-            var edited = settings.BuildConfig();
-            surface.Controls.Remove(settings);
-            if (!edited.RdpConnections.SequenceEqual(restored.RdpConnections) || edited.AutoConnectRdpName != "Biuro" ||
-                edited.RequireCredentialPrompt || edited.UnlockMethod != UnlockMethod.CardAndPin || edited.LockAfterSeconds != 60 ||
-                edited.ChangeUserAfterSeconds != 30 || edited.AccentColor != "#3DDC84" || edited.AdminCards.Single() != restored.AdminCards.Single() || edited.AllowWindowsAdministrators || !edited.BrowserOnlyBookmarks || edited.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || edited.EnableBrowser || edited.ReaderName != restored.ReaderName || !edited.Applications.SequenceEqual(restored.Applications))
-                throw new InvalidOperationException("Settings view does not round-trip the configuration.");
-        }
-
-        // An existing same-executable window must never be adopted or terminated.
-        using var unrelated = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(entry.Path, entry.Arguments)
-        { UseShellExecute = false, WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden })!;
-        try
-        {
-            config = config with { UnlockMethod = UnlockMethod.Card };
-            CardInserted(new CardIdentity("cert:T", "Test"));
-            var session = current!;
-            await StartApplicationAsync(session, entry).WaitAsync(TimeSpan.FromSeconds(20));
-            var hosted = session.Applications[entry.Name];
-            if (hosted.HostedWindow == IntPtr.Zero || AppNative.GetParent(hosted.HostedWindow) != hosted.Handle)
-                throw new InvalidOperationException("Application is not embedded.");
-            AppNative.GetWindowThreadProcessId(hosted.HostedWindow, out var pid);
-            if (pid == unrelated.Id) throw new InvalidOperationException("Adopted an unrelated process.");
-            using var owned = System.Diagnostics.Process.GetProcessById((int)pid);
-            hosted.Dock = DockStyle.None; hosted.Size = new Size(640, 400);
-            if (!AppNative.GetClientRect(hosted.HostedWindow, out var rect) || rect.Right != 640 || rect.Bottom != 400)
-                throw new InvalidOperationException("Hosted window resize failed.");
-            CardRemoved();
-            if (owned.HasExited) throw new InvalidOperationException("Parking a session closed its application.");
-            // The application closed (its own × button or exit): its Kiosk window and taskbar button go too.
-            owned.Kill(); // Same outcome as the app closing itself: its window is destroyed.
-            await owned.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            for (int i = 0; i < 40 && session.Applications.Count > 0; i++) { MonitorApplications(); await Task.Delay(100); } // Job accounting lags the exit slightly.
-            if (session.Applications.Count != 0 || !hosted.IsDisposed || session.Windows.Count != 0) throw new InvalidOperationException("Closed application left its window behind.");
-            CloseAllSessions("application_smoke_test");
-            await owned.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            if (unrelated.HasExited || !hosted.IsDisposed || sessions.Count != 0)
-                throw new InvalidOperationException("Application ownership cleanup failed.");
-        }
-        finally
-        {
-            if (!unrelated.HasExited) unrelated.Kill(entireProcessTree: true);
-        }
-
-        // Windows shell mode: the signed-in Windows user is the only session, unlocked at once (no card switching).
-        var kioskConfig = config;
-        config = config with { SessionMode = SessionMode.WindowsShell, AutoConnectRdpName = "" };
-        StartWindowsSession();
-        if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
-            throw new InvalidOperationException("Windows shell session failed.");
-        _ = WindowsSession.IsDisconnected();
-        CloseAllSessions("shell_smoke_test");
-        config = kioskConfig;
-    }
-
-    internal void FinishSelfTest()
-    {
-        timer.Stop();
-        closeConfirmed = true;
-        CloseAllSessions("self_test_finished");
-    }
 }
 
 // IMsRdpExtendedSettings (IUnknown): property bag used for EnableRdsAadAuth (Microsoft Entra sign-in).

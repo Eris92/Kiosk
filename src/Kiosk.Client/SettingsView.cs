@@ -29,7 +29,7 @@ internal sealed class SettingsView : UserControl
     private readonly CheckBox onlyBookmarks = new() { Text = "Pozwalaj otwierać tylko strony z zakładek (i ich subdomeny)", AutoSize = true, Padding = new Padding(4, 6, 4, 6) };
     private readonly TextBox allowedDomains = new() { Dock = DockStyle.Fill, PlaceholderText = "login.microsoftonline.com, accounts.google.com" };
     private readonly CheckBox signInAsUser = new() { Text = "„Zaloguj” pyta o login i hasło konta (jak runas): aplikacje, Edge i RDP działają jako ta osoba", AutoSize = true };
-    private readonly CheckBox requirePin = new() { Text = "Wymagaj PIN-u / poświadczeń przy każdym połączeniu RDP", AutoSize = true };
+    private readonly CheckBox requirePin = new() { Text = "Pytaj o uwierzytelnienie przy połączeniu RDP", AutoSize = true };
     private readonly ComboBox autoConnect = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Left, Width = 320 };
     private readonly DataGridView connections = Grid();
     private readonly DataGridView apps = Grid();
@@ -98,7 +98,7 @@ internal sealed class SettingsView : UserControl
         connections.DataError += (_, e) => e.ThrowException = false;
         SetupGridTab(remote, connections,
             "Każde połączenie pojawia się w Menu. Logowanie Entra ID wymaga pełnej nazwy DNS komputera. " +
-            "Karta i Windows Hello logują użytkownika przypisanego do karty.");
+            "Karta uwierzytelnia konto przypisane do jej certyfikatu; Windows Hello potwierdza bieżące konto Windows. Metodę musi obsługiwać serwer.");
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
@@ -127,7 +127,7 @@ internal sealed class SettingsView : UserControl
             Text = "Każda karta ma własną sesję (to nie jest blokada Windows). Wyjęcie karty chowa sesję, inna karta od razu otwiera swoją, " +
                    "a powrót karty przywraca jej okna. Po czasie przechowywania nieużywana sesja jest zamykana. " +
                    "Na komputerze dla wielu osób wybierz „Karta + PIN karty”: Windows Hello potwierdza konto Windows, nie osobę z karty.\n" +
-                   "Bez wymagania PIN-u Kiosk łączy od razu tożsamością z karty / Windows Hello / Entra, jeśli Windows ją udostępnia; w przeciwnym razie i tak zapyta."
+                   "Windows i dostawca karty decydują o oknie PIN / Hello i mogą pamiętać uwierzytelnienie. Prośba o poświadczenia nie gwarantuje ponownego PIN-u."
         });
         session.Controls.Add(fields);
         reader.Text = config.ReaderName;
@@ -313,7 +313,8 @@ internal sealed class SettingsView : UserControl
     /// <summary>Builds and validates the edited configuration without saving it.</summary>
     internal Config BuildConfig()
     {
-        connections.EndEdit(); apps.EndEdit(); bookmarks.EndEdit(); adminCards.EndEdit(); idleScreens.EndEdit();
+        if (!connections.EndEdit() || !apps.EndEdit() || !bookmarks.EndEdit() || !adminCards.EndEdit() || !idleScreens.EndEdit())
+            throw new InvalidDataException("Popraw edytowaną komórkę przed zapisaniem konfiguracji.");
         var selected = autoConnect.SelectedItem as string;
         var result = original with
         {

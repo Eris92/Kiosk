@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text;
 
 namespace Kiosk.Client;
@@ -22,30 +23,34 @@ internal sealed class CtapCard : IDisposable
     private ECDiffieHellman? platformKey;
     private byte[]? shared;     // SHA-256 of the ECDH secret with the card (PIN protocol 1)
     private byte[]? pinToken;
+    private bool transaction;
 
     internal CtapCard(string reader)
     {
         Check(SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context), "Brak usługi kart");
-        // Right after another program (or a card reset) used the card it can refuse briefly: reconnect and retry.
-        for (int attempt = 1; ; attempt++)
+        try
         {
-            try
+            // Right after another program (or a card reset) used the card it can refuse briefly: reconnect and retry.
+            for (int attempt = 1; ; attempt++)
             {
-                Check(SCardConnect(context, reader, 2, 3, out card, out protocol), "Brak karty w czytniku");
-                // SELECT the FIDO applet.
-                var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
-                if (!answer.Ok) throw new CtapException(-2, "Karta nie ma aplikacji FIDO2.");
-                // Keep other programs (Windows' smart card stack) off the card until we are done: they would
-                // select another applet and the PIN token would be lost.
-                SCardBeginTransaction(card);
-                return;
-            }
-            catch (CtapException ex) when (ex.Code == -1 && attempt < 4)
-            {
-                if (card != IntPtr.Zero) { SCardDisconnect(card, 1); card = IntPtr.Zero; } // SCARD_RESET_CARD
-                Thread.Sleep(300);
+                try
+                {
+                    Check(SCardConnect(context, reader, 2, 3, out card, out protocol), "Brak karty w czytniku");
+                    // Lock before SELECT, so another application cannot select its applet between SELECT and the lock.
+                    Check(SCardBeginTransaction(card), "Nie można zająć karty");
+                    transaction = true;
+                    var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
+                    if (!answer.Ok) throw new CtapException(-2, "Karta nie ma aplikacji FIDO2.");
+                    return;
+                }
+                catch (CtapException ex) when (ex.Code == -1 && attempt < 4)
+                {
+                    CloseCard(1); // SCARD_RESET_CARD
+                    Thread.Sleep(300);
+                }
             }
         }
+        catch { Dispose(); throw; }
     }
 
     // ------------------------------------------------------------------ PIN
@@ -53,28 +58,37 @@ internal sealed class CtapCard : IDisposable
     /// <summary>Checks the PIN on the card and keeps a PIN token for the next commands.</summary>
     internal void UsePin(string pin)
     {
+        ClearPinState();
         var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
-        var cardKey = ECDiffieHellman.Create(new ECParameters
+        using var cardKey = ECDiffieHellman.Create(new ECParameters
         {
             Curve = ECCurve.NamedCurves.nistP256,
             Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
         });
         platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
         shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
-        var pinHash = SHA256.HashData(Encoding.UTF8.GetBytes(pin)).AsSpan(0, 16).ToArray();
+        var encodedPin = Encoding.UTF8.GetBytes(pin);
+        var pinHash = SHA256.HashData(encodedPin);
+        CryptographicOperations.ZeroMemory(encodedPin);
         Dictionary<object, object> reply;
         try
         {
             // CTAP 2.1: a token limited to this relying party, allowed to create (mc) and use (ga) its credential.
             // Cards that implement 2.1 reject the older token for makeCredential (PIN_AUTH_INVALID).
-            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 9L), (3L, PlatformCose()), (6L, Encrypt(pinHash)), (9L, 0x03L), (10L, RelyingParty)));
+            try
+            {
+                reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 9L), (3L, PlatformCose()), (6L, Encrypt(pinHash.AsSpan(0, 16))), (9L, 0x03L), (10L, RelyingParty)));
+            }
+            catch (CtapException ex) when (ex.Code is 0x01 or 0x02 or 0x11 or 0x2B)
+            {
+                // CTAP 2.0 card without that subcommand: the classic PIN token (0x05).
+                reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash.AsSpan(0, 16)))));
+            }
+            pinToken = Decrypt((byte[])reply[2L]);
+            if (pinToken.Length is not (16 or 32)) throw new CtapException(-1, "Nieprawidłowy token PIN-u karty.");
         }
-        catch (CtapException ex) when (ex.Code is 0x01 or 0x02 or 0x11 or 0x2B)
-        {
-            // CTAP 2.0 card without that subcommand: the classic PIN token (0x05).
-            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
-        }
-        pinToken = Decrypt((byte[])reply[2L]);
+        catch { ClearPinState(); throw; }
+        finally { CryptographicOperations.ZeroMemory(pinHash); }
     }
 
     /// <summary>The only relying party Kiosk ever uses on the card.</summary>
@@ -110,13 +124,18 @@ internal sealed class CtapCard : IDisposable
             (9L, 1L)));
         var authData = (byte[])reply[2L];
         // rpIdHash 32, flags 1, counter 4, AAGUID 16, credential ID length 2, credential ID.
+        if (authData.Length < 55 || (authData[32] & 0x40) == 0 ||
+            !CryptographicOperations.FixedTimeEquals(authData.AsSpan(0, 32), SHA256.HashData(Encoding.UTF8.GetBytes(rpId))))
+            throw new CtapException(-1, "Nieprawidłowe dane klucza karty.");
         int length = authData[53] << 8 | authData[54];
+        if (length == 0 || length > authData.Length - 55) throw new CtapException(-1, "Nieprawidłowa długość klucza karty.");
         return authData.AsSpan(55, length).ToArray();
     }
 
     /// <summary>The card's HMAC of <paramref name="salt"/> for the given credential (FIDO2 hmac-secret).</summary>
     internal byte[] HmacSecret(string rpId, byte[] credentialId, byte[] salt)
     {
+        if (salt.Length != 32) throw new ArgumentException("Sól klucza karty musi mieć 32 bajty.", nameof(salt));
         var clientDataHash = RandomNumberGenerator.GetBytes(32);
         var saltEnc = Encrypt(salt);
         var saltAuth = HMACSHA256.HashData(shared!, saltEnc).AsSpan(0, 16).ToArray();
@@ -128,10 +147,16 @@ internal sealed class CtapCard : IDisposable
             (6L, PinAuth(clientDataHash)),
             (7L, 1L)));
         var authData = (byte[])reply[2L];
+        if (authData.Length < 37 ||
+            !CryptographicOperations.FixedTimeEquals(authData.AsSpan(0, 32), SHA256.HashData(Encoding.UTF8.GetBytes(rpId))))
+            throw new CtapException(-1, "Nieprawidłowe dane potwierdzenia karty.");
         if ((authData[32] & 0x04) == 0) throw new CtapException(-1, "Karta nie potwierdziła PIN-u.");
         if ((authData[32] & 0x80) == 0) throw new CtapException(-1, "Karta nie obsługuje zapamiętywania konta (hmac-secret).");
         var extensions = (Dictionary<object, object>)Cbor.Decode(authData.AsSpan(37).ToArray(), out _);
-        return Decrypt((byte[])extensions["hmac-secret"]);
+        var secret = Decrypt((byte[])extensions["hmac-secret"]);
+        if (secret.Length == 32) return secret;
+        CryptographicOperations.ZeroMemory(secret);
+        throw new CtapException(-1, "Nieprawidłowa długość sekretu karty.");
     }
 
     // ------------------------------------------------------------------ plumbing
@@ -144,7 +169,7 @@ internal sealed class CtapCard : IDisposable
 
     private byte[] PinAuth(byte[] clientDataHash) => HMACSHA256.HashData(pinToken!, clientDataHash).AsSpan(0, 16).ToArray();
 
-    private byte[] Encrypt(byte[] data)
+    private byte[] Encrypt(ReadOnlySpan<byte> data)
     {
         using var aes = Aes.Create();
         aes.Key = shared!;
@@ -168,7 +193,11 @@ internal sealed class CtapCard : IDisposable
         var response = Exchange(request);
         if (response.Length == 0) throw new CtapException(-1, "Pusta odpowiedź karty.");
         if (response[0] != 0) throw new CtapException(response[0], CtapMessage(response[0]));
-        return response.Length == 1 ? new() : (Dictionary<object, object>)Cbor.Decode(response.AsSpan(1).ToArray(), out _);
+        if (response.Length == 1) return new();
+        var decoded = Cbor.Decode(response.AsSpan(1).ToArray(), out var used);
+        if (used != response.Length - 1 || decoded is not Dictionary<object, object> map)
+            throw new CtapException(-1, "Nieprawidłowa odpowiedź karty.");
+        return map;
     }
 
     private static string CtapMessage(int code) => code switch
@@ -184,7 +213,7 @@ internal sealed class CtapCard : IDisposable
     /// <summary>NFCCTAP_MSG with command chaining for long requests, GET RESPONSE and keep-alive for long answers.</summary>
     private byte[] Exchange(byte[] request)
     {
-        (byte[] Data, bool Ok, int Sw) answer = default;
+        (byte[] Data, bool Ok, int Sw) answer = ([], false, 0);
         for (int offset = 0; offset < request.Length || offset == 0;)
         {
             int size = Math.Min(255, request.Length - offset);
@@ -198,8 +227,11 @@ internal sealed class CtapCard : IDisposable
             if (size == 0) break;
         }
         var result = new List<byte>(answer.Data);
+        var elapsed = Stopwatch.StartNew();
         while (true)
         {
+            if (elapsed.Elapsed > TimeSpan.FromSeconds(60) || result.Count > 65536)
+                throw new CtapException(-1, "Przekroczono limit odpowiedzi karty.");
             if (answer.Sw == 0x9100) { Thread.Sleep(100); answer = Apdu([0x80, 0x11, 0x00, 0x00, 0x00]); result.Clear(); result.AddRange(answer.Data); continue; }
             if (answer.Sw >> 8 == 0x61) { answer = Apdu([0x00, 0xC0, 0x00, 0x00, (byte)(answer.Sw & 0xFF)]); result.AddRange(answer.Data); continue; }
             break;
@@ -226,11 +258,28 @@ internal sealed class CtapCard : IDisposable
 
     public void Dispose()
     {
-        if (pinToken != null) Array.Clear(pinToken);
-        if (shared != null) Array.Clear(shared);
-        platformKey?.Dispose();
-        if (card != IntPtr.Zero) { SCardEndTransaction(card, 0); SCardDisconnect(card, 0); card = IntPtr.Zero; }
+        ClearPinState();
+        CloseCard(0);
         if (context != IntPtr.Zero) { SCardReleaseContext(context); context = IntPtr.Zero; }
+    }
+
+    private void ClearPinState()
+    {
+        if (pinToken != null) CryptographicOperations.ZeroMemory(pinToken);
+        if (shared != null) CryptographicOperations.ZeroMemory(shared);
+        pinToken = null;
+        shared = null;
+        platformKey?.Dispose();
+        platformKey = null;
+    }
+
+    private void CloseCard(uint disposition)
+    {
+        if (card == IntPtr.Zero) return;
+        if (transaction) SCardEndTransaction(card, 0);
+        transaction = false;
+        SCardDisconnect(card, disposition);
+        card = IntPtr.Zero;
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct IoRequest { public uint Protocol; public uint Length; }
@@ -293,27 +342,51 @@ internal static class Cbor
 
     internal static object Decode(byte[] data, out int used)
     {
+        if (data.Length > 65536) throw new InvalidDataException("CBOR: oversized response.");
         int position = 0;
-        var value = Read(data, ref position);
+        var value = Read(data, ref position, 0);
         used = position;
         return value;
     }
 
-    private static object Read(byte[] d, ref int p)
+    private static object Read(byte[] d, ref int p, int depth)
     {
+        if (depth > 32 || p >= d.Length) throw new InvalidDataException("CBOR: truncated or nested response.");
         int initial = d[p++], major = initial >> 5, info = initial & 31;
         int bytes = info switch { < 24 => 0, 24 => 1, 25 => 2, 26 => 4, 27 => 8, _ => throw new InvalidDataException("CBOR") };
+        if (bytes > d.Length - p) throw new InvalidDataException("CBOR: truncated length.");
         ulong n = bytes == 0 ? (ulong)info : 0;
         for (int i = 0; i < bytes; i++) n = n << 8 | d[p++];
+        if ((major <= 1 && n > long.MaxValue) || (major is >= 2 and <= 5 && n > (ulong)(d.Length - p)))
+            throw new InvalidDataException("CBOR: invalid length or integer.");
         switch (major)
         {
             case 0: return (long)n;
             case 1: return -1 - (long)n;
             case 2: { var b = d.AsSpan(p, (int)n).ToArray(); p += (int)n; return b; }
-            case 3: { var s = Encoding.UTF8.GetString(d, p, (int)n); p += (int)n; return s; }
-            case 4: { var a = new List<object>(); for (ulong i = 0; i < n; i++) a.Add(Read(d, ref p)); return a; }
-            case 5: { var m = new Dictionary<object, object>(); for (ulong i = 0; i < n; i++) { var k = Read(d, ref p); m[k] = Read(d, ref p); } return m; }
-            case 7: return info == 21 ? true : info == 20 ? false : (object)n;
+            case 3:
+            {
+                string s;
+                try { s = new UTF8Encoding(false, true).GetString(d, p, (int)n); }
+                catch (DecoderFallbackException ex) { throw new InvalidDataException("CBOR: invalid UTF-8.", ex); }
+                p += (int)n;
+                return s;
+            }
+            case 4: { var a = new List<object>((int)n); for (ulong i = 0; i < n; i++) a.Add(Read(d, ref p, depth + 1)); return a; }
+            case 5:
+            {
+                if (n > (ulong)((d.Length - p) / 2)) throw new InvalidDataException("CBOR: truncated map.");
+                var m = new Dictionary<object, object>((int)n);
+                for (ulong i = 0; i < n; i++)
+                {
+                    var k = Read(d, ref p, depth + 1);
+                    if (k is not (long or string) || m.ContainsKey(k)) throw new InvalidDataException("CBOR: invalid or duplicate map key.");
+                    m.Add(k, Read(d, ref p, depth + 1));
+                }
+                return m;
+            }
+            case 7 when info == 21: return true;
+            case 7 when info == 20: return false;
             default: throw new InvalidDataException("CBOR");
         }
     }

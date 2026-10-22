@@ -14,24 +14,35 @@ namespace Kiosk.Client;
 internal sealed class ApplicationView : Panel
 {
     private SafeFileHandle? job;
+    private readonly object ownershipScope;
     private readonly HashSet<IntPtr> placedDialogs = new();
     private DateTime windowLostAt = DateTime.MaxValue;
     private uint inputThread;
+    private readonly byte[] accounting = new byte[48];
+    private long dialogsCheckedAt;
+    private static List<IntPtr>? pollWindows;
+    private static bool inPollCycle;
+    internal string LaunchPath { get; private set; } = "";
     /// <summary>Windows embedded by any view: a program that hands its new window to an already running copy
     /// (Edge, Office) is recognised by that copy's process, and its new window is taken over (adopted).</summary>
-    private static readonly HashSet<IntPtr> hostedWindows = new();
+    private static readonly Dictionary<IntPtr, ApplicationView> hostedWindows = new();
     /// <summary>This view shows a window of another view's process: it has no Job of its own.</summary>
     private bool adopted;
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
 
-    internal ApplicationView() { Dock = DockStyle.Fill; BackColor = KioskTheme.Background; }
+    internal ApplicationView(object? ownershipScope = null)
+    {
+        this.ownershipScope = ownershipScope ?? this;
+        Dock = DockStyle.Fill; BackColor = KioskTheme.Background;
+    }
 
     /// <param name="logon">When set, the program runs as that person (runas), otherwise as the Kiosk account.</param>
     internal async Task StartAsync(ApplicationEntry entry, UserLogon? logon = null)
     {
         if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
+        LaunchPath = Path.GetFullPath(entry.Path);
         _ = Handle;
         var before = WindowsOfHostedProcesses();
         job = AppNative.CreateJobObject(IntPtr.Zero, null);
@@ -71,7 +82,14 @@ internal sealed class ApplicationView : Panel
                 // The program passed the request to a copy already running in another Kiosk view (e.g. a second Edge window).
                 handedOver ??= DateTime.UtcNow;
                 var handed = FindHandedOverWindow(before);
-                if (handed != IntPtr.Zero) { job?.Dispose(); job = null; adopted = true; Embed(handed); return; }
+                if (handed != IntPtr.Zero)
+                {
+                    var owner = hostedWindows.Values.First(v => ReferenceEquals(v.ownershipScope, ownershipScope) && v.OwnsWindow(handed));
+                    var shared = owner.job ?? throw new InvalidOperationException("Sesja aplikacji została zamknięta.");
+                    if (!AppNative.DuplicateHandle(AppNative.GetCurrentProcess(), shared, AppNative.GetCurrentProcess(), out var sharedJob, 0, false, 2))
+                        throw new Win32Exception();
+                    job?.Dispose(); job = sharedJob; adopted = true; Embed(handed); return;
+                }
                 if (DateTime.UtcNow - handedOver < TimeSpan.FromSeconds(10)) { await Task.Delay(100); continue; }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
             }
@@ -92,7 +110,7 @@ internal sealed class ApplicationView : Panel
         if (AppNative.GetParent(window) != Handle) throw new Win32Exception("Aplikacja nie pozwala osadzić swojego okna w Kiosku.");
         if (HostedWindow != IntPtr.Zero) hostedWindows.Remove(HostedWindow);
         HostedWindow = window;
-        hostedWindows.Add(window);
+        hostedWindows[window] = this;
         Started = true;
         // A child window of another process gets the keyboard only when both threads share input state
         // (otherwise clicks work but typing goes nowhere, e.g. Edge started as another user).
@@ -115,12 +133,13 @@ internal sealed class ApplicationView : Panel
     /// Called by the shell a few times per second. Returns false once the application has closed
     /// (its window is gone and no replacement appeared), so the Kiosk window can be removed.
     /// </summary>
-    internal bool Refresh()
+    internal bool PollLifetime()
     {
         if (adopted) return !IsDisposed && AppNative.IsWindow(HostedWindow); // Lives in another view's process.
         if (job == null || IsDisposed) return false;
         if (HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow))
         {
+            hostedWindows.Remove(HostedWindow);
             HostedWindow = IntPtr.Zero;
             if (windowLostAt == DateTime.MaxValue) windowLostAt = DateTime.UtcNow;
             var replacement = FindMainWindow();
@@ -129,7 +148,11 @@ internal sealed class ApplicationView : Panel
         }
         else if (Visible && !AppNative.IsWindowVisible(HostedWindow))
             AppNative.ShowWindow(HostedWindow, 5); // An app hiding itself "to the tray" would be lost: the Kiosk has no tray.
-        if (Visible) PlaceDialogs();
+        if (Visible && Environment.TickCount64 - dialogsCheckedAt >= 1000)
+        {
+            dialogsCheckedAt = Environment.TickCount64;
+            PlaceDialogs();
+        }
         return true;
     }
 
@@ -153,10 +176,11 @@ internal sealed class ApplicationView : Panel
     }
 
     /// <summary>Visible top-level windows of the processes behind the windows Kiosk already hosts.</summary>
-    private static HashSet<IntPtr> WindowsOfHostedProcesses()
+    private HashSet<IntPtr> WindowsOfHostedProcesses()
     {
         var pids = new HashSet<uint>();
-        foreach (var w in hostedWindows) if (AppNative.IsWindow(w)) { AppNative.GetWindowThreadProcessId(w, out var pid); pids.Add(pid); }
+        foreach (var (w, view) in hostedWindows)
+            if (ReferenceEquals(view.ownershipScope, ownershipScope) && AppNative.IsWindow(w)) { AppNative.GetWindowThreadProcessId(w, out var pid); pids.Add(pid); }
         var found = new HashSet<IntPtr>();
         if (pids.Count == 0) return found;
         AppNative.EnumWindows((window, _) =>
@@ -169,8 +193,8 @@ internal sealed class ApplicationView : Panel
     }
 
     /// <summary>A new main window that appeared in a hosted program's process after this launch.</summary>
-    private static IntPtr FindHandedOverWindow(HashSet<IntPtr> before) => WindowsOfHostedProcesses().FirstOrDefault(w =>
-        !before.Contains(w) && !hostedWindows.Contains(w) && AppNative.IsWindowVisible(w) && AppNative.GetWindow(w, 4) == IntPtr.Zero &&
+    private IntPtr FindHandedOverWindow(HashSet<IntPtr> before) => WindowsOfHostedProcesses().FirstOrDefault(w =>
+        !before.Contains(w) && !hostedWindows.ContainsKey(w) && AppNative.IsWindowVisible(w) && AppNative.GetWindow(w, 4) == IntPtr.Zero &&
         AppNative.GetParent(w) == IntPtr.Zero && !IsDialog(w) && AppNative.GetWindowTextLength(w) > 0 &&
         AppNative.GetWindowRect(w, out var r) && r.Right - r.Left >= 200 && r.Bottom - r.Top >= 100);
 
@@ -190,25 +214,47 @@ internal sealed class ApplicationView : Panel
     {
         var found = new List<IntPtr>();
         if (job == null) return found;
-        AppNative.EnumWindows((window, _) =>
+        var membership = new Dictionary<uint, bool>();
+        foreach (var window in inPollCycle ? pollWindows ??= CaptureWindows() : CaptureWindows())
         {
-            if (!AppNative.IsWindowVisible(window)) return true;
-            if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) return true;
-            if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true; // WS_EX_TOOLWINDOW
+            if (!AppNative.IsWindowVisible(window)) continue;
+            if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) continue;
+            if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) continue; // WS_EX_TOOLWINDOW
             AppNative.GetWindowThreadProcessId(window, out var pid);
-            using var process = AppNative.OpenProcess(0x1000, false, pid);
-            if (process.IsInvalid || !AppNative.IsProcessInJob(process, job, out var owned) || !owned) return true;
+            if (!membership.TryGetValue(pid, out var owned))
+            {
+                using var process = AppNative.OpenProcess(0x1000, false, pid);
+                owned = !process.IsInvalid && AppNative.IsProcessInJob(process, job, out var belongs) && belongs;
+                membership[pid] = owned;
+            }
+            if (!owned) continue;
             found.Add(window);
-            return true;
-        }, IntPtr.Zero);
+        }
         return found;
+    }
+
+    private static List<IntPtr> CaptureWindows()
+    {
+        var windows = new List<IntPtr>();
+        AppNative.EnumWindows((window, _) => { windows.Add(window); return true; }, IntPtr.Zero);
+        return windows;
+    }
+
+    internal static void BeginPollCycle() { pollWindows = null; inPollCycle = true; }
+    internal static void EndPollCycle() { pollWindows = null; inPollCycle = false; }
+
+    private bool OwnsWindow(IntPtr window)
+    {
+        if (job == null) return false;
+        AppNative.GetWindowThreadProcessId(window, out var pid);
+        using var process = AppNative.OpenProcess(0x1000, false, pid);
+        return !process.IsInvalid && AppNative.IsProcessInJob(process, job, out var owned) && owned;
     }
 
     private int ActiveProcesses()
     {
         if (job == null) return 0;
-        var buffer = new byte[48]; // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
-        return AppNative.QueryInformationJobObject(job, 1, buffer, buffer.Length, out _) ? BitConverter.ToInt32(buffer, 40) : 1;
+        return AppNative.QueryInformationJobObject(job, 1, accounting, accounting.Length, out _) ? BitConverter.ToInt32(accounting, 40) : 1;
     }
 
     protected override void OnResize(EventArgs e) { base.OnResize(e); ResizeChild(); }
@@ -227,7 +273,8 @@ internal sealed class ApplicationView : Panel
             if (inputThread != 0) { AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false); inputThread = 0; }
             hostedWindows.Remove(HostedWindow);
             // An adopted window belongs to another view's process: close just this window.
-            if (adopted && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
+            bool shared = adopted || hostedWindows.Values.Any(view => ReferenceEquals(view.ownershipScope, ownershipScope) && view.OwnsWindow(HostedWindow));
+            if (shared && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
             job?.Dispose(); job = null; HostedWindow = IntPtr.Zero;
         }
         base.Dispose(disposing);
@@ -237,6 +284,10 @@ internal sealed class ApplicationView : Panel
 
 internal static class AppNative
 {
+    [DllImport("kernel32.dll")] internal static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool DuplicateHandle(IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess,
+        out SafeFileHandle target, uint access, bool inherit, uint options);
     [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);

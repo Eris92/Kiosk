@@ -188,7 +188,7 @@ public:
         HRESULT hr = inner->GetSerialization(r, cs, text, icon);
         Trace(L"GetSerialization -> %08lX response %d package %lu", hr, r ? *r : -1, cs ? cs->ulAuthenticationPackage : 0);
         // The sign-in result is reported to the provider named here: the wrapper, which passes it on.
-        if (SUCCEEDED(hr) && cs && *r == CPGSR_RETURN_CREDENTIAL_FINISHED) cs->clsidCredentialProvider = CLSID_KioskProvider;
+        if (SUCCEEDED(hr) && cs && r && *r == CPGSR_RETURN_CREDENTIAL_FINISHED) cs->clsidCredentialProvider = CLSID_KioskProvider;
         return hr;
     }
     IFACEMETHODIMP ReportResult(NTSTATUS s, NTSTATUS sub, LPWSTR* text, CREDENTIAL_PROVIDER_STATUS_ICON* icon) override { Trace(L"ReportResult %08lX/%08lX", s, sub); return inner->ReportResult(s, sub, text, icon); }
@@ -197,7 +197,7 @@ public:
 };
 
 // Text updates pass through: the security key provider shows its prompts ("touch the key", PIN) in these fields.
-HRESULT Events::SetFieldString(ICredentialProviderCredential*, DWORD f, LPCWSTR s) { HRESULT hr = outer->SetFieldString(sender, f, s); Trace(L"event SetFieldString %lu \"%s\" -> %08lX", f, s ? s : L"", hr); return hr; }
+HRESULT Events::SetFieldString(ICredentialProviderCredential*, DWORD f, LPCWSTR s) { HRESULT hr = outer->SetFieldString(sender, f, s); Trace(L"event SetFieldString %lu (value not logged) -> %08lX", f, hr); return hr; }
 
 HRESULT Events::SetFieldBitmap(ICredentialProviderCredential*, DWORD f, HBITMAP b)
 {
@@ -258,8 +258,8 @@ public:
             {
                 CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR* d = nullptr;
                 if (FAILED(inner->GetFieldDescriptorAt(i, &d)) || !d) continue;
-                if (d->cpft == CPFT_TILE_IMAGE && imageField == MAXDWORD) imageField = i;
-                if (d->cpft == CPFT_LARGE_TEXT && titleField == MAXDWORD) titleField = i;
+                if (d->cpft == CPFT_TILE_IMAGE && imageField == MAXDWORD) imageField = d->dwFieldID;
+                if (d->cpft == CPFT_LARGE_TEXT && titleField == MAXDWORD) titleField = d->dwFieldID;
                 CoTaskMemFree(d->pszLabel);
                 CoTaskMemFree(d);
             }
@@ -274,7 +274,7 @@ public:
         if (!inner) return E_UNEXPECTED;
         HRESULT hr = inner->GetFieldDescriptorAt(i, d);
         // The picture's label names the tile under "Sign-in options".
-        if (SUCCEEDED(hr) && d && *d && (i == imageField || i == titleField))
+        if (SUCCEEDED(hr) && d && *d && ((*d)->dwFieldID == imageField || (*d)->dwFieldID == titleField))
         {
             wchar_t title[256];
             ReadSetting(L"Title", title, ARRAYSIZE(title), L"Przyłóż kartę");
@@ -288,6 +288,11 @@ public:
         if (!inner) return E_UNEXPECTED;
         HRESULT hr = inner->GetCredentialCount(count, def, autoLogon);
         Trace(L"GetCredentialCount -> %08lX count %lu default %ld auto %d", hr, count ? *count : 0, def ? (long)*def : -2, autoLogon ? *autoLogon : -1);
+        if (SUCCEEDED(hr) && count && credentials.size() > *count)
+        {
+            for (size_t i = *count; i < credentials.size(); i++) SafeRelease(credentials[i]);
+            credentials.resize(*count);
+        }
         return hr;
     }
     IFACEMETHODIMP GetCredentialAt(DWORD i, ICredentialProviderCredential** result) override
@@ -297,7 +302,9 @@ public:
         ICredentialProviderCredential* wrapped = nullptr;
         HRESULT hr = inner->GetCredentialAt(i, &wrapped);
         if (FAILED(hr)) return hr;
-        if (credentials.size() <= i) credentials.resize(i + 1, nullptr);
+        if (!wrapped) return E_UNEXPECTED;
+        try { if (credentials.size() <= i) credentials.resize(static_cast<size_t>(i) + 1, nullptr); }
+        catch (const std::bad_alloc&) { wrapped->Release(); return E_OUTOFMEMORY; }
         // The wrapped provider may hand out new credentials after it reports a change.
         if (!credentials[i] || credentials[i]->Inner() != wrapped)
         {
@@ -325,6 +332,8 @@ class Factory final : public IClassFactory
 {
     LONG refs = 1;
 public:
+    Factory() { InterlockedIncrement(&g_objects); }
+    ~Factory() { InterlockedDecrement(&g_objects); }
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
         if (!ppv) return E_POINTER;

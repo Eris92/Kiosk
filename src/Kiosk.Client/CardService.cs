@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,8 @@ internal static class CardService
     internal const string Argument = "--card-service";
     private const string PipeName = "KioskCard";
     private const string RelyingParty = CtapCard.RelyingParty;
+    private const int MaximumMessageLength = 16384;
+    private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(90);
 
     internal sealed class Request
     {
@@ -31,7 +34,7 @@ internal static class CardService
 
     internal sealed class Response
     {
-        public int Code { get; set; }                 // 0 = OK, CTAP error code, or -1 / -2
+        public int Code { get; set; } = -1;            // 0 = OK, CTAP error code, or -1 / -2
         public string Message { get; set; } = "";
         public string? CredentialId { get; set; }
         public string? Secret { get; set; }
@@ -44,21 +47,79 @@ internal static class CardService
     {
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut);
+            Validate(request);
+            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous,
+                TokenImpersonationLevel.Identification);
             pipe.Connect(3000);
-            var line = JsonSerializer.SerializeToUtf8Bytes(request);
-            pipe.Write(line);
-            pipe.WriteByte((byte)'\n');
-            pipe.Flush();
-            using var reader = new StreamReader(pipe, Encoding.UTF8);
-            return JsonSerializer.Deserialize<Response>(reader.ReadLine() ?? "{}") ?? new Response { Code = -1, Message = "Pusta odpowiedź usługi." };
+            // A different local process must not impersonate the service and receive the card PIN.
+            var owner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier));
+            if (!new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Equals(owner))
+                return new Response { Message = "Nie można potwierdzić tożsamości usługi Kiosk Card. Uruchom ponownie zaktualizowaną usługę." };
+            using var timeout = new CancellationTokenSource(OperationTimeout);
+            return ExchangeAsync(pipe, request, timeout.Token).GetAwaiter().GetResult();
         }
         catch (TimeoutException)
         {
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) return Handle(request);
             return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie działa. Zainstaluj ją: scripts\\Install-KioskCardService.ps1." };
         }
+        catch (OperationCanceledException) { return new Response { Message = "Przekroczono czas odpowiedzi usługi Kiosk Card." }; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        { return new Response { Code = -2, Message = "Nie udało się wykonać polecenia usługi Kiosk Card." }; }
         finally { request.Pin = ""; }
+    }
+
+    private static async Task<Response> ExchangeAsync(Stream pipe, Request request, CancellationToken cancel)
+    {
+        var line = JsonSerializer.SerializeToUtf8Bytes(request);
+        try
+        {
+            await pipe.WriteAsync(line, cancel);
+            await pipe.WriteAsync(new byte[] { (byte)'\n' }, cancel);
+            await pipe.FlushAsync(cancel);
+        }
+        finally { CryptographicOperations.ZeroMemory(line); }
+        using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
+        return JsonSerializer.Deserialize<Response>(await ReadMessageAsync(reader, cancel))
+            ?? new Response { Message = "Pusta odpowiedź usługi." };
+    }
+
+    internal static async Task<string> ReadMessageAsync(TextReader reader, CancellationToken cancel)
+    {
+        var message = new StringBuilder();
+        var buffer = new char[1024];
+        try
+        {
+            while (true)
+            {
+                int count = await reader.ReadAsync(buffer.AsMemory(), cancel);
+                if (count == 0) throw new IOException("Niepełne polecenie usługi Kiosk Card.");
+                int newline = Array.IndexOf(buffer, '\n', 0, count);
+                int length = newline < 0 ? count : newline;
+                if (message.Length + length > MaximumMessageLength) throw new IOException("Polecenie usługi Kiosk Card jest zbyt długie.");
+                message.Append(buffer, 0, length);
+                if (newline >= 0) return message.ToString();
+            }
+        }
+        finally { Array.Clear(buffer); message.Clear(); }
+    }
+
+    internal static void Validate(Request request)
+    {
+        if (request.Op is not ("info" or "verify" or "enroll" or "open") ||
+            string.IsNullOrWhiteSpace(request.Reader) || request.Reader.Length > 1024 || request.Reader.Contains('\0'))
+            throw new ArgumentException("Nieprawidłowe polecenie usługi Kiosk Card.");
+        if (request.Op == "info") return;
+        if (string.IsNullOrEmpty(request.Pin) || request.Pin.Contains('\0') || Encoding.UTF8.GetByteCount(request.Pin) > 63)
+            throw new ArgumentException("Nieprawidłowy format PIN-u karty.");
+        if (request.Op is "enroll" or "open")
+        {
+            if (request.Salt == null || request.Salt.Length > 88 || Convert.FromBase64String(request.Salt).Length != 32)
+                throw new ArgumentException("Nieprawidłowa sól klucza karty.");
+            if (request.Op == "open" && (request.CredentialId == null || request.CredentialId.Length > 8192 ||
+                Convert.FromBase64String(request.CredentialId).Length is < 1 or > 4096))
+                throw new ArgumentException("Nieprawidłowy identyfikator klucza karty.");
+        }
     }
 
     // ------------------------------------------------------------------ the work
@@ -68,14 +129,15 @@ internal static class CardService
         string step = "połączenie";
         try
         {
+            Validate(request); // Validate all inputs before touching the card or consuming a PIN attempt.
             using var card = new CtapCard(request.Reader);
-            if (request.Op == "info") return new Response { Message = card.Info() }; // Diagnostics, no PIN.
+            if (request.Op == "info") return new Response { Code = 0, Message = card.Info() }; // Diagnostics, no PIN.
             step = "PIN";
             card.UsePin(request.Pin);
             switch (request.Op)
             {
                 case "verify":
-                    return new Response { Message = "PIN karty potwierdzony." };
+                    return new Response { Code = 0, Message = "PIN karty potwierdzony." };
                 case "enroll":
                 {
                     step = "tworzenie klucza";
@@ -85,19 +147,23 @@ internal static class CardService
                     card.UsePin(request.Pin);
                     step = "odczyt klucza";
                     var secret = card.HmacSecret(RelyingParty, id, Convert.FromBase64String(request.Salt!));
-                    return new Response { CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) };
+                    try { return new Response { Code = 0, CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) }; }
+                    finally { CryptographicOperations.ZeroMemory(secret); }
                 }
                 case "open":
                 {
                     var secret = card.HmacSecret(RelyingParty, Convert.FromBase64String(request.CredentialId!), Convert.FromBase64String(request.Salt!));
-                    return new Response { Secret = Convert.ToBase64String(secret) };
+                    try { return new Response { Code = 0, Secret = Convert.ToBase64String(secret) }; }
+                    finally { CryptographicOperations.ZeroMemory(secret); }
                 }
                 default:
                     return new Response { Code = -2, Message = "Nieznane polecenie." };
             }
         }
         catch (CtapException ex) { return new Response { Code = ex.Code, Message = ex.Message + " [" + step + "]" }; }
-        catch (Exception ex) { return new Response { Code = -1, Message = ex.Message }; }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or JsonException)
+        { return new Response { Code = -2, Message = "Nieprawidłowe polecenie usługi Kiosk Card." }; }
+        catch (Exception) { return new Response { Code = -1, Message = "Nie udało się odczytać karty." }; }
         finally { request.Pin = ""; }
     }
 
@@ -105,6 +171,7 @@ internal static class CardService
 
     private static IntPtr statusHandle;
     private static readonly ManualResetEventSlim stopping = new();
+    private static readonly CancellationTokenSource shutdown = new();
     private static ServiceMain? main;            // kept alive for the native callback
     private static HandlerEx? handler;
 
@@ -120,14 +187,16 @@ internal static class CardService
     {
         handler = (control, _, _, _) =>
         {
-            if (control is 1 or 5) { SetStatus(3); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
+            if (control is 1 or 5) { SetStatus(3); shutdown.Cancel(); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
             return 0;
         };
         statusHandle = RegisterServiceCtrlHandlerEx(ServiceName, handler, IntPtr.Zero);
+        if (statusHandle == IntPtr.Zero) return;
         SetStatus(4); // RUNNING
         var listener = new Thread(Listen) { IsBackground = true };
         listener.Start();
         stopping.Wait();
+        listener.Join(2000); // Pending pipe I/O observes cancellation; a card operation is bounded separately.
         SetStatus(1); // STOPPED
     }
 
@@ -135,6 +204,7 @@ internal static class CardService
     {
         // SYSTEM and administrators: full; signed-in (interactive) users: may connect and send requests.
         var security = new PipeSecurity();
+        security.SetOwner(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
@@ -142,18 +212,27 @@ internal static class CardService
         {
             try
             {
-                using var pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 4, PipeTransmissionMode.Byte, PipeOptions.None, 4096, 4096, security);
-                pipe.WaitForConnection();
+                using var pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 4096, 4096, security);
+                pipe.WaitForConnectionAsync(shutdown.Token).GetAwaiter().GetResult();
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(5));
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                var line = reader.ReadLine();
-                var request = line == null ? null : JsonSerializer.Deserialize<Request>(line);
+                var line = ReadMessageAsync(reader, timeout.Token).GetAwaiter().GetResult();
+                var request = JsonSerializer.Deserialize<Request>(line);
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." } : Handle(request);
-                pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
-                pipe.WriteByte((byte)'\n');
-                pipe.Flush();
-                pipe.WaitForPipeDrain();
+                timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                response.Secret = null;
+                try
+                {
+                    pipe.WriteAsync(bytes, timeout.Token).AsTask().GetAwaiter().GetResult();
+                    pipe.WriteAsync(new byte[] { (byte)'\n' }, timeout.Token).AsTask().GetAwaiter().GetResult();
+                    pipe.FlushAsync(timeout.Token).GetAwaiter().GetResult();
+                }
+                finally { CryptographicOperations.ZeroMemory(bytes); }
             }
-            catch (Exception) { Thread.Sleep(200); } // One bad client must not stop the service.
+            catch (Exception) { stopping.Wait(200); } // One bad client must not stop the service.
         }
     }
 
