@@ -36,6 +36,16 @@ internal sealed partial class KioskForm
     /// <summary>Nobody signed in: the card sign-in screen is (re)started in the start screen and waits for a tap.</summary>
     private void PrepareCardSignIn()
     {
+        // A page is open (e.g. Skonfiguruj MFA): no card sign-in screen meanwhile. It is a window of another program
+        // inside the Kiosk's, and such a window shares the Kiosk's keyboard: typing in the page went nowhere while it
+        // was starting, failing or waiting. It starts again on Strona główna.
+        if (desktop.Page != null && cardLogon == null && signInScreen is { } waiting)
+        {
+            signInScreen = null;   // Its end is then no error (WaitForCardSignInAsync: an earlier screen).
+            _ = Task.Run(waiting.Dispose);
+            Audit.Write("fido_paused_for_page");
+            RefreshChrome();
+        }
         if (cardLogon != null || signInScreen != null || registeringCard) return;
         if (signInStarting != null)
         {
@@ -46,6 +56,7 @@ internal sealed partial class KioskForm
                 ? fault.GetType().Name + ": " + fault.Message : FidoSignIn.LastError;
             if (signInStarting.Exception != null) Audit.Write("fido_prepare_failed", signInStarting.Exception.GetBaseException().ToString());
             signInStarting = null;
+            if (ready != null && desktop.Page != null) { _ = Task.Run(ready.Dispose); return; }   // A page opened meanwhile.
             if (ready == null) { signInFailedAt = DateTime.UtcNow; signInStartFailures++; notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…"; RefreshChrome(); return; }
             signInScreen = ready;
             signInStartFailures = 0;
@@ -55,6 +66,7 @@ internal sealed partial class KioskForm
             return;
         }
         // A PC where it cannot start (e.g. Windows refuses the card sign-in there) is not asked again every minute.
+        if (desktop.Page != null) return;
         var pause = TimeSpan.FromSeconds(Math.Min(300, 10 << Math.Min(5, Math.Max(0, signInStartFailures - 1))));
         if (DateTime.UtcNow - signInFailedAt < pause) return;
         Audit.Write("fido_prepare_start");
