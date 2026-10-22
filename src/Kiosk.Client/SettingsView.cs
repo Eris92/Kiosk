@@ -11,6 +11,7 @@ internal sealed class SettingsView : UserControl
     private const string NoAutoConnect = "(nie łącz automatycznie)";
 
     private readonly Config original;
+    private readonly bool fileEditor;
     private const string AnyReader = "(wszystkie czytniki, bez czytnika SIM)";
     private readonly ComboBox reader = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520 };
     private readonly TextBox home = new() { Dock = DockStyle.Fill };
@@ -105,9 +106,12 @@ internal sealed class SettingsView : UserControl
     /// <summary>Bottom left: Windows' sign-in screen for another account; this session keeps running.</summary>
     internal event Action? SwitchUserRequested;
 
-    internal SettingsView(Config config, CardIdentity? me = null, Func<Config, bool>? keepsAccess = null)
+    /// <param name="fileEditor">Konfiguracje Kiosków: a configuration file for many PCs, not this PC; this PC's account,
+    /// keys, update and Windows session are not shown.</param>
+    internal SettingsView(Config config, CardIdentity? me = null, Func<Config, bool>? keepsAccess = null, bool fileEditor = false)
     {
         original = config;
+        this.fileEditor = fileEditor;
         this.keepsAccess = keepsAccess;
         Dock = DockStyle.Fill;
         BackColor = Back;
@@ -658,8 +662,11 @@ internal sealed class SettingsView : UserControl
         updateChannel.SelectedIndex = config.UpdateChannel == "dev" ? 1 : 0;
         updatePanel.Controls.Add(new Label { Text = "Kanał aktualizacji", AutoSize = true, Margin = new Padding(4, 0, 4, 2) });
         updatePanel.Controls.Add(updateChannel);
-        updatePanel.Controls.Add(updateButton);
-        updatePanel.Controls.Add(updateStatus);
+        if (!fileEditor)
+        {
+            updatePanel.Controls.Add(updateButton);
+            updatePanel.Controls.Add(updateStatus);
+        }
         updatePanel.Controls.Add(new Label { Text = "Konfiguracja z serwera", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 24, 4, 4) });
         updatePanel.Controls.Add(new Label
         {
@@ -704,6 +711,8 @@ internal sealed class SettingsView : UserControl
         removeKey.Visible = SharedAccounts.KeySaved;
         removeKey.CheckedChanged += (_, _) => accountsKey.Enabled = !removeKey.Checked;
         accountPanel.Controls.Add(removeKey);
+
+        if (fileEditor) tabs.TabPages.Remove(accountTab);   // Saved per PC, never in a shared configuration.
 
         var statsTab = AddStatsTab(tabs);
 
@@ -763,7 +772,7 @@ internal sealed class SettingsView : UserControl
         switchUser.Click += (_, _) => SwitchUserRequested?.Invoke();
         var navColumn = new Panel { Dock = DockStyle.Left, Width = 260, BackColor = Back, Padding = new Padding(12, 0, 8, 12) };
         navColumn.Controls.Add(nav);
-        navColumn.Controls.Add(switchUser);
+        if (!fileEditor) navColumn.Controls.Add(switchUser);
         Controls.Add(pageHost); Controls.Add(navColumn); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
     }
@@ -810,7 +819,7 @@ internal sealed class SettingsView : UserControl
     }
 
     /// <summary>The configuration comes from a server (ConfigSource): everything here is a preview.</summary>
-    private bool Central => original.ConfigSource.Length > 0;
+    private bool Central => !fileEditor && original.ConfigSource.Length > 0;
 
     /// <summary>Read-only view of a section: values stay visible (and scrollable), nothing can be changed.</summary>
     private static void Preview(Control root)
@@ -1452,7 +1461,8 @@ internal sealed class SettingsView : UserControl
             var result = BuildConfig();
             if (keepsAccess != null && !keepsAccess(result))
                 throw new InvalidDataException("Po zapisie nie miałbyś dostępu do Konfiguracji. Dodaj swoją kartę na liście administratorów.");
-            foreach (var app in result.Applications)
+            // A file for other PCs: their programs need not exist on this one.
+            foreach (var app in fileEditor ? Array.Empty<ApplicationEntry>() : result.Applications)
             {
                 if (app.IsBuiltIn || app.RunAs.Length > 0) continue;   // A shared account's share is not visible from here.
                 if (!File.Exists(app.Path)) throw new InvalidDataException("Nie znaleziono pliku: " + app.Path);

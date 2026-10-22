@@ -29,6 +29,7 @@ internal static class Program
         if (Updater.IsCopy(args)) return Updater.CopyElevated(args[1]);
         if (args.Length == 1 && args[0] == Updater.ServiceRefreshArgument) return Updater.RefreshService();
         if (args.Length == 2 && args[0] == AdminSettings.Argument) return AdminSettings.Run(args[1]);
+        if (args.Length is 1 or 2 && args[0] == ConfigManager.Argument) return ConfigManager.Run(args.Length == 2 ? args[1] : null);
         if (args.Length is 3 or 4 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2], args.Length == 4 ? args[3] : null);
         if (args.Length == 3 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort)) return RdpUserHost.Run(args[1], rdpPort);
         if (args.Length == 1 && args[0] == FilesHost.Argument) return FilesHost.Run();

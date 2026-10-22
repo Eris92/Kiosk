@@ -20,6 +20,10 @@ Remove-Item (Join-Path $OutputPath 'runtimes') -Recurse -Force -ErrorAction Sile
 $editor = Join-Path $PSScriptRoot '..\src\Kiosk.NewsEditor\KioskKomunikaty.csproj'
 & dotnet publish $editor -c Release -r win-x64 --self-contained false -o (Join-Path $OutputPath 'news-example') @versionArguments
 if ($LASTEXITCODE -ne 0) { throw 'Building the messages editor failed.' }
+# Konfiguracje Kiosków: one file, next to Kiosk.Client.exe; copied next to the configurations it opens their manager.
+$configTool = Join-Path $PSScriptRoot '..\src\Kiosk.ConfigTool\KioskKonfiguracje.csproj'
+& dotnet publish $configTool -c Release -r win-x64 --self-contained false -o $OutputPath @versionArguments
+if ($LASTEXITCODE -ne 0) { throw 'Building the configuration manager failed.' }
 # The card sign-in program (card + PIN signs the person in to Windows), .NET Framework 4.8: out\client\fido.
 $fido = Join-Path $PSScriptRoot '..\src\Kiosk.FidoBroker\FidoRun.csproj'
 & dotnet build $fido -c Release -o (Join-Path $OutputPath 'fido') --nologo
