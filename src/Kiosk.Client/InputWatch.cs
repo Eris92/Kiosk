@@ -7,7 +7,8 @@ namespace Kiosk.Client;
 /// screen never delays them). Used while a message film plays: the film keeps the display awake, and Windows then
 /// also moves its own "last input" time, so the lock and the screensaver would never start.
 /// The hooks miss input aimed at a window of a higher level (the card sign-in screen runs as SYSTEM) and Windows may
-/// drop them silently, so the mouse pointer's position is also watched, and the hooks are renewed every minute.
+/// drop them silently, so the mouse pointer's position and the keyboard's keys are also watched, and the hooks are
+/// renewed every minute.
 /// </summary>
 internal static class InputWatch
 {
@@ -47,6 +48,8 @@ internal static class InputWatch
                 {
                     // The pointer moved: real input, whichever window it went to.
                     if (GetCursorPos(out var now) && (now.X != pointer.X || now.Y != pointer.Y)) { pointer = now; Interlocked.Exchange(ref lastInput, Environment.TickCount64); }
+                    // A key held or pressed since the last look: typing counts also when the hook did not see it (PIN screen).
+                    else if (AnyKey()) Interlocked.Exchange(ref lastInput, Environment.TickCount64);
                     if (++ticks % (60_000 / PollMilliseconds) == 0)
                     {
                         // Windows removes a hook it judged too slow without saying so: put them in again.
@@ -61,6 +64,14 @@ internal static class InputWatch
             Running = false;
         }) { IsBackground = true, Name = "Kiosk input watch" };
         thread.Start();
+    }
+
+    private static bool AnyKey()
+    {
+        bool pressed = false;
+        // Every key is asked (no early exit): the "pressed since the last call" bit is then cleared for all of them.
+        for (int key = 0x08; key <= 0xFE; key++) if ((GetAsyncKeyState(key) & 0x8001) != 0) pressed = true;
+        return pressed;
     }
 
     private static long reportedAt = -600_000;
@@ -92,5 +103,6 @@ internal static class InputWatch
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? name);
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern IntPtr SetTimer(IntPtr window, IntPtr id, uint milliseconds, IntPtr callback);
 }

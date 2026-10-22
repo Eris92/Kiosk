@@ -17,7 +17,8 @@ namespace FidoRun
     // native FIDO logon as FidoRun), keeps the token in this process only and starts programs as that person when the
     // Kiosk asks. Process and thread handles are duplicated into the Kiosk; the token itself never leaves this process.
     //
-    // Pipe "KioskFido-<client pid>", one JSON-free line per request, one line back:
+    // Pipe "KioskFido-<client pid>-<own pid>" (one per sign-in screen: an earlier one still running never answers for
+    // this one), one JSON-free line per request, one line back:
     //   wait                    -> "OK <sid>\t<windows name>\t<card account>\t<admin 0|1>" once signed in, or "ERROR <text>"
     //   listening               -> "OK" once Windows' sign-in waits for the card (the Kiosk then wakes a card lying on the
     //                              reader), "ERROR <text>" after 40 s
@@ -48,7 +49,8 @@ namespace FidoRun
         private static volatile bool stopping;
         private static volatile bool pinEntered;
 
-        internal static string PipeName(int client) { return "KioskFido-" + client; }
+        private static readonly int self = Process.GetCurrentProcess().Id;
+        internal static string PipeName(int client) { return "KioskFido-" + client + "-" + self; }
 
         internal static void Start(int client, Action<string> log)
         {
@@ -79,7 +81,33 @@ namespace FidoRun
                 End();
             }) { IsBackground = true, Name = "KioskBroker client watch" };
             watch.Start();
+            ReplaceEarlier(client);
             log("KioskBroker=Ready; Pipe=" + PipeName(client) + "; ClientPid=" + client);
+        }
+
+        // One waiting sign-in screen per Kiosk: a new one ends any earlier screen nobody signed in with yet (left over
+        // after a failed start or a lost answer, it would stay over the Kiosk and take the keyboard). Screens that
+        // signed someone in keep running: they hold that person's programs.
+        private static void ReplaceEarlier(int client)
+        {
+            EventWaitHandle newer;
+            try { newer = new EventWaitHandle(false, EventResetMode.ManualReset, @"Global\KioskFidoNew-" + client); }
+            catch (Exception error) { logger("KioskBroker=NoReplaceEvent; " + error.Message); return; }
+            newer.Set();
+            Thread.Sleep(500);
+            newer.Reset();
+            Thread replaced = new Thread(delegate()
+            {
+                while (!stopping)
+                {
+                    newer.WaitOne();
+                    bool idle;
+                    lock (gate) idle = retained == null && !finished.WaitOne(0);
+                    if (idle) { logger("KioskBroker=ReplacedByNewer"); Failed("Zastąpione nowym logowaniem."); End(); return; }
+                    Thread.Sleep(1000);   // Signed in: stays; past this signal before waiting again.
+                }
+            }) { IsBackground = true, Name = "KioskBroker replaced" };
+            replaced.Start();
         }
 
         // Called on the provider thread after LSA created the person's token.

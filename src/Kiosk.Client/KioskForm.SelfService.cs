@@ -61,9 +61,11 @@ internal sealed partial class KioskForm
     private async Task WaitForCardSignInAsync(FidoSignIn screen)
     {
         var outcome = await screen.WaitAsync();
-        if (signInScreen == screen) signInScreen = null;
+        bool latest = signInScreen == screen;
+        if (latest) signInScreen = null;
         if (outcome.SignIn is not { } signIn)
         {
+            if (!latest) return;   // An earlier screen, already replaced by a newer one: nothing to show.
             if (outcome.Message.StartsWith(FidoSignIn.UnknownKey, StringComparison.Ordinal))
             {
                 // A new or reset card: no account knows it. PIN, then registration, instead of the bare error.

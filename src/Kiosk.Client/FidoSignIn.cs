@@ -175,7 +175,7 @@ internal sealed class FidoSignIn : IDisposable
                     CloseHandle(process.Thread);
                     CloseHandle(process.Process);
                     Audit.Write("fido_signin_started", "session " + session);
-                    return new CardService.Response { Message = process.ProcessId.ToString(), Secret = "KioskFido-" + clientPid };
+                    return new CardService.Response { Message = process.ProcessId.ToString(), Secret = "KioskFido-" + clientPid + "-" + process.ProcessId };
                 }
             }
         }
@@ -192,7 +192,7 @@ internal sealed class FidoSignIn : IDisposable
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + ")." };
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
                 "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId + " --embed " + embed) { UseShellExecute = false })!;
-            return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId };
+            return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId + "-" + process.Id };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = "Nie udało się uruchomić logowania kartą: " + ex.Message }; }
     }
