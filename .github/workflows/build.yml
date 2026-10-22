@@ -69,8 +69,10 @@ jobs:
           name: Kiosk-win-x64
           path: package/Kiosk/
           retention-days: 30
+      # Two builds close together race on this one asset; the pictures never stop a release.
       - name: Publish settings pictures
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
