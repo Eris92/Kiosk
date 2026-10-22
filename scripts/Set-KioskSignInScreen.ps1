@@ -10,6 +10,7 @@ Run as administrator. Supports -WhatIf; -Uninstall reverts everything below.
   * Background: a generated image (-ImagePath) set as lock and sign-in screen image (PersonalizationCSP).
   * Sign-in screen: no last user, no local user list, no account details, no blur over the background.
   * Security key sign-in for Entra ID accounts (same as Intune "Use security keys for sign-in").
+  * Removes the old Kiosk sign-in tile (credential provider) of earlier test builds, if a PC still has it.
   * -SecurityKeyOnly hides the password and Windows Hello PIN tiles for everyone, local administrators
     included. First check that a card sign-in works and that another way in exists (an Entra admin
     account with a card), otherwise nobody can sign in with a password on this PC any more.
@@ -24,6 +25,8 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
+# 32-bit PowerShell (some deployment tools) would write the sign-in settings where 64-bit Windows never reads them.
+if (-not [Environment]::Is64BitProcess) { throw 'Uruchom 64-bitowy PowerShell (C:\Windows\Sysnative\WindowsPowerShell\v1.0\powershell.exe).' }
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
 
@@ -48,11 +51,32 @@ function Remove-Value($Path, $Name) {
     }
 }
 
+# The Kiosk sign-in tile of earlier test builds (a credential provider, no longer part of the Kiosk): its registration,
+# its default-tile setting and the hiding of Windows' own security key tile go, so Windows' tiles work again.
+function Remove-OldSignInTile {
+    $old = '{7A4D2C1E-5B3F-4E8A-9C6D-2F1B8E4A7C30}'
+    $fido = '{F8A1793B-7873-4046-B2A7-1F318747F427}'
+    $providers = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers'
+    foreach ($key in "$providers\$old", "HKLM:\SOFTWARE\Classes\CLSID\$old", 'HKLM:\SOFTWARE\Kiosk\CredentialProvider') {
+        if ((Test-Path $key) -and $PSCmdlet.ShouldProcess($key, 'remove old Kiosk sign-in tile')) { Remove-Item -Path $key -Recurse -Force }
+    }
+    $default = (Get-ItemProperty -Path $systemPolicy -Name DefaultCredentialProvider -ErrorAction SilentlyContinue).DefaultCredentialProvider
+    if ($default -eq $old) { Remove-Value $systemPolicy 'DefaultCredentialProvider' }
+    $excluded = (Get-ItemProperty -Path $systemPolicy -Name ExcludedCredentialProviders -ErrorAction SilentlyContinue).ExcludedCredentialProviders
+    if ($excluded) {
+        $list = @($excluded -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne $old -and $_ -ne $fido })
+        if ($list.Count -eq 0) { Remove-Value $systemPolicy 'ExcludedCredentialProviders' }
+        elseif (($list -join ',') -ne $excluded) { Set-Value $systemPolicy 'ExcludedCredentialProviders' ($list -join ',') 'String' }
+    }
+}
+Remove-OldSignInTile
+
 if ($Uninstall) {
     foreach ($name in 'LockScreenImagePath', 'LockScreenImageUrl', 'LockScreenImageStatus') { Remove-Value $csp $name }
     Remove-Value $personalization 'NoChangingLockScreen'
     foreach ($name in 'DisableAcrylicBackgroundOnLogon', 'EnumerateLocalUsers', 'BlockUserFromShowingAccountDetailsOnSignin', 'ExcludedCredentialProviders') { Remove-Value $systemPolicy $name }
     Remove-Value $securityKey 'UseSecurityKeyForSignin'
+    Set-Value $system 'dontdisplaylastusername' 0
     Write-Output 'Kiosk sign-in screen removed (the image file is left in place).'
     return
 }

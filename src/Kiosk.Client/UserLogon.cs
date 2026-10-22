@@ -61,7 +61,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
 
     internal string User => user;
     internal string Sid { get; private set; } = "";
-    /// <summary>The person's name for the desktop, e.g. "Krzysztof Lechmyc" (not INVESTA\klechmyc).</summary>
+    /// <summary>The person's name for the desktop, e.g. "Jan Kowalski" (not FIRMA\jkowalski).</summary>
     internal string FriendlyName { get; private set; } = "";
     /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
     internal string? ProfileDirectory =>
@@ -235,7 +235,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
-    /// <summary>The name in Active Directory / Entra ID ("Krzysztof Lechmyc"), asked as that person; empty when unknown.</summary>
+    /// <summary>The name in Active Directory / Entra ID ("Jan Kowalski"), asked as that person; empty when unknown.</summary>
     private static string DirectoryName(System.Security.Principal.WindowsIdentity identity)
     {
         try

@@ -533,7 +533,7 @@ namespace FidoRun
             cancelled = true;
             submissionConsent.Clear();
             log.Write("Cancellation requested.");
-            view.StatusText("Cancellation requested; waiting for the native provider.");
+            view.StatusText("Anulowanie… chwileczkę.");
         }
         public void Submit(int generation = 0)
         {
@@ -565,7 +565,7 @@ namespace FidoRun
             if (!serializationRequested && !hasInput)
             {
                 log.Write("Outcome=SubmitBlocked; Reason=NoVisibleInputOrNativeSerializationRequest; NoSerialization=True; NoLsaLogon=True");
-                view.StatusText("Waiting for native FIDO fields or a native serialization request.");
+                view.StatusText("Przygotowuję logowanie kartą…");
                 return;
             }
             busy = true; view.Busy(true);
@@ -610,7 +610,7 @@ namespace FidoRun
                 if (status != Status.Ok || response != 2)
                 {
                     log.Write("Outcome=NoFinishedCredential; no Windows logon attempt was made.");
-                    if (statusText == IntPtr.Zero) view.StatusText("The provider did not return a finished Windows credential. See the log.");
+                    if (statusText == IntPtr.Zero) view.StatusText("Logowanie kartą nie zostało dokończone. Spróbuj ponownie.");
                     return;
                 }
                 if (serialization.Length == 0 || serialization.Buffer == IntPtr.Zero)
@@ -618,7 +618,7 @@ namespace FidoRun
                     serializationRequested = false;
                     view.SerializationUnavailable(credentialGeneration);
                     log.Write("Outcome=EmptyCredential; NoLsaLogon=True; the native provider returned no authentication material.");
-                    view.StatusText("No Windows credential is ready. Complete the native FIDO fields and wait for the provider before submitting again.");
+                    view.StatusText("Przyłóż kartę i wpisz PIN, a potem spróbuj ponownie.");
                     return;
                 }
                 if (options.AccountPicker) AccountCredentialFilter.RequireBoundSelection();
@@ -635,19 +635,19 @@ namespace FidoRun
                     {
                         Program.Result = 3;
                         log.Write("Outcome=WindowsLogonFailed");
-                        view.StatusText("Windows rejected the logon: " + Status.Hex(outcome.Status) + " / " + Status.Hex(outcome.SubStatus) + ". Close this host before another attempt.");
+                        view.StatusText("Windows odrzucił logowanie (" + Status.Hex(outcome.Status) + " / " + Status.Hex(outcome.SubStatus) + "). Spróbuj ponownie.");
                         view.RestartAfterFailure("Windows odrzucił logowanie (" + Status.Hex(outcome.Status) + ").");
                         return;
                     }
                     Program.Result = 0;
-                    view.StatusText("Windows zalogował: " + outcome.Name + " | " + outcome.Sid);
+                    view.StatusText("Zalogowano: " + outcome.Name);
                     log.Write("Outcome=WindowsTokenCreated");
                     string targetSid = options.ResolveTargetSid(outcome.Sid);
                     if ((options.ExpectedSid != null || options.Mode == "session" || options.Mode == "launch-edge" || options.Broker) && targetSid == null)
                     {
                         Program.Result = 5;
                         log.Write("Outcome=TargetSidMismatch; Expected=" + options.ExpectedSid);
-                        view.StatusText("Uwierzytelniono " + outcome.Name + ", ale konfiguracja wymaga innego konta. Edge nie został uruchomiony. SID: " + outcome.Sid);
+                        view.StatusText("Uwierzytelniono " + outcome.Name + ", ale ta karta należy do innego konta niż wymagane.");
                         view.RestartAfterFailure("Ta karta nie jest dozwolona na tym komputerze.");
                         return;
                     }

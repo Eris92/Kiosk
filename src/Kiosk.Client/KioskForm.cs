@@ -1762,7 +1762,8 @@ internal sealed partial class KioskForm : Form
         var command = FileAssociation.Command(path);
         if (command == null)
         {
-            notice = "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.";
+            notice = FileAssociation.IsProgram(path) ? "Z Plików nie można uruchamiać programów ani skryptów." :
+                "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.";
             Audit.Write("file_open_failed", Path.GetExtension(path));
             RefreshChrome();
             return;
@@ -2361,8 +2362,8 @@ internal sealed partial class KioskForm : Form
         if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Administrator running Kiosk check failed.");
         RunningAsWindowsAdmin = runningAsAdmin;
-        if (!LocalAdministrators.Matches(@"INVESTA\k.lechmyc", "k.lechmyc", "investa.pl") || !LocalAdministrators.Matches(@"AzureAD\JanKowalski", "JanKowalski", "AzureAD") ||
-            LocalAdministrators.Matches(@"OTHER\k.lechmyc", "k.lechmyc", "investa.pl") || LocalAdministrators.Matches("Kris", "Kris", "x.pl"))
+        if (!LocalAdministrators.Matches(@"FIRMA\j.kowalski", "j.kowalski", "firma.pl") || !LocalAdministrators.Matches(@"AzureAD\JanKowalski", "JanKowalski", "AzureAD") ||
+            LocalAdministrators.Matches(@"OTHER\j.kowalski", "j.kowalski", "firma.pl") || LocalAdministrators.Matches("Jan", "Jan", "x.pl"))
             throw new InvalidOperationException("Administrators group matching failed.");
         _ = LocalAdministrators.Contains("nobody@example.invalid"); // Reads the real group without failing.
 
@@ -2376,8 +2377,8 @@ internal sealed partial class KioskForm : Form
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
         NewsSmokeTest();
-        if (People.FriendlyName("", @"INVESTA\KrzysztofLechmyc") != "Krzysztof Lechmyc" || People.FriendlyName("", "jan.kowalski@firma.pl") != "Jan Kowalski" ||
-            People.FriendlyName("Anna Nowak", @"AzureAD\x") != "Anna Nowak" || People.FriendlyName("", "Alicja Test") != "Alicja Test" || People.Initials("Krzysztof Lechmyc") != "KL")
+        if (People.FriendlyName("", @"FIRMA\AnnaNowak") != "Anna Nowak" || People.FriendlyName("", "jan.kowalski@firma.pl") != "Jan Kowalski" ||
+            People.FriendlyName("Anna Nowak", @"AzureAD\x") != "Anna Nowak" || People.FriendlyName("", "Alicja Test") != "Alicja Test" || People.Initials("Jan Kowalski") != "JK")
             throw new InvalidOperationException("People's names are not shown nicely.");
         // "Włączony": unticked entries stay in the configuration but are not used.
         var switched = config with

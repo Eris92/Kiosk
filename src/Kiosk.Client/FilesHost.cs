@@ -22,7 +22,8 @@ internal static class FilesHost
             var command = FileAssociation.Command(path);
             if (command == null)
             {
-                MessageBox.Show(form, "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.", "Pliki");
+                MessageBox.Show(form, FileAssociation.IsProgram(path) ? "Z Plików nie można uruchamiać programów ani skryptów." :
+                    "Brak programu do otwarcia „" + Path.GetFileName(path) + "” na tym komputerze.", "Pliki");
                 return;
             }
             try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(command.Value.Program, command.Value.Arguments) { UseShellExecute = false }); }

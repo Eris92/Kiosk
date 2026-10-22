@@ -455,8 +455,7 @@ internal static class FileAssociation
     internal static (string Program, string Arguments)? Command(string path)
     {
         var extension = Path.GetExtension(path);
-        if (extension.Equals(".exe", StringComparison.OrdinalIgnoreCase)) return (path, "");
-        if (extension.Length == 0) return null;
+        if (extension.Length == 0 || IsProgram(path)) return null;
         uint size = 2048;
         var text = new System.Text.StringBuilder((int)size);
         if (AssocQueryString(0x400, 1, extension, "open", text, ref size) != 0) return Viewer(path);   // ASSOCF_INIT_IGNOREUNKNOWN, ASSOCSTR_COMMAND
@@ -484,6 +483,12 @@ internal static class FileAssociation
                    .Replace("%1", quoted).Replace("%L", quoted).Replace("%l", quoted).Replace("%*", "").Trim();
         return (program, named ? rest : (rest + " " + quoted).Trim());
     }
+
+    /// <summary>Programs and scripts: Pliki opens documents, it never starts a program (e.g. one brought on a USB stick).</summary>
+    internal static bool IsProgram(string path) => Programs.Contains(Path.GetExtension(path).ToLowerInvariant());
+
+    private static readonly string[] Programs = [".exe", ".com", ".scr", ".pif", ".msi", ".msix", ".appx", ".bat", ".cmd", ".ps1", ".psm1",
+        ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".cpl", ".msc", ".jar", ".application", ".appref-ms"];
 
     private static readonly string[] Viewable = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".pdf", ".txt", ".log", ".csv", ".xml", ".json"];
 

@@ -252,15 +252,19 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy połączeń RDP muszą być unikalne.");
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
+        // Numbers are read as enum values too: an unknown one would break Konfiguracja when it opens.
+        if (!Enum.IsDefined(TaskbarAlignment) || !Enum.IsDefined(NewsShow) || !Enum.IsDefined(NewsOrder) || !Enum.IsDefined(NewsSize))
+            throw new InvalidDataException("Nieznane ustawienie paska zadań albo komunikatów.");
         if (SelfServiceSignInUrl == null || SelfServiceLinkUrl == null) throw new InvalidDataException("Adresy punktu samoobsługowego nie mogą być null.");
         if (ScreenRefreshSeconds is < 0 or > 86400) throw new InvalidDataException("Odświeżanie ekranów: 0–86400 s.");
         foreach (var c in Commands ?? [])
-            if (c.Name.Length == 0 || c.Path.Length == 0) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");
+            if (c == null || string.IsNullOrEmpty(c.Name) || string.IsNullOrEmpty(c.Path)) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");
         if (IdleAfterSeconds is < 3 or > 86400) throw new InvalidDataException("Czas powrotu ekranu do treści musi mieć 3–86400 s.");
         foreach (var t in ScreenRotations ?? [])
-            if (t.Screen < 1 || !DisplayRotation.Degrees.Contains(t.Degrees)) throw new InvalidDataException("Obrót ekranu: numer od 1 i 0, 90, 180 albo 270 stopni.");
+            if (t == null || t.Screen < 1 || !DisplayRotation.Degrees.Contains(t.Degrees)) throw new InvalidDataException("Obrót ekranu: numer od 1 i 0, 90, 180 albo 270 stopni.");
         foreach (var s in IdleScreens ?? [])
         {
+            if (s == null || s.Url == null || s.Path == null) throw new InvalidDataException("Ekrany: pusty wpis na liście.");
             if (s.Screen < 0) throw new InvalidDataException("Numer ekranu nie może być ujemny.");
             if (s.Url.Length > 0 && !NewsSlides.IsAddress(s.Url) && !(Uri.TryCreate(s.Url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp)))
                 throw new InvalidDataException("Strona dla ekranu " + s.Screen + " musi być adresem HTTP/HTTPS.");
@@ -268,7 +272,9 @@ internal sealed record Config
         }
         if (ConfigSource == null || ConfigSource.Length > 0 && !Path.IsPathFullyQualified(ConfigSource))
             throw new InvalidDataException("Konfigurację z serwera podaj jako pełną ścieżkę folderu, np. \\\\serwer\\kiosk albo C:\\KioskCentral.");
-        if (NewsFolder == null || NewsFolder.Length > 0 && !Path.IsPathFullyQualified(NewsFolder))
+        // A folder next to client.json (e.g. "news") is fine too: Load resolves it against the configuration's folder.
+        if (NewsFolder == null || NewsFolder.Length > 0 && !Path.IsPathFullyQualified(NewsFolder) &&
+            (Path.IsPathRooted(NewsFolder) || NewsFolder.IndexOfAny(Path.GetInvalidPathChars()) >= 0))
             throw new InvalidDataException("Folder komunikatów podaj jako pełną ścieżkę, np. \\\\serwer\\kiosk\\komunikaty albo C:\\ProgramData\\Kiosk\\news.");
         foreach (var help in HelpActions ?? throw new InvalidDataException("Lista Menu nie może być null."))
             if (help == null || string.IsNullOrWhiteSpace(help.Name) ||

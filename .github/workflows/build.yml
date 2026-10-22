@@ -3,14 +3,13 @@ on:
   push:
     # The test branch too: Konfiguracja → Aktualizacja (Ctrl+Alt+U) on the test PCs gets every pushed version.
     branches: [main, kiosk-explorer, claude/project-thread-gr3tx0]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 permissions:
   contents: write
 env:
-  # Release tag; the client shows it in Konfiguracja → Aktualizacja and compares it with the latest release.
-  KIOSK_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+  # Release tag; the client shows it in Konfiguracja → Aktualizacja and updates only to a newer build-N.
+  KIOSK_VERSION: ${{ format('build-{0}', github.run_number) }}
 jobs:
   build:
     runs-on: windows-latest
@@ -59,7 +58,7 @@ jobs:
           # Only what a kiosk PC needs: the example messages are already in out/client/news-example; building,
           # the video generators and the Session Host launcher (apps.json) belong to the repository, not to the PC.
           Remove-Item "$package/config/news", "$package/config/apps.json", "$package/scripts/tools", "$package/scripts/Build.ps1",
-            "$package/scripts/Build-CredentialProvider.ps1", "$package/scripts/Start-SessionLauncher.ps1" -Recurse
+            "$package/scripts/Start-SessionLauncher.ps1" -Recurse
           Copy-Item README.md "$package/README.md"
           Get-ChildItem package -Recurse -Filter '*.local.json' | Remove-Item
           Compress-Archive -Path "$package/*" -DestinationPath package/Kiosk-win-x64.zip

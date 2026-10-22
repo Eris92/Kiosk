@@ -373,7 +373,7 @@ namespace FidoRun
 
         private void BuildDiagnosticWindow(bool edgeCapable)
         {
-            Text = "FidoRun 0.1.29 - experimental native FIDO provider host";
+            Text = "FidoRun 0.1.29 - native FIDO provider host";
             Font = new Font("Segoe UI", 10f);
             // The app is DPI-unaware (see app.manifest), so Windows scales this whole window up
             // on a high-DPI kiosk. These are the logical sizes before that scaling.
@@ -904,7 +904,7 @@ namespace FidoRun
                     // There is always a single system FIDO provider, so the former tile
                     // picker is replaced by a status line. Zero means it could not load.
                     providerStatus.Text = count == 0
-                        ? "Nie znaleziono dostawcy FIDO. Uruchom aplikację jako administrator."
+                        ? "Logowanie kartą jest niedostępne na tym komputerze (brak dostawcy FIDO w Windows)."
                         : Embedded ? "Przyłóż kartę do czytnika, potem wpisz PIN." : "Dostawca FIDO gotowy. Włóż klucz i podaj PIN.";
                     providerStatus.ForeColor = count == 0 ? Color.Firebrick : statusColor;
                     // Enumeration does not establish successful Advise/SetSelected.

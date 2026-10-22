@@ -267,7 +267,10 @@ internal static class Updater
     internal static CardService.Response InstallLatest()
     {
         var release = LatestAsync().GetAwaiter().GetResult();
-        if (Number(release.Tag) is { } latest && Number(CurrentVersion) is { } running && latest < running)
+        // Only official builds (build-N), never an older one than this.
+        if (Number(release.Tag) is not { } latest)
+            return new CardService.Response { Code = -2, Message = "Najnowsze wydanie " + release.Tag + " nie jest wydaniem Kiosku (build-N)." };
+        if (Number(CurrentVersion) is { } running && latest < running)
             return new CardService.Response { Code = -2, Message = "Najnowsze wydanie " + release.Tag + " jest starsze niż " + CurrentVersion + "." };
         var folder = DownloadAsync(release).GetAwaiter().GetResult();
         CopyFolder(folder, InstalledFolder);
@@ -308,6 +311,8 @@ internal static class Updater
         return true;
     }
 
+    private const string SetAside = ".kiosk-old-";
+
     private static int? Number(string tag) =>
         tag.StartsWith("build-", StringComparison.Ordinal) && int.TryParse(tag[6..], out var n) ? n : null;
 
@@ -326,6 +331,10 @@ internal static class Updater
     private static void CopyFolder(string source, string target)
     {
         source = Path.GetFullPath(source);
+        // Files set aside by an earlier update, once nothing uses them any more.
+        if (Directory.Exists(target))
+            foreach (var old in Directory.EnumerateFiles(target, "*" + SetAside + "*", SearchOption.AllDirectories))
+                try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
         {
             var name = Path.GetFileName(file);
@@ -337,7 +346,13 @@ internal static class Updater
             for (var attempt = 1; ; attempt++)
             {
                 try { File.Copy(file, destination, true); break; }
-                catch (IOException) when (attempt < 30) { Thread.Sleep(1000); }
+                catch (IOException) when (attempt < 5) { Thread.Sleep(1000); }
+                catch (IOException) when (attempt == 5 && File.Exists(destination))
+                {
+                    // Still in use (the Kiosk of another signed-in person): Windows lets a running file be renamed, so it is
+                    // set aside and the new one goes in its place. No half-old, half-new installation.
+                    File.Move(destination, destination + SetAside + Guid.NewGuid().ToString("N")[..8]);
+                }
             }
         }
         PruneRuntime(source, target);

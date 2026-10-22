@@ -5,7 +5,7 @@ namespace Kiosk.Client;
 
 /// <summary>
 /// Is the account on a card a member of this PC's local Administrators group? Members are listed as
-/// DOMAIN\user (AD: INVESTA\k.lechmyc, Entra ID: AzureAD\JanKowalski) and compared with the card's UPN.
+/// DOMAIN\user (AD: FIRMA\j.kowalski, Entra ID: AzureAD\JanKowalski) and compared with the card's UPN.
 /// Accounts that are administrators only through a nested group or an Entra role are not detected;
 /// add such cards to the Kiosk's own administrator list instead.
 /// </summary>
@@ -26,7 +26,7 @@ internal static class LocalAdministrators
         if (slash <= 0) return false;
         string memberDomain = member[..slash], memberUser = member[(slash + 1)..];
         if (!memberUser.Equals(user, StringComparison.OrdinalIgnoreCase)) return false;
-        // investa.pl ↔ INVESTA (the NetBIOS name is normally the first DNS label); AzureAD ↔ AzureAD.
+        // firma.pl ↔ FIRMA (the NetBIOS name is normally the first DNS label); AzureAD ↔ AzureAD.
         return memberDomain.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
                memberDomain.Equals(domain.Split('.')[0], StringComparison.OrdinalIgnoreCase);
     }

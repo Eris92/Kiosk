@@ -5,3 +5,6 @@ out/
 client.local.json
 apps.local.json
 __pycache__/
+package/
+.vs/
+*.suo

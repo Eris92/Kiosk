@@ -258,7 +258,7 @@ namespace FidoRun
                 Options options = Options.Parse(args);
                 if (options.Help)
                 {
-                    Console.WriteLine("FidoRun 0.1.29 experimental native Windows FIDO provider host (x64, .NET Framework 4.8).");
+                    Console.WriteLine("FidoRun 0.1.29 native Windows FIDO provider host (x64, .NET Framework 4.8).");
                     Console.WriteLine("FidoRun.exe [--mode inspect|authenticate|launch-edge|diagnose|session] [--scenario logon|credui-current]");
                     Console.WriteLine("            [--user-array empty|none] [--display-state native|legacy|none]");
                     Console.WriteLine("            [--expected-sid S-1-...] [--timeout 30..300] [--kiosk] [--diagnostic-ui] [--url https://...]");
@@ -281,7 +281,7 @@ namespace FidoRun
                 using (TraceLog log = new TraceLog())
                 using (ManualResetEvent finished = new ManualResetEvent(false))
                 {
-                    log.Write("FidoRun 0.1.29 experimental; Mode=" + options.Mode + "; Scenario=" + options.Scenario + "; UserArray=" + options.UserArray + "; DisplayState=" + options.DisplayMode);
+                    log.Write("FidoRun 0.1.29; Mode=" + options.Mode + "; Scenario=" + options.Scenario + "; UserArray=" + options.UserArray + "; DisplayState=" + options.DisplayMode);
                     NativeCtapProbe.DescribeCaller(log.Write);
                     log.Write("Native provider only. No password bootstrap, token-cache lookup, S4U, or stored Windows credentials.");
                     log.Write("Log file: " + log.PathName);

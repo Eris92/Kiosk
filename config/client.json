@@ -1,13 +1,54 @@
 {
-  "Server": "rds.example.local",
-  "Port": 3389,
+  "RdpConnections": [],
   "ReaderName": "",
   "BrowserUrl": "https://www.google.com",
   "Bookmarks": [
-    { "Name": "Google", "Url": "https://www.google.com" }
+    {
+      "Name": "Google",
+      "Url": "https://www.google.com"
+    }
   ],
-  "Applications": [],
-  "IdleSeconds": 300,
+  "AutoUpdate": true,
+  "ShowHelp": true,
+  "HelpCloseSeconds": 60,
+  "CardRemovedSeconds": 3,
+  "BrandTitle": "Kiosk",
+  "BrandSubtitle": "Twój pulpit pracy",
+  "BrandLogo": "",
+  "NewsShow": "All",
+  "NewsFolder": "",
+  "NewsSeconds": 8,
+  "NewsSharePoint": "",
+  "NewsSharePointCount": 6,
+  "NewsOrder": "Alternate",
+  "NewsSize": "Standard",
+  "BrowserOnlyBookmarks": false,
+  "BrowserAllowedDomains": [],
+  "Applications": [
+    {
+      "Name": "Przeglądarka",
+      "Path": "kiosk:przegladarka",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    },
+    {
+      "Name": "Notatnik",
+      "Path": "kiosk:notatnik",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    }
+  ],
+  "LockAfterSeconds": 300,
+  "ChangeUserAfterSeconds": 600,
+  "UnlockMethod": "Card",
+  "SessionMode": "Kiosk",
+  "DisconnectOnCardRemoval": true,
+  "AccentColor": "#3DDC84",
+  "AdminCards": [],
+  "AllowWindowsAdministrators": true,
+  "RequireCredentialPrompt": true,
+  "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
-  "TestMode": true
+  "TestMode": false,
+  "ConfigVersion": 4
 }

@@ -4,8 +4,8 @@ namespace Kiosk.Client;
 internal static class People
 {
     /// <summary>
-    /// The directory's name when there is one, otherwise made from the login: "INVESTA\KrzysztofLechmyc",
-    /// "krzysztof.lechmyc@firma.pl" and "AzureAD\KrzysztofLechmyc" all become "Krzysztof Lechmyc".
+    /// The directory's name when there is one, otherwise made from the login: "FIRMA\JanKowalski",
+    /// "jan.kowalski@firma.pl" and "AzureAD\JanKowalski" all become "Jan Kowalski".
     /// </summary>
     internal static string FriendlyName(string directoryName, params string[] accounts)
     {
@@ -25,7 +25,7 @@ internal static class People
             {
                 char c = name[i];
                 bool split = c is '.' or '_' or '-' or ' ';
-                // KrzysztofLechmyc -> Krzysztof Lechmyc
+                // JanKowalski -> Jan Kowalski
                 if (!split && char.IsUpper(c) && word.Length > 0 && char.IsLower(name[i - 1])) split = true;
                 if (split && word.Length > 0) { words.Add(word.ToString()); word.Clear(); }
                 if (c is not ('.' or '_' or '-' or ' ')) word.Append(c);
@@ -37,7 +37,7 @@ internal static class People
         return accounts.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a)) ?? "";
     }
 
-    /// <summary>Up to two letters for the round picture: "Krzysztof Lechmyc" -> "KL".</summary>
+    /// <summary>Up to two letters for the round picture: "Jan Kowalski" -> "JK".</summary>
     internal static string Initials(string name)
     {
         var words = name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => char.IsLetterOrDigit(w[0])).ToArray();
