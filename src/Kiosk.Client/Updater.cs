@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -23,7 +24,20 @@ internal static class Updater
     private const string Asset = "Kiosk-win-x64.zip";
     private const string CardServiceName = "KioskCard";
 
-    internal sealed record Release(string Tag, string DownloadUrl);
+    internal sealed record Release(string Tag, string DownloadUrl, string? SignatureUrl = null);
+
+    /// <summary>Konfiguracja → Aktualizacja → "Kanał": main = stabilne wydania, dev = także wersje testowe.</summary>
+    internal static readonly string[] Channels = ["main", "dev"];
+    internal static bool ValidChannel(string? channel) => channel != null && Channels.Contains(channel);
+    private const string ChannelVariable = "KIOSK_UPDATE_CHANNEL";
+    private static string channel = ValidChannel(Environment.GetEnvironmentVariable(ChannelVariable)) ? Environment.GetEnvironmentVariable(ChannelVariable)! : "main";
+
+    /// <summary>The channel this Kiosk updates from (set from its configuration; the installer it starts inherits it).</summary>
+    internal static string Channel
+    {
+        get => channel;
+        set => channel = ValidChannel(value) ? value : "main";
+    }
 
     /// <summary>The release tag this build was made from ("build-15"), or "dev" for a local build.</summary>
     internal static string CurrentVersion
@@ -42,16 +56,71 @@ internal static class Updater
         return client;
     }
 
+    /// <summary>
+    /// The newest release of <see cref="Channel"/>: main = GitHub's "latest" (built from main), dev = the newest build-N
+    /// of all, the test versions (pre-releases of the dev branches) included.
+    /// </summary>
     internal static async Task<Release> LatestAsync()
     {
         using var client = Client();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        using var json = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases/latest"));
-        var tag = json.RootElement.GetProperty("tag_name").GetString() ?? "";
-        foreach (var asset in json.RootElement.GetProperty("assets").EnumerateArray())
-            if (asset.GetProperty("name").GetString() == Asset)
-                return new Release(tag, asset.GetProperty("browser_download_url").GetString()!);
-        throw new InvalidDataException("Wydanie " + tag + " nie zawiera pliku " + Asset + ".");
+        if (Channel != "dev")
+        {
+            using var json = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases/latest"));
+            return FromJson(json.RootElement) ?? throw new InvalidDataException("Wydanie " + json.RootElement.GetProperty("tag_name").GetString() + " nie zawiera pliku " + Asset + ".");
+        }
+        using var list = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases?per_page=30"));
+        return list.RootElement.EnumerateArray()
+            .Where(r => !r.GetProperty("draft").GetBoolean())
+            .Select(FromJson).OfType<Release>()
+            .Where(r => Number(r.Tag) != null)
+            .OrderByDescending(r => Number(r.Tag))
+            .FirstOrDefault() ?? throw new InvalidDataException("Brak wydań Kiosku w kanale dev.");
+    }
+
+    private static Release? FromJson(JsonElement release)
+    {
+        var tag = release.GetProperty("tag_name").GetString() ?? "";
+        string? zip = null, signature = null;
+        foreach (var asset in release.GetProperty("assets").EnumerateArray())
+        {
+            var name = asset.GetProperty("name").GetString();
+            if (name == Asset) zip = asset.GetProperty("browser_download_url").GetString();
+            else if (name == Asset + ".sig") signature = asset.GetProperty("browser_download_url").GetString();
+        }
+        return zip == null ? null : new Release(tag, zip, signature);
+    }
+
+    /// <summary>
+    /// The public half of the key the build in GitHub signs each package with (secret KIOSK_SIGNING_KEY). The signature
+    /// covers the tag and the package's SHA-256, so an old package cannot pass as a new release either.
+    /// </summary>
+    private const string SigningKey = """
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUM3VpBP891GFEnIQpD8wcylZe8Xz
+        9JQqRYAPX02tURQ3lA/Wh2R8HsyjshqqYzMsTB/6KwJuP2kl1zSG0u3tBw==
+        -----END PUBLIC KEY-----
+        """;
+
+    private static async Task VerifySignatureAsync(Release release, string zip)
+    {
+        if (release.SignatureUrl == null) throw new InvalidDataException("Wydanie " + release.Tag + " nie jest podpisane – nie instaluję go.");
+        using var client = Client();
+        var text = (await client.GetStringAsync(release.SignatureUrl)).Trim();
+        byte[] signature;
+        try { signature = Convert.FromBase64String(text); }
+        catch (FormatException) { throw new InvalidDataException("Podpis wydania " + release.Tag + " jest uszkodzony."); }
+        byte[] hash;
+        await using (var file = File.OpenRead(zip)) hash = await SHA256.HashDataAsync(file);
+        var signed = System.Text.Encoding.UTF8.GetBytes(release.Tag + "\n" + Convert.ToHexString(hash).ToLowerInvariant());
+        using var key = ECDsa.Create();
+        key.ImportFromPem(SigningKey);
+        if (!key.VerifyData(signed, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+        {
+            Audit.Write("update_signature_bad", release.Tag);
+            throw new InvalidDataException("Podpis wydania " + release.Tag + " się nie zgadza – nie instaluję go.");
+        }
+        Audit.Write("update_signature_ok", release.Tag);
     }
 
     /// <summary>Downloads and unpacks the release; returns the folder with the new Kiosk.Client.exe.</summary>
@@ -93,6 +162,8 @@ internal static class Updater
                 if (total > 0 && (int)(done * 100 / total) is var p && p != shown) percent?.Report(shown = p);
             }
         }
+        // Only a package signed in GitHub with the Kiosk's key is installed: not a changed or swapped file.
+        await VerifySignatureAsync(release, zip);
         var extracted = Path.Combine(root, "package");
         await Task.Run(() => ZipFile.ExtractToDirectory(zip, extracted)); // Off the window's thread: unpacking takes a while.
         var exe = Path.Combine(extracted, "out", "client", "Kiosk.Client.exe");
@@ -204,10 +275,12 @@ internal static class Updater
         launched = true;
         var target = AppContext.BaseDirectory.TrimEnd('\\');
         var arguments = new[] { Argument, Environment.ProcessId.ToString(), target }.Concat(Environment.GetCommandLineArgs().Skip(1));
-        Process.Start(new ProcessStartInfo(Path.Combine(newClient, "Kiosk.Client.exe"))
+        var start = new ProcessStartInfo(Path.Combine(newClient, "Kiosk.Client.exe"))
         {
             UseShellExecute = false, WorkingDirectory = newClient, Arguments = Join(arguments)
-        });
+        };
+        start.Environment[ChannelVariable] = Channel;   // The installer asks the service for the same channel.
+        Process.Start(start);
     }
 
     /// <summary>Kiosk.Client.exe --apply-update &lt;pid&gt; &lt;install folder&gt; [Kiosk arguments…]</summary>
@@ -221,7 +294,7 @@ internal static class Updater
             try { using var old = Process.GetProcessById(int.Parse(args[1])); old.WaitForExit(60000); }
             catch (ArgumentException) { }
             if (IsElevated() || CanWrite(target) && (ServiceFolder() is not { } service || CanWrite(service))) Copy(target);
-            else if (SameFolder(target, InstalledFolder) && CardService.Call(new CardService.Request { Op = "update" }) is { Code: 0 } installed)
+            else if (SameFolder(target, InstalledFolder) && CardService.Call(new CardService.Request { Op = "update", Source = Channel }) is { Code: 0 } installed)
             {
                 // The Kiosk Card service (LocalSystem) installed the latest release itself: no administrator needed.
                 Audit.Write("update_by_service", installed.Message);
@@ -264,8 +337,9 @@ internal static class Updater
     /// The caller passes nothing but the request, so a user can only ask for the official latest release, never an
     /// older one. The service's own folder is refreshed afterwards by a separate copy, because the service stops.
     /// </summary>
-    internal static CardService.Response InstallLatest()
+    internal static CardService.Response InstallLatest(string? requestedChannel = null)
     {
+        Channel = requestedChannel ?? "main";   // main or dev only; anything else is main. Every package is still checked.
         var release = LatestAsync().GetAwaiter().GetResult();
         // Only official builds (build-N), never an older one than this.
         if (Number(release.Tag) is not { } latest)

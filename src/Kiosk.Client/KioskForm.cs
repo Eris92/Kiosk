@@ -100,6 +100,7 @@ internal sealed partial class KioskForm : Form
         this.config = config;
         this.configPath = configPath;
         localConfig = loaded?.Local;
+        Updater.Channel = config.UpdateChannel;
         notice = loaded?.Problem;
         identifyCard = IdentifyPresentCard;
         cardPresent = () => PresentReader() != null;
@@ -1997,6 +1998,7 @@ internal sealed partial class KioskForm : Form
             var loaded = CentralConfig.Load(configPath!);
             config = loaded.Effective;
             localConfig = loaded.Local;
+            Updater.Channel = config.UpdateChannel;
             notice = loaded.Problem;
         }
         catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return false; }
@@ -2076,7 +2078,7 @@ internal sealed partial class KioskForm : Form
         {
             Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
             NewsAccount.Forget();
-            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
+            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); Updater.Channel = updated.UpdateChannel; }
             Audit.Write("settings_saved");
             ApplySavedSettings();
             CloseWindow(SettingsKey, "settings_closed", session);

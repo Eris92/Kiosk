@@ -84,7 +84,7 @@ internal static class CardService
         try
         {
             if (request.Op is "watch" or "unwatch") return new Response { Code = -1, Message = "Watchdog działa w usłudze Kiosk Card." }; // Never the card below.
-            if (request.Op == "update") return Updater.InstallLatest();   // No card, no path: the latest official release.
+            if (request.Op == "update") return Updater.InstallLatest(request.Source);   // No card, no path: the latest official release.
             if (request.Op == "dotnet") return Updater.InstallRuntime();  // Only the .NET 10 Desktop Runtime, from Microsoft.
             if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.

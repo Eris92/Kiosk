@@ -93,6 +93,8 @@ internal sealed record Config
     public bool EnableBrowser { get; init; } = true;
     /// <summary>When Kiosk starts it installs a newer GitHub release by itself (Konfiguracja → Aktualizacja).</summary>
     public bool AutoUpdate { get; init; } = true;
+    /// <summary>Konfiguracja → Aktualizacja → "Kanał": "main" (stabilne wydania) or "dev" (także wersje testowe).</summary>
+    public string UpdateChannel { get; init; } = "main";
     /// <summary>Ctrl+Alt+K opens Konfiguracja (as a Windows administrator); off = only an administrator's session or card.</summary>
     public bool AdminHotkey { get; init; } = true;
     /// <summary>First start: ask whether this PC uses its own configuration or one from a server (FirstRunSetup).
@@ -303,6 +305,7 @@ internal sealed record Config
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (StatsExportHours is < 0 or > 168) throw new InvalidDataException("Eksport statystyk: od 0 do 168 godzin.");
+        if (!Updater.ValidChannel(UpdateChannel)) throw new InvalidDataException("Kanał aktualizacji: main albo dev.");
         if (LogLimitMb is < 0 or > 100000) throw new InvalidDataException("Logi: od 0 do 100000 MB.");
         if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");

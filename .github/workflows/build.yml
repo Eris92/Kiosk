@@ -79,6 +79,21 @@ jobs:
           gh release view ci-screenshots *> $null
           if ($LASTEXITCODE -ne 0) { gh release create ci-screenshots --prerelease --title 'CI: settings pictures' --notes 'Pictures of Konfiguracja from the latest CI build (not a Kiosk version).' }
           gh release upload ci-screenshots out/settings-screenshots.zip --clobber
+      # Installed Kiosks install only a package signed with this key (its public half is in Updater.cs).
+      - name: Sign package
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          KIOSK_SIGNING_KEY: ${{ secrets.KIOSK_SIGNING_KEY }}
+        run: |
+          if (-not $env:KIOSK_SIGNING_KEY) { Write-Warning 'KIOSK_SIGNING_KEY is not set: this package is unsigned and installed Kiosks will not install it.'; exit 0 }
+          $der = [Convert]::FromBase64String(($env:KIOSK_SIGNING_KEY -replace '-----[^-]+-----', '' -replace '\s', ''))
+          $key = [System.Security.Cryptography.ECDsaCng]::new([System.Security.Cryptography.CngKey]::Import($der, [System.Security.Cryptography.CngKeyBlobFormat]::Pkcs8PrivateBlob))
+          $hash = (Get-FileHash package/Kiosk-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $data = [Text.Encoding]::UTF8.GetBytes("$env:KIOSK_VERSION`n$hash")
+          $signature = $key.SignData($data, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+          [Convert]::ToBase64String($signature) | Set-Content package/Kiosk-win-x64.zip.sig -NoNewline -Encoding ascii
+          Write-Output "Signed $env:KIOSK_VERSION ($hash)"
       - name: Publish release
         if: github.event_name != 'pull_request'
         shell: pwsh
@@ -88,4 +103,5 @@ jobs:
           $tag = $env:KIOSK_VERSION
           $sha = '${{ github.sha }}'.Substring(0, 7)
           $notes = "Branch/tag: ${{ github.ref_name }}, commit $sha.`n`nInstall: unzip to e.g. C:\Kiosk, then run as administrator scripts\Install-KioskShell.ps1 (see README)."
-          gh release create $tag package/Kiosk-win-x64.zip --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes
+          $files = @('package/Kiosk-win-x64.zip') + @(Get-ChildItem package/Kiosk-win-x64.zip.sig -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          gh release create $tag @files --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes

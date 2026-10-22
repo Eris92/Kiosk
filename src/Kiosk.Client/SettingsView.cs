@@ -40,6 +40,8 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox adminHotkey = new() { Text = "Ctrl+Alt+K otwiera Konfigurację (jako administrator Windows)", AutoSize = true };
     private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
+    private readonly ComboBox updateChannel = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Margin = new Padding(4, 0, 4, 12),
+        Items = { "main – stabilne wydania (komputery produkcyjne)", "dev – także wersje testowe (komputery testowe)" } };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
     private readonly TextBox sourceUser = new() { Width = 300, PlaceholderText = "kiosk@firma.pl  albo  DOMENA\\kiosk", Margin = new Padding(4, 0, 4, 4) };
@@ -634,6 +636,7 @@ internal sealed class SettingsView : UserControl
             try
             {
                 updateStatus.Text = "Sprawdzam najnowsze wydanie…";
+                Updater.Channel = updateChannel.SelectedIndex == 1 ? "dev" : "main";   // The channel chosen here, saved or not.
                 var release = await Updater.LatestAsync();
                 if (release.Tag == Updater.CurrentVersion)
                 {
@@ -652,6 +655,9 @@ internal sealed class SettingsView : UserControl
         };
         autoUpdate.Checked = config.AutoUpdate;
         updatePanel.Controls.Add(autoUpdate);
+        updateChannel.SelectedIndex = config.UpdateChannel == "dev" ? 1 : 0;
+        updatePanel.Controls.Add(new Label { Text = "Kanał aktualizacji", AutoSize = true, Margin = new Padding(4, 0, 4, 2) });
+        updatePanel.Controls.Add(updateChannel);
         updatePanel.Controls.Add(updateButton);
         updatePanel.Controls.Add(updateStatus);
         updatePanel.Controls.Add(new Label { Text = "Konfiguracja z serwera", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 24, 4, 4) });
@@ -740,6 +746,7 @@ internal sealed class SettingsView : UserControl
         {
             foreach (TabPage page in tabs.TabPages) if (page != statsTab && page != accountTab) Preview(page);   // Statystyki only reads; the account is this PC's own.
             autoUpdate.Enabled = false;
+            updateChannel.Enabled = false;
             configSource.ReadOnly = false;
             sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
             removeAccount.Enabled = true;
@@ -1392,6 +1399,7 @@ internal sealed class SettingsView : UserControl
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
             AutoUpdate = autoUpdate.Checked,
+            UpdateChannel = updateChannel.SelectedIndex == 1 ? "dev" : "main",
             AdminHotkey = adminHotkey.Checked,
             ConfigSource = configSource.Text.Trim().Trim('"'),
             ShowHelp = showHelp.Checked,
