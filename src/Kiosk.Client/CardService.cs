@@ -25,7 +25,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // watch | unwatch | verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | newsaccount | fidosignin
+        public string Op { get; set; } = "";          // watch | unwatch | verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | runas | newsaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
@@ -41,6 +41,8 @@ internal static class CardService
         public string Message { get; set; } = "";
         public string? CredentialId { get; set; }
         public string? Secret { get; set; }
+        public long Process { get; set; }             // runas: the suspended program's handles, valid in the Kiosk's process
+        public long Thread { get; set; }
     }
 
     // ------------------------------------------------------------------ client (Kiosk)
@@ -50,7 +52,8 @@ internal static class CardService
     {
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut);
+            // Impersonation (Windows' default, said out loud): runas starts the program as this Kiosk's account.
+            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation);
             pipe.Connect(3000);
             // Only the real service answers (it runs in session 0, where a signed-in user cannot start anything):
             // a program that took the pipe's name first never sees a PIN.
@@ -88,6 +91,7 @@ internal static class CardService
             if (request.Op == "dotnet") return Updater.InstallRuntime();  // Only the .NET 10 Desktop Runtime, from Microsoft.
             if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
+            if (request.Op == "runas") return SharedAccountPrograms.Start(request.Source, Environment.ProcessPath, null, Environment.ProcessId, -1);
             if (request.Op == "newsaccount") return NewsAccount.ForService(Environment.ProcessPath);
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
             if (request.Op == "syncnews") return CentralConfig.SyncNewsForMachine();   // Only the messages folder an administrator configured.
@@ -239,6 +243,10 @@ internal static class CardService
                     : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: ClientIsAdministrator(pipe))
                     // A shared account's password only for the installed Kiosk program, named by Windows (the pipe's client process).
                     : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
+                    // A program with a shared account: started here as the Kiosk's account, the password stays in the service.
+                    : request.Op == "runas" ? SharedAccountPrograms.Start(request.Source, ClientProgram(pipe), pipe,
+                        GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var runasPid) ? (int)runasPid : -1,
+                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var runasSession) ? runasSession : -1)
                     : request.Op == "newsaccount" ? NewsAccount.ForService(ClientProgram(pipe))
                     // Watchdog: the Kiosk process Windows names reports in or says goodbye.
                     : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,

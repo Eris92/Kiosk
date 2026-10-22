@@ -1869,7 +1869,7 @@ internal sealed partial class KioskForm : Form
         {
             // Konto wspólne: this PC's account runs it, the shared one signs in to the file server (runas /netonly).
             IProgramStarter? starter = string.IsNullOrWhiteSpace(entry.RunAs) ? session.Logon
-                : new NetworkAccountStarter(await Task.Run(() => SharedAccounts.Get(entry.RunAs.Trim())));
+                : new NetworkAccountStarter(entry.Name);
             if (requested.IsDisposed) return;
             await requested.StartAsync(entry, starter);
             if (!requested.IsDisposed) { Audit.Write("application_opened", entry.Name); Stats.Record(Stats.App, entry.Name, person: session.Identity.Name); }
