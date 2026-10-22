@@ -70,89 +70,6 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     /// <summary>The account is in this PC's local Administrators group (also through a group, also UAC-filtered).</summary>
     internal bool IsAdministrator { get; private set; }
 
-    /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
-    /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
-    private const int SmartCardLogonRequired = unchecked((int)0x8009033E);   // SEC_E_SMARTCARD_LOGON_REQUIRED
-
-    /// <summary>Why a saved or typed password did not sign in, in words the person can act on.</summary>
-    internal static string Explain(int code) => code == SmartCardLogonRequired
-        ? "Windows na tym komputerze nie przyjmuje logowania hasłem (zasada „Wymagaj Windows Hello dla firm lub karty inteligentnej”, scforceoption). " +
-          "„Zaloguj” loginem i hasłem nie zadziała, dopóki administrator jej nie wyłączy; zaloguj się do Windows kartą (tryb Powłoka Windows)."
-        : "Hasło konta zmieniło się (kod " + code + "). Podaj nowe.";
-
-    internal static UserLogon? TryLogon(string login, string? domain, char[] password, int length, out int code)
-    {
-        bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
-        code = ok ? 0 : Marshal.GetLastWin32Error();
-        // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
-        if (!ok && domain == null && login.Contains('@'))
-        {
-            token.Dispose();
-            ok = LogonUser(login, "AzureAD", password, 2, 0, out token);
-            if (ok) domain = "AzureAD";
-            else code = Marshal.GetLastWin32Error();
-        }
-        using (token)
-        {
-            if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
-            using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
-            return new UserLogon(login, domain, password, length, identity.Name)
-            {
-                Sid = identity.User?.Value ?? "", FriendlyName = People.FriendlyName(DirectoryName(identity), login, identity.Name),
-                IsAdministrator = identity.Groups?.Any(g => g.Value == "S-1-5-32-544") == true
-            };
-        }
-    }
-
-    /// <summary>Shows the Windows credential dialog and checks the account; null when cancelled.</summary>
-    internal static UserLogon? Prompt(IntPtr owner, string message)
-    {
-        var info = new CredUiInfo { Size = Marshal.SizeOf<CredUiInfo>(), Parent = owner, Caption = "Zaloguj do Kiosku", Message = message };
-        uint package = 0;
-        bool save = false;
-        string? error = null;
-        while (true)
-        {
-            if (error != null) info.Message = error + "\n" + message;
-            int result = CredUIPromptForWindowsCredentials(ref info, error == null ? 0 : 1326, ref package, IntPtr.Zero, 0,
-                out var buffer, out var size, ref save, 0x1); // CREDUIWIN_GENERIC: login + password
-            if (result == 1223) return null; // ERROR_CANCELLED
-            if (result != 0) throw new Win32Exception(result);
-            var name = new StringBuilder(514);
-            var dom = new StringBuilder(338);
-            var password = new char[257];
-            int nameLength = name.Capacity, domLength = dom.Capacity, passwordLength = password.Length;
-            try
-            {
-                if (!CredUnPackAuthenticationBuffer(1, buffer, size, name, ref nameLength, dom, ref domLength, password, ref passwordLength))
-                    throw new Win32Exception(); // 1 = CRED_PACK_PROTECTED_CREDENTIALS: a usable (unprotected) password
-                var login = name.ToString();
-                string? domainPart = dom.Length > 0 ? dom.ToString() : null;
-                int slash = login.IndexOf('\\');
-                if (domainPart == null && slash > 0) { domainPart = login[..slash]; login = login[(slash + 1)..]; }
-                int typedLength = Array.IndexOf(password, '\0');
-                if (typedLength < 0) typedLength = Math.Min(passwordLength, password.Length - 1);
-                var typed = new char[typedLength + 1]; // NUL-terminated for LogonUser
-                Array.Copy(password, typed, typedLength);
-                try
-                {
-                    var logon = TryLogon(login, domainPart, typed, typedLength, out int code);
-                    if (logon != null) return logon;
-                    error = code == SmartCardLogonRequired ? Explain(code)
-                        : "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
-                    continue;
-                }
-                finally { Array.Clear(typed); }
-            }
-            finally
-            {
-                Array.Clear(password);
-                RtlZeroMemory(buffer, size);
-                CoTaskMemFree(buffer);
-            }
-        }
-    }
-
     /// <summary>Starts a program as this person (with their profile), suspended, like runas.</summary>
     public (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
     {
@@ -229,8 +146,6 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
 
     [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
@@ -253,12 +168,6 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
 
     [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
-    [DllImport("credui.dll", CharSet = CharSet.Unicode)]
-    private static extern int CredUIPromptForWindowsCredentials(ref CredUiInfo info, int error, ref uint package, IntPtr inBuffer, uint inSize,
-        out IntPtr outBuffer, out uint outSize, ref bool save, int flags);
-    [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CredUnPackAuthenticationBuffer(int flags, IntPtr buffer, uint size, StringBuilder user, ref int userLength,
-        StringBuilder domain, ref int domainLength, [Out] char[] password, ref int passwordLength);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool LogonUser(string user, string? domain, char[] password, int type, int provider, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -266,6 +175,4 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         StringBuilder commandLine, int creationFlags, IntPtr environment, string? directory, ref AppNative.StartupInfo startup, out ProcessInformation process);
     [DllImport("crypt32.dll", SetLastError = true)] private static extern bool CryptProtectMemory(byte[] data, int size, int flags);
     [DllImport("crypt32.dll", SetLastError = true)] private static extern bool CryptUnprotectMemory(byte[] data, int size, int flags);
-    [DllImport("kernel32.dll")] private static extern void RtlZeroMemory(IntPtr destination, uint length);
-    [DllImport("ole32.dll")] private static extern void CoTaskMemFree(IntPtr pointer);
 }

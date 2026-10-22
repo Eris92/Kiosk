@@ -21,16 +21,13 @@ internal static class CardService
     internal const string ServiceName = "KioskCard";
     internal const string Argument = "--card-service";
     private const string PipeName = "KioskCard";
-    private const string RelyingParty = CtapCard.RelyingParty;
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // watch | unwatch | verify | enroll | open | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | runas | newsaccount | fidosignin
+        public string Op { get; set; } = "";          // watch | unwatch | verify | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | runas | newsaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
-        public string? CredentialId { get; set; }
-        public string? Salt { get; set; }
         public string Source { get; set; } = "";      // testconfig: the folder or share to check
         public string Embed { get; set; } = "";       // fidosignin: the Kiosk window the sign-in screen is drawn in (FidoSignIn.ValidEmbed)
     }
@@ -39,7 +36,6 @@ internal static class CardService
     {
         public int Code { get; set; }                 // 0 = OK, CTAP error code, or -1 / -2
         public string Message { get; set; } = "";
-        public string? CredentialId { get; set; }
         public string? Secret { get; set; }
         public long Process { get; set; }             // runas: the suspended program's handles, valid in the Kiosk's process
         public long Thread { get; set; }
@@ -131,22 +127,6 @@ internal static class CardService
             {
                 case "verify":
                     return new Response { Message = "PIN karty potwierdzony." };
-                case "enroll":
-                {
-                    step = "tworzenie klucza";
-                    var id = card.MakeCredential(RelyingParty);
-                    // CTAP 2.1 cards drop the token's permissions after makeCredential: get a fresh one for the assertion.
-                    step = "PIN (2)";
-                    card.UsePin(request.Pin);
-                    step = "odczyt klucza";
-                    var secret = card.HmacSecret(RelyingParty, id, Convert.FromBase64String(request.Salt!));
-                    return new Response { CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) };
-                }
-                case "open":
-                {
-                    var secret = card.HmacSecret(RelyingParty, Convert.FromBase64String(request.CredentialId!), Convert.FromBase64String(request.Salt!));
-                    return new Response { Secret = Convert.ToBase64String(secret) };
-                }
                 default:
                     return new Response { Code = -2, Message = "Nieznane polecenie." };
             }
