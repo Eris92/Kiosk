@@ -126,6 +126,7 @@ namespace FidoRun
                 result = "OK " + outcome.Sid + "\t" + Clean(outcome.Name) + "\t" + Clean(account) + "\t" + (admin ? "1" : "0");
             }
             logger("KioskBroker=SignedIn; SID=" + outcome.Sid);
+            BrokerPolicy.SignedIn();
             finished.Set();
         }
 
@@ -301,6 +302,13 @@ namespace FidoRun
             lock (gate) outcome = retained;
             if (outcome == null) return "ERROR Nikt nie jest zalogowany kartą.";
             if (!Path.IsPathRooted(application) || !File.Exists(application)) return "ERROR Program nie istnieje: " + application;
+            // A parked session (the person walked away) starts nothing; and only programs of this PC's configuration.
+            string refused = BrokerPolicy.Check(application, commandLine);
+            if (refused != null)
+            {
+                logger("KioskBroker=StartRefused; Application=" + Path.GetFileName(application) + "; " + refused);
+                return "ERROR " + Clean(refused);
+            }
             ProcessInformation process = WindowsLogon.StartAsUser(outcome, application, commandLine, directory, show, logger);
             IntPtr me = GetCurrentProcess();
             IntPtr remoteProcess, remoteThread;

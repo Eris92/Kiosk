@@ -230,20 +230,37 @@ internal sealed class HelpBrowserForm : Form
         "microsoft365.com", "cloud.microsoft", "sharepoint.com", "sharepointonline.com"
     ];
 
-    private readonly BrowserView browser;
-    private readonly string url;
-    private readonly int idleSeconds;
+    private BrowserView? browser;
+    private string url = "";
+    private int idleSeconds;
     private readonly HelpCountdown countdown = new() { Dock = DockStyle.Bottom };
+    private readonly bool windowsAccount;
+    private readonly string? profileFolder;
+    /// <summary>
+    /// Punkt samoobsługowy: one window for the whole card session (<see cref="CardPageHost"/>). "Zamknij" and the
+    /// countdown only park it (<see cref="Park"/>); the next page opens in it at once, without starting this program again.
+    /// </summary>
+    private readonly bool reusable;
+    /// <summary>A blank page that keeps the browser running between pages (a reusable window only).</summary>
+    private BrowserView? keeper;
 
     /// <param name="windowsAccount">Punkt samoobsługowy, signed in with the card: this program runs as the person
     /// (<see cref="CardPageHost"/>), the page signs in with their Windows account (SSO) and keeps <paramref name="profileFolder"/>.</param>
     /// <param name="onlyListed">Konfiguracja → Przeglądarka "tylko strony z listy": links to other sites are blocked;
     /// off, links on the page (a SharePoint page pointing elsewhere) open any site.</param>
     internal HelpBrowserForm(string title, string url, IEnumerable<string> extraDomains, int idleSeconds = 60, bool windowsAccount = false, string? profileFolder = null, bool onlyListed = true)
+        : this(windowsAccount, profileFolder, reusable: false)
     {
-        this.idleSeconds = idleSeconds;
-        this.url = url;
-        Text = title;
+        LoadPage(title, url, extraDomains, idleSeconds, onlyListed);
+    }
+
+    /// <summary>The reusable window of a card session, without a page until <see cref="Open"/>.</summary>
+    internal HelpBrowserForm(bool windowsAccount, string? profileFolder, bool reusable)
+    {
+        this.windowsAccount = windowsAccount;
+        this.profileFolder = profileFolder;
+        this.reusable = reusable;
+        Text = "Kiosk";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         // Hosted by the Kiosk (windowsAccount): an unowned window the Kiosk finds and keeps over its own screen.
@@ -251,26 +268,86 @@ internal sealed class HelpBrowserForm : Form
         TopMost = !windowsAccount;
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
+        countdown.BackColor = KioskTheme.ShellBar;
+        countdown.Expired += Finish;
+        Controls.Add(countdown);
+        // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
+        // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
+        HelpCountdown.Watch(this, Touched);
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Finish(); };
+    }
+
+    /// <summary>"Zamknij", Esc or the countdown: closes the window, or parks a reusable one.</summary>
+    private void Finish() { if (reusable) Park(); else Close(); }
+
+    /// <summary>The page <paramref name="url"/> in this window, in place of the one shown before.</summary>
+    private void LoadPage(string title, string url, IEnumerable<string> extraDomains, int idleSeconds, bool onlyListed)
+    {
+        this.idleSeconds = idleSeconds;
+        this.url = url;
+        Text = title;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         var policy = new SitePolicy(onlyListed, [], SignInDomains.Concat(extraDomains).Append(host));
         policy.Trust(url);
+        var old = browser;
         browser = new BrowserView([], policy, null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder) { Dock = DockStyle.Fill };
         // One bar: ← → ⟳, the page's name and a large close button (no second bar above the browser's).
         var close = new Button { Text = "Zamknij" };   // The same word everywhere (signed in or guest).
         KioskTheme.StyleButton(close, primary: true);
-        close.Click += (_, _) => Close();
+        close.Click += (_, _) => Finish();
         browser.SetPageBar(title + (windowsAccount ? "" : "  ·  okno gościa: po zamknięciu nic nie zostaje zapisane"), close);
-        countdown.BackColor = KioskTheme.ShellBar;
-        countdown.Expired += Close;
-        Controls.Add(browser);
-        Controls.Add(countdown);
-        // Nobody uses the page (click, touch, key, scroll) or this window for the time set in Konfiguracja → Szybka pomoc: it closes.
-        // Counted here rather than from Windows' last input, which other programs and remote sessions keep fresh.
         browser.Activity += Touched;
-        HelpCountdown.Watch(this, Touched);
-        KeyPreview = true;
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+        Controls.Add(browser);
+        browser.BringToFront();   // Docked Fill after the countdown at the bottom.
+        if (sideInset > 0) browser.SetRightInset(sideInset);
+        if (old != null) { Controls.Remove(old); old.Dispose(); }
     }
+
+    /// <summary>A reusable window: the next page opens here (the Kiosk asks, <see cref="CardPageHost"/>).</summary>
+    internal void Open(string title, string url, IEnumerable<string> domains, int idleSeconds, bool onlyListed)
+    {
+        RemoveProp(Handle, ParkedProperty);
+        started = false;
+        LoadPage(title, url, domains, idleSeconds, onlyListed);
+        Start();
+    }
+
+    /// <summary>The Kiosk reads this mark on a reusable window: its page was closed ("Zamknij", Esc, the countdown).</summary>
+    internal const string ParkedProperty = "KioskPageParked";
+
+    /// <summary>
+    /// A reusable window back to waiting: the page ends (a film or a sound stops with it), the browser stays running
+    /// for the next page, and the window is marked for the Kiosk, which takes it off the screen.
+    /// </summary>
+    internal void Park()
+    {
+        countdown.Stop();
+        if (browser != null) { Controls.Remove(browser); browser.Dispose(); browser = null; }
+        SetProp(Handle, ParkedProperty, (IntPtr)1);
+        Audit.Write("card_page_parked");
+    }
+
+    /// <summary>A reusable window starts the browser at once (a blank page), so the first page opens without that wait.</summary>
+    internal async void Warm()
+    {
+        keeper = new BrowserView([], new SitePolicy(true, [], []), null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder)
+        {
+            // Shown (a hidden control gets no window for the browser), one pixel behind the page.
+            Dock = DockStyle.None, Bounds = new Rectangle(0, 0, 1, 1)
+        };
+        Controls.Add(keeper);
+        keeper.SendToBack();
+        try { await keeper.InitializeAsync("about:blank"); }
+        catch (Exception ex) { Audit.Write("card_page_warm_failed", ex.Message); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern bool SetProp(IntPtr window, string name, IntPtr value);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr RemoveProp(IntPtr window, string name);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    internal static extern IntPtr GetProp(IntPtr window, string name);
 
     private void Touched() => countdown.Restart();
     /// <summary>Someone reads the element beside the page: the page's countdown starts again.</summary>
@@ -290,7 +367,7 @@ internal sealed class HelpBrowserForm : Form
         // The Kiosk repeats it whenever it lays out the card: a new window shape (a repaint over the page) only on a change.
         if (Math.Max(0, width) == sideInset && IsHandleCreated) return;
         sideInset = Math.Max(0, width);
-        browser.SetRightInset(sideInset);
+        browser?.SetRightInset(sideInset);
         UpdateSideRegion();
     }
 
@@ -342,22 +419,23 @@ internal sealed class HelpBrowserForm : Form
     /// <summary>Starts the page and its countdown (once). Inside the Kiosk's window (TopLevel = false) the Kiosk calls it.</summary>
     internal async void Start()
     {
-        if (started) return;
+        if (started || browser is not { } page) return;
         started = true;
         countdown.Start(idleSeconds);
-        try { await browser.InitializeAsync(url); }
+        try { await page.InitializeAsync(url); }
         catch (Exception ex)
         {
             Audit.Write("help_browser_error", ex.Message);
+            if (page != browser) return;   // Already replaced by the next page.
             // In the page's place, no message window: the countdown or the close button returns to the Kiosk.
             var error = new Label
             {
                 Text = "Nie udało się otworzyć strony: " + ex.Message, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font("Segoe UI", 13), BackColor = KioskTheme.Background, ForeColor = KioskTheme.Text
             };
-            Controls.Add(error);
+            // The next page (a reusable window) removes the message together with this page.
+            page.Controls.Add(error);
             error.BringToFront();
-            browser.SendToBack();
         }
     }
 

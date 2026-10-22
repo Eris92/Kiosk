@@ -1,7 +1,7 @@
 name: Build Windows client
 on:
   push:
-    # The test branch too: Konfiguracja → Aktualizacja (Ctrl+Alt+U) on the test PCs gets every pushed version.
+    # The test branch too, as pre-releases: the test PCs (Konfiguracja → Aktualizacja → kanał dev) get every pushed version.
     branches: [main, kiosk-explorer, claude/project-thread-gr3tx0]
   pull_request:
   workflow_dispatch:
@@ -111,4 +111,6 @@ jobs:
           $sha = '${{ github.sha }}'.Substring(0, 7)
           $notes = "Branch/tag: ${{ github.ref_name }}, commit $sha.`n`nInstall: unzip to e.g. C:\Kiosk, then run as administrator scripts\Install-KioskShell.ps1 (see README)."
           $files = @('package/Kiosk-win-x64.zip') + @(Get-ChildItem package/Kiosk-win-x64.zip.sig -ErrorAction SilentlyContinue | ForEach-Object FullName)
-          gh release create $tag @files --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes
+          # Only main is "latest" (kanał main); the test branches are pre-releases, which only kanał dev installs.
+          $prerelease = @(if ('${{ github.ref_name }}' -ne 'main') { '--prerelease' })
+          gh release create $tag @files @prerelease --target '${{ github.sha }}' --title "Kiosk $tag (${{ github.ref_name }})" --notes $notes

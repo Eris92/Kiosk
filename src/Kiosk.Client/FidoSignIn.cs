@@ -168,7 +168,8 @@ internal sealed class FidoSignIn : IDisposable
                 {
                     if (!SetTokenInformation(token, 12, ref session, sizeof(int))) throw new Win32Exception(); // TokenSessionId
                     var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Desktop = @"winsta0\default" };
-                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid + " --embed " + embed;
+                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid + " --embed " + embed +
+                               " --allowed \"" + WriteAllowed(clientProgram!) + "\"";
                     if (!CreateProcessAsUser(token, program, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, false, 0x400, IntPtr.Zero,
                             Path.GetDirectoryName(program), ref startup, out var process))
                         throw new Win32Exception();
@@ -191,10 +192,33 @@ internal sealed class FidoSignIn : IDisposable
             var program = Path.Combine(AppContext.BaseDirectory, Folder, Program);
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + ")." };
             using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
-                "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId + " --embed " + embed) { UseShellExecute = false })!;
+                "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId + " --embed " + embed +
+                " --allowed \"" + WriteAllowed(Environment.ProcessPath!) + "\"") { UseShellExecute = false })!;
             return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId + "-" + process.Id };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = "Nie udało się uruchomić logowania kartą: " + ex.Message }; }
+    }
+
+    /// <summary>
+    /// The programs the sign-in program may start as the person (FidoRun's BrokerPolicy): this Kiosk (pages, remote
+    /// desktops, Pliki), Edge, the configured applications and screens ("P", any arguments) and the person's commands ("C", exactly
+    /// that command line). Written to the caller's temp folder: the service's one only SYSTEM and administrators may change.
+    /// </summary>
+    private static string WriteAllowed(string kiosk)
+    {
+        var config = Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName)).Active();
+        var lines = new List<string>
+        {
+            "P " + kiosk,
+            "P " + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe")
+        };
+        lines.AddRange(config.Applications.Where(a => !a.IsBuiltIn && a.RunAs.Trim().Length == 0).Select(a => "P " + a.Path));
+        lines.AddRange(config.IdleScreens.Where(s => s.Url.Length == 0 && s.Path.Length > 0).Select(s => "P " + s.Path));   // Screens reopened as the person.
+        lines.AddRange(config.Commands.Where(c => c.AsUser).Select(c => "C " + c.CommandLine()));
+        var file = Path.Combine(Path.GetTempPath(), "KioskFido", "allowed.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllLines(file, lines.Where(l => !l.Contains('\n') && !l.Contains('\r')), new UTF8Encoding(false));
+        return file;
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }

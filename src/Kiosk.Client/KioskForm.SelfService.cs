@@ -101,6 +101,9 @@ internal sealed partial class KioskForm
         if (cardLogon != logon) return;
         // Nothing opens by itself: the person chooses from Szybka pomoc.
         if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
+        // Most people open a page: its window and browser start now, hidden, so the page they choose opens at once.
+        // (Only a card reset or a PIN change needs no page; the window then simply goes with the card session.)
+        else reusableStarting = StartReusablePageAsync(logon);
         RefreshChrome();
     }
 
@@ -150,6 +153,14 @@ internal sealed partial class KioskForm
         PrepareCardSignIn();
         if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
         if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Zamknij" or its countdown closed it.
+        // The card session's own window: "Zamknij" or its countdown parked it (it stays for the next page).
+        else if (cardPage != null && cardPage == reusablePage && HelpBrowserForm.GetProp(cardPage.HostedWindow, HelpBrowserForm.ParkedProperty) != IntPtr.Zero)
+            CloseCardPage();
+        if (reusablePage is { Started: true } waiting && cardPage != waiting && !waiting.Refresh())
+        {
+            Audit.Write("card_page_reusable_lost");   // Closed or crashed: pages start on their own again.
+            DropReusablePage();
+        }
         if (cardLogon == null) return;
         if (signInReaders.Length == 0)
         {
@@ -183,6 +194,7 @@ internal sealed partial class KioskForm
         signInReaders = [];
         helpBrowser?.Close();
         CloseCardPage();
+        DropReusablePage();
         cardLogon.Dispose(); // Signs the person out of Windows here: their Edge closes with it.
         cardLogon = null;
         notice = null;
@@ -206,6 +218,28 @@ internal sealed partial class KioskForm
         CloseCardPage();
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         helpBrowser?.Close();
+        // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.
+        if (reusableStarting is { IsCompleted: false } starting) { await starting; if (cardLogon != logon) return; }
+        if (reusablePage is { Started: true } reusable && reusableHost > 0 && reusable.Refresh())
+        {
+            ShowSideFor(side);
+            var domains = HelpBrowserForm.SignInDomains.Concat(HelpPageDomains()).Append(host).ToArray();
+            int seconds = config.HelpCloseSeconds, hostPid = reusableHost;
+            bool onlyListed = config.BrowserOnlyBookmarks;
+            if (await Task.Run(() => CardPageHost.Send(hostPid, "open", title, url, seconds, domains, onlyListed)) && reusablePage == reusable && cardLogon == logon)
+            {
+                cardPage = reusable;
+                if (visibleView != desktop) ShowView(desktop);
+                desktop.ShowPage(reusable);
+                desktop.SetPageTitle(title);
+                reusable.BringToUser();
+                desktop.RefreshSide();
+                Audit.Write("selfservice_page_as_person", "reused");
+                return;
+            }
+            // It did not answer: this page (and the next ones) in a program of its own, as before.
+            DropReusablePage();
+        }
         // The second element first: the person's page is laid over the left part only.
         ShowSideFor(side);
         var page = new ApplicationView { AlwaysOverlay = true };
@@ -235,11 +269,64 @@ internal sealed partial class KioskForm
         }
     }
 
-    /// <summary>Back to the start screen: the page closes.</summary>
+    /// <summary>Back to the start screen: the page closes (the card session's own window only leaves the screen).</summary>
     private void CloseCardPage()
     {
         if (cardPage is not { } page) return;
         cardPage = null;
+        if (desktop.Page == page) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
+        if (page != reusablePage) { page.Dispose(); return; }
+        // Closed from the Kiosk (the start screen, signing out, another page): the page itself ends too (a film stops).
+        if (HelpBrowserForm.GetProp(page.HostedWindow, HelpBrowserForm.ParkedProperty) == IntPtr.Zero)
+        {
+            var hostPid = reusableHost;
+            _ = Task.Run(() => CardPageHost.Send(hostPid, "park"));
+        }
+    }
+
+    /// <summary>The card session's page window (<see cref="CardPageHost"/>): started once after the sign-in, reused by every page.</summary>
+    private ApplicationView? reusablePage;
+    private Task? reusableStarting;
+    /// <summary>Its process, which alone answers on its pipe.</summary>
+    private int reusableHost;
+
+    private async Task StartReusablePageAsync(UserLogon logon)
+    {
+        var page = new ApplicationView { AlwaysOverlay = true };
+        reusablePage = page;
+        var area = desktop.PageScreenArea;
+        string kioskAccount;
+        using (var self = System.Security.Principal.WindowsIdentity.GetCurrent()) kioskAccount = self.User!.Value;
+        // Every configured page's site at once: the window's browser keeps its sign-in settings for all its pages.
+        var domains = HelpBrowserForm.SignInDomains.Concat(HelpPageDomains())
+            .Concat(config.HelpActions.Select(h => Uri.TryCreate(h.Action, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? u.Host : ""))
+            .Where(h => h.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var request = new CardPageHost.Request("Kiosk", "", config.HelpCloseSeconds, config.AccentColor, domains,
+            logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
+            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks, Kiosk: Environment.ProcessId, KioskSid: kioskAccount);
+        var entry = new ApplicationEntry { Name = "Kiosk", Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
+        try
+        {
+            await page.StartAsync(entry, logon);
+            if (reusablePage != page || page.HostedWindow == IntPtr.Zero) return;
+            AppNative.GetWindowThreadProcessId(page.HostedWindow, out var pid);
+            reusableHost = (int)pid;
+            Audit.Write("card_page_reusable_ready");
+        }
+        catch (Exception ex)
+        {
+            // Pages then start on their own, as before.
+            Audit.Write("card_page_reusable_failed", ex.Message);
+            if (reusablePage == page) DropReusablePage();
+        }
+    }
+
+    private void DropReusablePage()
+    {
+        if (reusablePage is not { } page) return;
+        reusablePage = null;
+        reusableHost = 0;
+        if (cardPage == page) CloseCardPage();
         if (desktop.Page == page) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
         page.Dispose();
     }

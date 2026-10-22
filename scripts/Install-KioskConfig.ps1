@@ -71,6 +71,9 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration when missing')) {
         if ($news) { Copy-Item $news (Join-Path $directory 'news') -Recurse -Force }
         Write-Output "Configuration copied: $ConfigPath"
     }
+    # Owner: Administrators (a folder a user created first would stay theirs, with the right to change its permissions).
+    & icacls.exe $directory /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed for $directory" }
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed for $directory" }
 }

@@ -119,6 +119,10 @@ if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration (SessionMode Windo
     if (-not $existing) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue (-not $SkipSetup -and -not $ConfigSource) -Force }
     elseif ($SkipSetup -or $ConfigSource) { $json | Add-Member -NotePropertyName ShowSetup -NotePropertyValue $false -Force }
     $json | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding utf8
+    # Owner: Administrators. A folder a user created before the installation stays theirs otherwise, and its owner may
+    # change its permissions back (configuration, accounts.kiosk, the shared accounts' key).
+    & icacls.exe $directory /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed for $directory" }
     # SYSTEM and Administrators: full control; Users: read. Settings saved from the Kiosk need an admin.
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed for $directory" }

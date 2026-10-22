@@ -60,7 +60,10 @@ if ($Credential -and $PSCmdlet.ShouldProcess($credentialFile, "save account $($C
     $blob = [Security.Cryptography.ProtectedData]::Protect($bytes, [Text.Encoding]::UTF8.GetBytes('Kiosk.ConfigSource'),
         [Security.Cryptography.DataProtectionScope]::LocalMachine)
     [Array]::Clear($bytes, 0, $bytes.Length)
-    if (-not (Test-Path $credentialFile)) { New-Item -ItemType File -Path $credentialFile | Out-Null }
+    # A fresh file owned by Administrators: one a user placed there first would keep its owner's right to change the permissions.
+    Remove-Item $credentialFile -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType File -Path $credentialFile | Out-Null
+    & icacls.exe $credentialFile /setowner '*S-1-5-32-544' /Q | Out-Null
     # Only SYSTEM (the Kiosk Card service) and administrators may read it: DPAPI LocalMachine alone would let any local user decrypt it.
     & icacls.exe $credentialFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "icacls failed for $credentialFile" }
@@ -77,7 +80,9 @@ if ($AccountsKey -and $PSCmdlet.ShouldProcess($keyFile, 'save the key of the sha
         $blob = [Security.Cryptography.ProtectedData]::Protect($bytes, [Text.Encoding]::UTF8.GetBytes('Kiosk.SharedAccounts'),
             [Security.Cryptography.DataProtectionScope]::LocalMachine)
         [Array]::Clear($bytes, 0, $bytes.Length)
-        if (-not (Test-Path $keyFile)) { New-Item -ItemType File -Path $keyFile | Out-Null }
+        Remove-Item $keyFile -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType File -Path $keyFile | Out-Null
+        & icacls.exe $keyFile /setowner '*S-1-5-32-544' /Q | Out-Null
         & icacls.exe $keyFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "icacls failed for $keyFile" }
         [IO.File]::WriteAllBytes($keyFile, $blob)

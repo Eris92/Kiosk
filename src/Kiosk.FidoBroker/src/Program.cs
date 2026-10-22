@@ -26,6 +26,8 @@ namespace FidoRun
         // Started by the Kiosk Card service for the Kiosk process ClientPid (see KioskBroker).
         public bool Broker { get { return Mode == "kiosk-broker"; } }
         public int ClientPid;
+        // kiosk-broker: the programs it may start for the Kiosk, written by the Kiosk Card service (BrokerPolicy).
+        public string AllowedFile;
         // The Kiosk asks for the PIN on its own screen and hands it over the pipe; this window stays invisible.
         public bool PinFromClient;
         // The Kiosk's own sign-in place: this PIN screen is drawn inside that Kiosk window instead of over it
@@ -69,6 +71,9 @@ namespace FidoRun
                     case "--embed":
                         ParseEmbed(value, result);
                         break;
+                    case "--allowed":
+                        if (!Path.IsPathRooted(value)) throw new ArgumentException("Bad --allowed.");
+                        result.AllowedFile = value; break;
                     case "--client-pid":
                         if (!Int32.TryParse(value, out result.ClientPid) || result.ClientPid <= 0) throw new ArgumentException("Bad --client-pid.");
                         break;
@@ -273,7 +278,11 @@ namespace FidoRun
                         if (options.Mode == "diagnose") Result = NativeCtapProbe.Run(log.Write);
                         else
                         {
-                            if (options.Broker) KioskBroker.Start(options.ClientPid, log.Write);
+                            if (options.Broker)
+                            {
+                                BrokerPolicy.Configure(options.AllowedFile, log.Write);
+                                KioskBroker.Start(options.ClientPid, log.Write);
+                            }
                             // Inside the Kiosk window: real pixels like the Kiosk (this program is DPI-unaware otherwise).
                             if (options.Embedded) { try { SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { } }
                             Application.EnableVisualStyles();

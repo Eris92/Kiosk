@@ -39,6 +39,14 @@ internal static class Updater
         set => channel = ValidChannel(value) ? value : "main";
     }
 
+    /// <summary>Kiosk Card service: the channel of the configuration this PC uses (main when it cannot be read). A user
+    /// cannot ask the service for test versions; the channel is an administrator's setting.</summary>
+    internal static string MachineChannel()
+    {
+        try { return Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName)).UpdateChannel; }
+        catch (Exception ex) { Audit.Write("update_channel_unreadable", ex.Message); return "main"; }
+    }
+
     /// <summary>The release tag this build was made from ("build-15"), or "dev" for a local build.</summary>
     internal static string CurrentVersion
     {

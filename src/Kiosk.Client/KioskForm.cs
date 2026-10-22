@@ -1011,15 +1011,8 @@ internal sealed partial class KioskForm : Form
     {
         if (current is not { } session) return;
         if (command.Confirm && !Ask("Uruchomić polecenie „" + command.Name + "”?", "Polecenie")) return;
-        var ext = Path.GetExtension(command.Path).ToLowerInvariant();
-        var system = Environment.SystemDirectory;
-        var (program, arguments) = ext switch
-        {
-            ".ps1" => (Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe"), "-NoProfile -NonInteractive -WindowStyle Hidden -File \"" + command.Path + "\" " + command.Arguments),
-            ".cmd" or ".bat" => (Path.Combine(system, "cmd.exe"), "/c \"\"" + command.Path + "\" " + command.Arguments + "\""),
-            _ => (command.Path, command.Arguments)
-        };
-        var line = "\"" + program + "\" " + arguments;
+        var (program, arguments) = command.Resolve();
+        var line = command.CommandLine();
         var directory = Path.GetDirectoryName(command.Path);
         Audit.Write("command_started", command.Name);
         notice = "Polecenie „" + command.Name + "” działa…";

@@ -41,6 +41,11 @@ internal static class NewsAccount
         {
             if (!SharedAccounts.IsInstalledKiosk(clientProgram)) return new CardService.Response { Code = -2, Message = "Konto do SharePointa podaje usługa tylko programowi Kiosk z Program Files." };
             if (!Saved) return new CardService.Response { Code = -2, Message = "Nie zapisano loginu i hasła do SharePointa." };
+            // Only when this PC's configuration signs in to SharePoint news with it (no shared account named there):
+            // otherwise the Kiosk has no use for Konto Kiosku, which stays in the service (shares, statistics).
+            var config = Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName));
+            if (config.NewsSharePoint.Length == 0 || config.NewsSharePointAccount.Trim().Length > 0)
+                return new CardService.Response { Code = -2, Message = "Konfiguracja tego komputera nie loguje się Kontem Kiosku do SharePointa." };
             if (CentralConfig.ReadAccount() is { } kiosk) return new CardService.Response { Message = kiosk.User, Secret = kiosk.Password };
             var plain = CentralConfig.ReadSecret(File_, Entropy);
             try

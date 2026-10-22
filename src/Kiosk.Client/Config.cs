@@ -73,6 +73,21 @@ internal sealed record CommandEntry
     public bool Confirm { get; init; }
     /// <summary>Unticked in Konfiguracja: stays on the list, but Kiosk does not use it.</summary>
     public bool Enabled { get; init; } = true;
+
+    /// <summary>The program that runs it (PowerShell or cmd for a script) and its arguments.</summary>
+    internal (string Program, string Arguments) Resolve()
+    {
+        var system = Environment.SystemDirectory;
+        return System.IO.Path.GetExtension(Path).ToLowerInvariant() switch
+        {
+            ".ps1" => (System.IO.Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe"), "-NoProfile -NonInteractive -WindowStyle Hidden -File \"" + Path + "\" " + Arguments),
+            ".cmd" or ".bat" => (System.IO.Path.Combine(system, "cmd.exe"), "/c \"\"" + Path + "\" " + Arguments + "\""),
+            _ => (Path, Arguments)
+        };
+    }
+
+    /// <summary>The whole command line, exactly as the sign-in program gets it for a person's command.</summary>
+    internal string CommandLine() { var (program, arguments) = Resolve(); return "\"" + program + "\" " + arguments; }
 }
 
 internal sealed record AdminCard

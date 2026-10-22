@@ -229,6 +229,10 @@ internal static class CardService
                         GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var runasPid) ? (int)runasPid : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var runasSession) ? runasSession : -1)
                     : request.Op == "newsaccount" ? NewsAccount.ForService(ClientProgram(pipe))
+                    // The channel of this PC's own configuration; another one only for an elevated administrator
+                    // (Konfiguracja → Aktualizacja tries the chosen channel before saving it).
+                    : request.Op == "update" ? Locked(updateWork, () => Updater.InstallLatest(
+                        ClientIsAdministrator(pipe) && Updater.ValidChannel(request.Source) ? request.Source : Updater.MachineChannel()))
                     // Watchdog: the Kiosk process Windows names reports in or says goodbye.
                     : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,
                         ClientProgram(pipe), request.Source)

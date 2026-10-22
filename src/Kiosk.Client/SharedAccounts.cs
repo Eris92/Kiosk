@@ -63,11 +63,23 @@ internal static class SharedAccounts
             // Only the installed Kiosk (Program Files, which users cannot change) gets a password; any other program of
             // the person signed in could otherwise ask the service for it.
             if (!IsInstalledKiosk(clientProgram)) return new CardService.Response { Code = -2, Message = "Konta wspólne podaje usługa tylko programowi Kiosk z Program Files." };
+            // Only an account this PC's configuration gives to a page (Akcje stron) or to the SharePoint news: the
+            // Kiosk cannot ask for the other accounts of accounts.kiosk (those of programs never leave the service).
+            if (!UsedByPages(name)) return new CardService.Response { Code = -2, Message = "Konfiguracja tego komputera nie używa konta „" + name + "” na stronach." };
             var account = Read(Path.Combine(CentralConfig.MachineConfigFolder(), FileName), name);
             Audit.Write("shared_account_used", name);
             return new CardService.Response { Message = account.User, Secret = account.Password };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
+    }
+
+    /// <summary>The configuration this PC uses (its active entries) names <paramref name="name"/> for a page or the SharePoint news.</summary>
+    private static bool UsedByPages(string name)
+    {
+        var config = Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName)).Active();
+        bool Same(string? used) => string.Equals(used?.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase);
+        return name.Trim().Length > 0 && (config.PageActions.Any(a => Same(a.Account)) ||
+            config.NewsSharePoint.Length > 0 && Same(config.NewsSharePointAccount));
     }
 
     /// <summary>The service itself (SharedAccountPrograms): the account stays in the service.</summary>
