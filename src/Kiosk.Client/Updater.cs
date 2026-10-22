@@ -77,11 +77,22 @@ internal static class Updater
             using var json = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases/latest"));
             return FromJson(json.RootElement) ?? throw new InvalidDataException("Wydanie " + json.RootElement.GetProperty("tag_name").GetString() + " nie zawiera pliku " + Asset + ".");
         }
-        using var list = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases?per_page=30"));
-        return list.RootElement.EnumerateArray()
-            .Where(r => !r.GetProperty("draft").GetBoolean())
-            .Select(FromJson).OfType<Release>()
-            .Where(r => Number(r.Tag) != null)
+        // GitHub has answered this list empty ("[]") for one page size while it answered for another: two sizes are
+        // asked, and "latest" counts too, so kanał dev never offers less than kanał main.
+        var found = new List<Release>();
+        foreach (var size in new[] { 100, 30 })
+        {
+            using var list = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases?per_page=" + size));
+            found.AddRange(list.RootElement.EnumerateArray().Where(r => !r.GetProperty("draft").GetBoolean()).Select(FromJson).OfType<Release>());
+            if (found.Any(r => Number(r.Tag) != null)) break;
+        }
+        try
+        {
+            using var latest = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/" + Repository + "/releases/latest"));
+            if (FromJson(latest.RootElement) is { } release) found.Add(release);
+        }
+        catch (HttpRequestException) { }
+        return found.Where(r => Number(r.Tag) != null)
             .OrderByDescending(r => Number(r.Tag))
             .FirstOrDefault() ?? throw new InvalidDataException("Brak wydań Kiosku w kanale dev.");
     }
