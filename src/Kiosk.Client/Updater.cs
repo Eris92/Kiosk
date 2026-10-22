@@ -105,45 +105,51 @@ internal static class Updater
             var installed = await Task.Run(() => IsElevated() ? InstallRuntime() : CardService.Call(new CardService.Request { Op = "dotnet" }));
             if (installed.Code != 0 || MissingRuntimes(Path.GetDirectoryName(exe)!) is [_, ..])
                 throw new InvalidDataException(release.Tag + " wymaga " + string.Join(", ", missing) + ", a instalacja się nie udała (" + installed.Message +
-                                               "). Zainstaluj .NET 10 Desktop Runtime x64: winget install Microsoft.DotNet.DesktopRuntime.10");
+                                               "). Zainstaluj .NET 10 Desktop Runtime x64 (https://dotnet.microsoft.com/download/dotnet/10.0).");
         }
         return Path.GetDirectoryName(exe)!;
     }
 
-    private const string RuntimePackage = "Microsoft.DotNet.DesktopRuntime.10";
-    private const string RuntimeInstaller = "https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe";
+    // Microsoft's list of .NET 10 releases: the newest Desktop Runtime installer and its SHA-512.
+    private const string RuntimeReleases = "https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/10.0/releases.json";
 
     /// <summary>
-    /// Installs the .NET 10 Desktop Runtime x64 (administrator or the Kiosk Card service): with winget where it works,
-    /// else Microsoft's own installer, run only with a valid Microsoft signature. Nothing of the caller's is used.
+    /// Installs the newest .NET 10 Desktop Runtime x64 (administrator or the Kiosk Card service): Microsoft's installer
+    /// named in its release list, run only when its SHA-512 matches that list. No winget: it does not work in the kiosk
+    /// shell or for the system account. Nothing of the caller's is used.
     /// </summary>
     internal static CardService.Response InstallRuntime()
     {
-        if (!IsElevated()) return new CardService.Response { Code = -1, Message = "Instalacja .NET wymaga administratora." };
-        var how = "winget";
-        var code = Run("winget", "install --id " + RuntimePackage + " --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity");
-        if (code != 0 && !RuntimeInstalled())
+        if (!IsElevated()) return Failed("instalacja .NET wymaga administratora");
+        var folder = Path.Combine(Path.GetTempPath(), "Kiosk-dotnet-" + Guid.NewGuid().ToString("N")[..8]);
+        try
         {
-            // winget is missing for the system account and on some editions: the installer from Microsoft instead.
-            how = "installer";
-            var folder = Path.Combine(Path.GetTempPath(), "Kiosk-dotnet-" + Guid.NewGuid().ToString("N")[..8]);
+            using var client = Client();
+            using var list = JsonDocument.Parse(client.GetStringAsync(RuntimeReleases).GetAwaiter().GetResult());
+            var latest = list.RootElement.GetProperty("latest-release").GetString();
+            var release = list.RootElement.GetProperty("releases").EnumerateArray().First(r => r.GetProperty("release-version").GetString() == latest);
+            var desktop = release.GetProperty("windowsdesktop");
+            var installer = desktop.GetProperty("files").EnumerateArray().First(f => f.GetProperty("name").GetString() == "windowsdesktop-runtime-win-x64.exe");
+            var url = new Uri(installer.GetProperty("url").GetString()!);
+            if (url.Scheme != "https" || !url.Host.Equals("builds.dotnet.microsoft.com", StringComparison.OrdinalIgnoreCase))
+                return Failed("nieoczekiwany adres instalatora .NET: " + url.Host);
             Directory.CreateDirectory(folder);
-            try
-            {
-                var file = Path.Combine(folder, "windowsdesktop-runtime-win-x64.exe");
-                using (var client = Client())
-                using (var download = client.GetStreamAsync(RuntimeInstaller).GetAwaiter().GetResult())
-                using (var target = File.Create(file))
-                    download.CopyTo(target);
-                if (!SignedByMicrosoft(file)) return Failed("instalator .NET nie ma ważnego podpisu Microsoft");
-                code = Run(file, "/install /quiet /norestart");
-            }
-            finally { try { Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
+            var file = Path.Combine(folder, "windowsdesktop-runtime-win-x64.exe");
+            using (var download = client.GetStreamAsync(url).GetAwaiter().GetResult())
+            using (var target = File.Create(file))
+                download.CopyTo(target);
+            using (var stream = File.OpenRead(file))
+                if (!Convert.ToHexString(System.Security.Cryptography.SHA512.HashData(stream)).Equals(installer.GetProperty("hash").GetString(), StringComparison.OrdinalIgnoreCase))
+                    return Failed("suma SHA-512 instalatora .NET się nie zgadza");
+            var version = desktop.GetProperty("version").GetString();
+            var code = Run(file, "/install /quiet /norestart");
+            // 3010: installed, Windows wants a restart; 1638: a newer version is there already.
+            if (!RuntimeInstalled()) return Failed("instalator .NET " + version + " zakończył się kodem " + code);
+            Audit.Write("runtime_installed", version + ", kod " + code);
+            return new CardService.Response { Message = ".NET Desktop Runtime " + version + " zainstalowany." };
         }
-        // 3010: installed, Windows wants a restart; 1638: a newer version is there already.
-        if (!RuntimeInstalled()) return Failed(how + " zakończył się kodem " + code);
-        Audit.Write("runtime_installed", how + " " + code);
-        return new CardService.Response { Message = ".NET 10 Desktop Runtime zainstalowany." };
+        catch (Exception ex) { return Failed(ex.Message); }
+        finally { try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } }
 
         static CardService.Response Failed(string why)
         {
@@ -163,19 +169,7 @@ internal static class Updater
             using var process = Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = false, CreateNoWindow = true })!;
             return process.WaitForExit(15 * 60000) ? process.ExitCode : -1;
         }
-        catch (System.ComponentModel.Win32Exception) { return -1; }   // No winget.
-    }
-
-    /// <summary>Windows' own check (Get-AuthenticodeSignature): valid signature, signed by Microsoft Corporation.</summary>
-    private static bool SignedByMicrosoft(string file)
-    {
-        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
-            "-NoProfile -NonInteractive -Command \"$s = Get-AuthenticodeSignature -LiteralPath $env:KIOSK_FILE; " +
-            "if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match 'O=Microsoft Corporation') { exit 0 } else { exit 1 }\"")
-        { UseShellExecute = false, CreateNoWindow = true };
-        start.Environment["KIOSK_FILE"] = file;   // Not on the command line: no quoting of the path.
-        using var check = Process.Start(start)!;
-        return check.WaitForExit(60000) && check.ExitCode == 0;
+        catch (System.ComponentModel.Win32Exception) { return -1; }
     }
 
     /// <summary>The .NET frameworks the Kiosk.Client.exe in <paramref name="folder"/> needs and this PC lacks

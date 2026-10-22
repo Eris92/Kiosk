@@ -69,9 +69,11 @@ https://learn.microsoft.com/en-us/windows/win32/termserv/msrdpclient9notsafefors
 1. Open Actions -> Build Windows client, open a successful run and download
    Kiosk-win-x64. Extract the ZIP to C:\Kiosk. The client needs the
    .NET 10 Desktop Runtime x64 on the PC (it does not carry its own .NET):
-   `winget install Microsoft.DotNet.DesktopRuntime.10`, or the installer from
-   https://dotnet.microsoft.com/download/dotnet/10.0 (".NET Desktop Runtime", x64).
-   scripts\Install-*.ps1 and the in-app update install it themselves when it is missing.
+   the installer from https://dotnet.microsoft.com/download/dotnet/10.0
+   (".NET Desktop Runtime", x64). scripts\Install-*.ps1 and the in-app update
+   install it themselves when it is missing (Microsoft's installer, checked
+   against the SHA-512 in Microsoft's release list; winget is not used, it does
+   not work in the kiosk shell).
 2. Edit client/client.json: set Server to your Session Host FQDN.
    Keep TestMode true during testing. IdleSeconds defaults to 300.
 3. Run the read-only checks, then the client:

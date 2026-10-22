@@ -13,33 +13,36 @@ function Get-KioskMissingRuntime([string]$SourcePath) {
     }
 }
 
-# Installs the .NET 10 Desktop Runtime x64 when the build needs it: winget, else Microsoft's installer
-# (only with a valid Microsoft signature). Throws when it is still missing.
+# Installs the newest .NET 10 Desktop Runtime x64 when the build needs it: Microsoft's installer named in its
+# release list, run only when its SHA-512 matches that list. No winget: it does not work in the kiosk shell.
+# Throws when the runtime is still missing.
 function Assert-KioskRuntime([string]$SourcePath) {
     $missing = Get-KioskMissingRuntime $SourcePath
     if (-not $missing) { return }
     if ($WhatIfPreference) { Write-Output "WhatIf: zainstalowałbym .NET 10 Desktop Runtime x64 ($($missing -join ', '))."; return }
-    Write-Output "Brak $($missing -join ', '): instaluję .NET 10 Desktop Runtime x64..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        & winget install --id Microsoft.DotNet.DesktopRuntime.10 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
-    }
-    if (Get-KioskMissingRuntime $SourcePath) {
-        # No winget (system account, some editions) or it failed: Microsoft's own installer.
-        $file = Join-Path ([IO.Path]::GetTempPath()) ('windowsdesktop-runtime-win-x64-{0}.exe' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri 'https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe' -OutFile $file -UseBasicParsing
-            $signature = Get-AuthenticodeSignature -LiteralPath $file
-            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'Instalator .NET nie ma ważnego podpisu Microsoft.' }
-            $setup = Start-Process -FilePath $file -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
-            Write-Output "Instalator .NET zakończył się kodem $($setup.ExitCode)."
-        } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
-    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $metadata = Invoke-RestMethod -Uri 'https://dotnetcli.blob.core.windows.net/dotnet/release-metadata/10.0/releases.json' -UseBasicParsing
+    $release = $metadata.releases | Where-Object { $_.'release-version' -eq $metadata.'latest-release' } | Select-Object -First 1
+    $file = $release.windowsdesktop.files | Where-Object { $_.name -eq 'windowsdesktop-runtime-win-x64.exe' } | Select-Object -First 1
+    if (-not $file -or -not $file.url -or -not $file.hash) { throw 'Nie znaleziono instalatora .NET 10 Desktop Runtime x64 na liście Microsoftu.' }
+    $uri = [uri]$file.url
+    if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'builds.dotnet.microsoft.com') { throw "Nieoczekiwany adres instalatora .NET: $($uri.Host)" }
+    $version = $release.windowsdesktop.version
+    $installer = Join-Path ([IO.Path]::GetTempPath()) ('windowsdesktop-runtime-{0}.exe' -f [guid]::NewGuid().ToString('N'))
+    try {
+        Write-Output "Brak $($missing -join ', '): pobieram .NET Desktop Runtime $version..."
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $file.url -OutFile $installer -UseBasicParsing
+        if ((Get-FileHash -LiteralPath $installer -Algorithm SHA512).Hash -ne $file.hash) { throw 'Suma SHA-512 instalatora .NET się nie zgadza.' }
+        Write-Output "Instaluję .NET Desktop Runtime $version..."
+        $setup = Start-Process -FilePath $installer -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+        if ($setup.ExitCode -notin @(0, 3010, 1638)) { throw "Instalacja .NET nie powiodła się (kod $($setup.ExitCode))." }
+        if ($setup.ExitCode -eq 3010) { Write-Warning 'Windows prosi o ponowne uruchomienie po instalacji .NET.' }
+    } finally { Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue }
     if ($missing = Get-KioskMissingRuntime $SourcePath) {
-        throw ("Nie udało się zainstalować $($missing -join ', '). Zainstaluj .NET 10 Desktop Runtime x64 ręcznie: " +
-            'winget install Microsoft.DotNet.DesktopRuntime.10 (albo https://dotnet.microsoft.com/download/dotnet/10.0).')
+        throw ("Nadal brak $($missing -join ', '). Zainstaluj .NET 10 Desktop Runtime x64 ręcznie: https://dotnet.microsoft.com/download/dotnet/10.0")
     }
-    Write-Output '.NET 10 Desktop Runtime zainstalowany.'
+    Write-Output ".NET Desktop Runtime $version zainstalowany."
 }
 
 # After a self-contained Kiosk in $InstallPath: removes its own .NET files. With hostfxr.dll left there
