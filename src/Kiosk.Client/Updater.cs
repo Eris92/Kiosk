@@ -94,16 +94,13 @@ internal static class Updater
     /// <summary>
     /// The public half of the key the build in GitHub signs each package with (secret KIOSK_SIGNING_KEY). The signature
     /// covers the tag and the package's SHA-256, so an old package cannot pass as a new release either.
+    /// Empty until the owner's key is set up: packages are then not checked yet (logged as update_unsigned_allowed).
     /// </summary>
-    private const string SigningKey = """
-        -----BEGIN PUBLIC KEY-----
-        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUM3VpBP891GFEnIQpD8wcylZe8Xz
-        9JQqRYAPX02tURQ3lA/Wh2R8HsyjshqqYzMsTB/6KwJuP2kl1zSG0u3tBw==
-        -----END PUBLIC KEY-----
-        """;
+    private const string SigningKey = "";
 
     private static async Task VerifySignatureAsync(Release release, string zip)
     {
+        if (SigningKey.Length == 0) { Audit.Write("update_unsigned_allowed", release.Tag); return; }
         if (release.SignatureUrl == null) throw new InvalidDataException("Wydanie " + release.Tag + " nie jest podpisane – nie instaluję go.");
         using var client = Client();
         var text = (await client.GetStringAsync(release.SignatureUrl)).Trim();
