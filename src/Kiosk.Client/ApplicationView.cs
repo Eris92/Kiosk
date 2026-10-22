@@ -22,15 +22,39 @@ internal sealed class ApplicationView : Panel
     private long dialogsCheckedAt;
     private static List<IntPtr>? pollWindows;
     private static bool inPollCycle;
-    internal string LaunchPath { get; private set; } = "";
     /// <summary>Windows embedded by any view: a program that hands its new window to an already running copy
     /// (Edge, Office) is recognised by that copy's process, and its new window is taken over (adopted).</summary>
     private static readonly Dictionary<IntPtr, ApplicationView> hostedWindows = new();
     /// <summary>This view shows a window of another view's process: it has no Job of its own.</summary>
     private bool adopted;
+    /// <summary>
+    /// Chromium-based programs (Edge, Chrome, VS Code, Teams) ignore the keyboard when their window is a child of
+    /// another process's window: they think they are not active. Those stay top-level windows without a frame,
+    /// owned by the Kiosk and kept exactly over this view (same look, working keyboard).
+    /// </summary>
+    private bool overlay;
+    private IntPtr overlayOwner;
+    private readonly System.Windows.Forms.Timer overlaySync = new() { Interval = 80 };
+    private static bool overlaysHidden;
+    private static event Action? OverlaysChanged;
+
+    /// <summary>
+    /// While the Kiosk shows something of its own over the programs (the Menu), the Chromium windows step aside:
+    /// as separate windows they would otherwise cover it.
+    /// </summary>
+    internal static void SetOverlaysHidden(bool hidden)
+    {
+        if (overlaysHidden == hidden) return;
+        overlaysHidden = hidden;
+        OverlaysChanged?.Invoke();
+    }
+
+    private void OnOverlaysChanged() => SyncOverlay(null, EventArgs.Empty);
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
+    /// <summary>The program file (for its icon on the taskbar).</summary>
+    internal string ProgramPath { get; private set; } = "";
 
     internal ApplicationView(object? ownershipScope = null)
     {
@@ -42,7 +66,7 @@ internal sealed class ApplicationView : Panel
     internal async Task StartAsync(ApplicationEntry entry, UserLogon? logon = null)
     {
         if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
-        LaunchPath = Path.GetFullPath(entry.Path);
+        ProgramPath = Path.GetFullPath(entry.Path);
         _ = Handle;
         var before = WindowsOfHostedProcesses();
         job = AppNative.CreateJobObject(IntPtr.Zero, null);
@@ -100,6 +124,9 @@ internal sealed class ApplicationView : Panel
 
     private void Embed(IntPtr window)
     {
+        var className = new StringBuilder(64);
+        AppNative.GetClassName(window, className, className.Capacity);
+        if (className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
         var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
         // Remove popup, caption, sizing frame, min/max boxes and the minimised state; make it a child.
         style = (style & ~(0x80000000L | 0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L)) | 0x40000000L;
@@ -129,6 +156,52 @@ internal sealed class ApplicationView : Panel
         AppNative.RedrawWindow(window, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0004 | 0x0080 | 0x0100); // INVALIDATE | ERASE | ALLCHILDREN | UPDATENOW
     }
 
+    /// <summary>Keeps a Chromium window as a frameless, owned top-level window over this view (see <see cref="overlay"/>).</summary>
+    private void Overlay(IntPtr window)
+    {
+        var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
+        // No caption, sizing frame, system menu or min/max boxes: it cannot be moved, resized or minimised.
+        style = (style & ~(0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L | 0x01000000L | 0x40000000L)) | 0x80000000L;
+        AppNative.SetWindowLongPtr(window, -16, new IntPtr(style));
+        var exStyle = AppNative.GetWindowLongPtr(window, -20).ToInt64();
+        AppNative.SetWindowLongPtr(window, -20, new IntPtr((exStyle & ~0x40000L) | 0x80L)); // not APPWINDOW, TOOLWINDOW: no taskbar / Alt+Tab
+        if (HostedWindow != IntPtr.Zero) hostedWindows.Remove(HostedWindow);
+        HostedWindow = window;
+        hostedWindows[window] = this;
+        overlay = true;
+        overlayOwner = IntPtr.Zero;
+        Started = true;
+        windowLostAt = DateTime.MaxValue;
+        AppNative.ShowWindow(window, 9); // SW_RESTORE
+        overlaySync.Tick -= SyncOverlay;
+        overlaySync.Tick += SyncOverlay;
+        OverlaysChanged -= OnOverlaysChanged;
+        OverlaysChanged += OnOverlaysChanged;
+        overlaySync.Enabled = Visible;
+        SyncOverlay(null, EventArgs.Empty);
+    }
+
+    private void SyncOverlay(object? sender, EventArgs e)
+    {
+        if (!overlay || IsDisposed || HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow)) return;
+        var form = FindForm();
+        bool show = form != null && Visible && form.Visible && form.WindowState != FormWindowState.Minimized && ClientSize.Width > 0 &&
+            !(overlaysHidden && form is KioskForm); // The Menu opens on the main Kiosk screen.
+        if (!show)
+        {
+            if (AppNative.IsWindowVisible(HostedWindow)) AppNative.ShowWindow(HostedWindow, 0); // SW_HIDE
+            return;
+        }
+        // Owned by the Kiosk window (main screen or another screen) it never falls behind it.
+        if (form!.Handle != overlayOwner) { AppNative.SetWindowLongPtr(HostedWindow, -8, form.Handle); overlayOwner = form.Handle; }
+        var area = RectangleToScreen(ClientRectangle);
+        AppNative.GetWindowRect(HostedWindow, out var r);
+        bool wasVisible = AppNative.IsWindowVisible(HostedWindow);
+        if (!wasVisible || r.Left != area.Left || r.Top != area.Top || r.Right - r.Left != area.Width || r.Bottom - r.Top != area.Height)
+            AppNative.SetWindowPos(HostedWindow, IntPtr.Zero, area.Left, area.Top, area.Width, area.Height,
+                (uint)(0x0010 | 0x0004 | 0x0040 | 0x0020)); // NOACTIVATE | NOZORDER | SHOWWINDOW | FRAMECHANGED
+    }
+
     /// <summary>
     /// Called by the shell a few times per second. Returns false once the application has closed
     /// (its window is gone and no replacement appeared), so the Kiosk window can be removed.
@@ -146,8 +219,9 @@ internal sealed class ApplicationView : Panel
             if (replacement != IntPtr.Zero) { try { Embed(replacement); } catch (Win32Exception) { } }
             else if (ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
         }
-        else if (Visible && !AppNative.IsWindowVisible(HostedWindow))
+        else if (!overlay && Visible && !AppNative.IsWindowVisible(HostedWindow))
             AppNative.ShowWindow(HostedWindow, 5); // An app hiding itself "to the tray" would be lost: the Kiosk has no tray.
+        else if (!overlay) KeepFilled();
         if (Visible && Environment.TickCount64 - dialogsCheckedAt >= 1000)
         {
             dialogsCheckedAt = Environment.TickCount64;
@@ -259,10 +333,45 @@ internal sealed class ApplicationView : Panel
 
     protected override void OnResize(EventArgs e) { base.OnResize(e); ResizeChild(); }
     /// <summary>The Kiosk focusing this view (taskbar, Menu) puts the keyboard into the hosted program.</summary>
-    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); if (HostedWindow != IntPtr.Zero) AppNative.SetFocus(HostedWindow); }
+    protected override void OnGotFocus(EventArgs e)
+    {
+        base.OnGotFocus(e);
+        if (HostedWindow == IntPtr.Zero) return;
+        // A Chromium window is its own top-level window: it is brought forward only when the person picks it
+        // (BringToUser) — taking the foreground here would steal it from the Kiosk's Menu and taskbar.
+        if (!overlay) AppNative.SetFocus(HostedWindow);
+    }
+    /// <summary>The person chose this window (taskbar, Menu): give it the keyboard.</summary>
+    internal void BringToUser()
+    {
+        if (HostedWindow == IntPtr.Zero) return;
+        if (overlay) { SyncOverlay(null, EventArgs.Empty); AppNative.SetForegroundWindow(HostedWindow); }
+        else AppNative.SetFocus(HostedWindow);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (!overlay) return;
+        overlaySync.Enabled = Visible;
+        SyncOverlay(null, EventArgs.Empty);
+    }
     private void ResizeChild()
     {
+        if (overlay) { SyncOverlay(null, EventArgs.Empty); return; }
         if (HostedWindow != IntPtr.Zero) AppNative.MoveWindow(HostedWindow, 0, 0, ClientSize.Width, ClientSize.Height, true);
+    }
+
+    /// <summary>The program cannot change its size or position (maximise, restore, its own resize): it always fills the view.</summary>
+    private void KeepFilled()
+    {
+        if (HostedWindow == IntPtr.Zero) return;
+        var style = AppNative.GetWindowLongPtr(HostedWindow, -16).ToInt64();
+        var locked = style & ~(0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L | 0x01000000L);
+        if (locked != style) AppNative.SetWindowLongPtr(HostedWindow, -16, new IntPtr(locked));
+        if (!AppNative.GetWindowRect(HostedWindow, out var r)) return;
+        var area = RectangleToScreen(ClientRectangle);
+        if (r.Left != area.Left || r.Top != area.Top || r.Right - r.Left != area.Width || r.Bottom - r.Top != area.Height) ResizeChild();
     }
 
     protected override void Dispose(bool disposing)
@@ -271,6 +380,9 @@ internal sealed class ApplicationView : Panel
         {
             // Terminate only this launch and its descendants, never a pre-existing instance.
             if (inputThread != 0) { AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false); inputThread = 0; }
+            overlaySync.Dispose();
+            OverlaysChanged -= OnOverlaysChanged;
+            if (overlay && AppNative.IsWindow(HostedWindow) && !adopted) AppNative.ShowWindow(HostedWindow, 0);
             hostedWindows.Remove(HostedWindow);
             // An adopted window belongs to another view's process: close just this window.
             bool shared = adopted || hostedWindows.Values.Any(view => ReferenceEquals(view.ownershipScope, ownershipScope) && view.OwnsWindow(HostedWindow));
@@ -290,6 +402,7 @@ internal static class AppNative
         out SafeFileHandle target, uint access, bool inherit, uint options);
     [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] internal static extern IntPtr SetFocus(IntPtr window);
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }

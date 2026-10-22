@@ -5,6 +5,10 @@ internal static class SelfTestEntry
     internal static bool TryRun(string[] args, out int testResult)
     {
         testResult = 1;
+        if (args.Length == 2 && args[0] == "--multi-window-fixture")
+        {
+            testResult = MultiWindowFixture.Run(args[1]); return true;
+        }
         if (args.Length == 1 && args[0] == "--benchmark")
         {
             using var benchmark = new KioskForm(new Config());
@@ -31,10 +35,13 @@ internal static class SelfTestEntry
                 {
                     try
                     {
+                        SecuritySelfTests.Run();
                         form.SmokeTest();
                         form.CoreRegressionTests();
                         await form.EmbeddedSmokeTestAsync();
+                        await BrowserLifecycleTests.RunAsync(form);
                         await form.ApplicationSmokeTestAsync();
+                        await form.ApplicationOwnershipTestsAsync();
                         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, settings round-trip, owned application window and session cleanup passed.");
                         result = 0;
                     }

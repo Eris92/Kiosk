@@ -23,6 +23,10 @@ internal sealed class TaskButton : Button
     }
 
     internal bool Primary { get; }
+    /// <summary>Shown instead of the text (icon-only button, e.g. Menu).</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal string? Glyph { get; init; }
+
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Active
     {
@@ -53,7 +57,8 @@ internal sealed class TaskButton : Button
             g.DrawPath(stroke, path);
         }
         var textColor = Primary ? KioskTheme.OnAccent : Enabled ? KioskTheme.Text : KioskTheme.Muted;
-        TextRenderer.DrawText(g, Text, Font, new Rectangle(S(10), 0, Math.Max(0, Width - S(20)), Height), textColor,
+        if (Glyph != null && Text.Length == 0) KioskIcons.Draw(g, new Rectangle(0, S(8), Width, Height - S(16)), Glyph, null, textColor);
+        else TextRenderer.DrawText(g, Text, Font, new Rectangle(S(10), 0, Math.Max(0, Width - S(20)), Height), textColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         if (active)
         {
@@ -69,11 +74,12 @@ internal sealed class TaskButton : Button
 internal sealed class Taskbar : Panel
 {
     private readonly List<TabButton> tasks = new();
+    private readonly ToolTip tips = new() { InitialDelay = 300 };
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
-    private (string Key, string Title)[] taskWindows = [];
+    private (string Key, string Title, string? Glyph, Image? Icon, bool OtherScreen)[] taskWindows = [];
 
-    internal TaskButton MenuButton { get; } = new("☰   Menu", primary: true);
+    internal TaskButton MenuButton { get; } = new("", primary: true) { Glyph = KioskIcons.Menu };
     internal TaskButton LockButton { get; } = new("Zablokuj");
     internal TaskButton LogoutButton { get; } = new("Wyloguj");
     internal TaskButton ExitButton { get; } = new("Zamknij test");
@@ -95,6 +101,8 @@ internal sealed class Taskbar : Panel
         clock.Font = new Font("Segoe UI", 9.5f);
         clock.ForeColor = KioskTheme.Text;
         Controls.AddRange(new Control[] { MenuButton, LockButton, LogoutButton, ExitButton, Status, clock });
+        // A clean bar: Menu, windows and the clock. Lock, sign-out and close live in Menu → System.
+        LockButton.Visible = LogoutButton.Visible = ExitButton.Visible = Status.Visible = false;
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -119,21 +127,26 @@ internal sealed class Taskbar : Panel
     }
 
     /// <summary>Rebuilds window buttons only when the set of windows or the active one changes.</summary>
-    internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active)> windows)
+    /// <param name="windows">OtherScreen: the window is on another screen; its button sits on the right, by the clock.</param>
+    internal void SetTasks(IReadOnlyList<(string Key, string Title, bool Active, string? Glyph, Image? Icon, bool OtherScreen)> windows)
     {
+        // The icon is part of it: a program's own icon is known only once it has started.
         bool changed = windows.Count != taskWindows.Length;
         for (int i = 0; !changed && i < windows.Count; i++)
-            changed = windows[i].Key != taskWindows[i].Key || windows[i].Title != taskWindows[i].Title;
+            changed = windows[i].Key != taskWindows[i].Key || windows[i].Title != taskWindows[i].Title || windows[i].Glyph != taskWindows[i].Glyph ||
+                !ReferenceEquals(windows[i].Icon, taskWindows[i].Icon) || windows[i].OtherScreen != taskWindows[i].OtherScreen;
         if (changed)
         {
-            taskWindows = windows.Select(w => (w.Key, w.Title)).ToArray();
+            taskWindows = windows.Select(w => (w.Key, w.Title, w.Glyph, w.Icon, w.OtherScreen)).ToArray();
             SuspendLayout();
             foreach (var task in tasks) { Controls.Remove(task); task.Dispose(); }
             tasks.Clear();
             foreach (var window in windows)
             {
                 // Same look as a browser tab: title plus its own × close button.
-                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+                // Icon only; the name is in the tooltip. Middle click or the right-click menu closes the window.
+                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold), Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
+                tips.SetToolTip(button, window.Title);
                 var key = window.Key;
                 button.Selected += () => TaskClicked?.Invoke(key);
                 button.CloseRequested += () => TaskCloseRequested?.Invoke(key);
@@ -154,7 +167,7 @@ internal sealed class Taskbar : Panel
     {
         if (clock == null) return;
         int height = Scale(40), top = (Height - height) / 2, gap = Scale(8), margin = Scale(10);
-        MenuButton.SetBounds(margin, top, Measure(MenuButton, 120), height);
+        MenuButton.SetBounds(margin, top, Scale(58), height);
 
         int right = Width - margin;
         int clockWidth = Scale(86);
@@ -167,14 +180,24 @@ internal sealed class Taskbar : Panel
             button.SetBounds(right - width, top, width, height);
             right -= width + gap;
         }
-        int statusWidth = Scale(220);
-        Status.SetBounds(right - statusWidth, top, statusWidth, height);
-        right -= statusWidth + gap;
+        if (Status.Visible)
+        {
+            int statusWidth = Scale(220);
+            Status.SetBounds(right - statusWidth, top, statusWidth, height);
+            right -= statusWidth + gap;
+        }
 
+        int each = Scale(58);
+        // Windows on other screens: on the right, next to the clock (newest nearest the clock).
+        foreach (var task in tasks.Where(t => t.OtherScreen).Reverse())
+        {
+            right -= each;
+            task.SetBounds(right, top, each, height);
+            task.Visible = right > MenuButton.Right;
+            right -= gap;
+        }
         int left = MenuButton.Right + Scale(18);
-        int available = Math.Max(0, right - left);
-        int each = tasks.Count == 0 ? 0 : Math.Min(Scale(230), Math.Max(Scale(90), (available - gap * (tasks.Count - 1)) / tasks.Count));
-        foreach (var task in tasks)
+        foreach (var task in tasks.Where(t => !t.OtherScreen))
         {
             task.SetBounds(left, top, each, height);
             task.Visible = task.Right <= right;
@@ -187,12 +210,12 @@ internal sealed class Taskbar : Panel
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) clockTimer.Dispose();
+        if (disposing) { clockTimer.Dispose(); tips.Dispose(); }
         base.Dispose(disposing);
     }
 }
 
-internal sealed record MenuItemSpec(string Title, string Category, Action Run, bool Enabled = true);
+internal sealed record MenuItemSpec(string Title, string Category, Action Run, bool Enabled = true, string? Glyph = null, Image? Icon = null);
 internal sealed record MenuSection(string Title, IReadOnlyList<MenuItemSpec> Items);
 
 /// <summary>The start-menu popup opened from the taskbar's Menu button.</summary>
@@ -210,6 +233,8 @@ internal sealed class StartMenu : Form
         BackColor = KioskTheme.Border;
         Padding = new Padding(1);
         KeyPreview = true;
+        // Above everything, including programs shown as their own windows over the Kiosk (Edge).
+        TopMost = true;
         Controls.Add(content);
         Deactivate += (_, _) => HideMenu();
         KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) HideMenu(); };
@@ -253,7 +278,7 @@ internal sealed class StartMenu : Form
             for (int i = 0; i < section.Items.Count; i++)
             {
                 var item = section.Items[i];
-                var tile = new MenuTile(item.Title, item.Category) { Enabled = item.Enabled };
+                var tile = new MenuTile(item.Title, item.Category) { Enabled = item.Enabled, Glyph = item.Glyph, IconImage = item.Icon };
                 tile.SetBounds(margin + (i % columns) * (tileWidth + gap), y + (i / columns) * (tileHeight + gap), tileWidth, tileHeight);
                 tile.Click += (_, _) => { HideMenu(); item.Run(); };
                 content.Controls.Add(tile);
@@ -274,7 +299,7 @@ internal sealed class StartMenu : Form
         if (Owner != owner) Owner = owner;
         Show();
         Activate();
-        content.Controls.OfType<MenuTile>().FirstOrDefault(t => t.Enabled)?.Focus();
+        content.Focus(); // No tile looks selected until the keyboard (Tab / arrows) is used.
     }
 }
 
@@ -295,6 +320,13 @@ internal sealed class TabButton : Control
     internal event Action? Selected;
     internal event Action? CloseRequested;
     internal event Action<Point>? MenuRequested;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal string? Glyph { get; init; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Image? IconImage { get; init; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal bool OtherScreen { get; init; }
+    private bool IconOnly => Glyph != null || IconImage != null;
 
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Active
@@ -320,7 +352,7 @@ internal sealed class TabButton : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
-        if (e.Button == MouseButtons.Middle || (e.Button == MouseButtons.Left && CloseBounds.Contains(e.Location))) CloseRequested?.Invoke();
+        if (e.Button == MouseButtons.Middle || (!IconOnly && e.Button == MouseButtons.Left && CloseBounds.Contains(e.Location))) CloseRequested?.Invoke();
         else if (e.Button == MouseButtons.Left) Selected?.Invoke();
         else if (e.Button == MouseButtons.Right) MenuRequested?.Invoke(e.Location);
     }
@@ -337,6 +369,17 @@ internal sealed class TabButton : Control
         using var stroke = new Pen(active ? KioskTheme.AccentLine : KioskTheme.Border);
         g.FillPath(fill, path);
         g.DrawPath(stroke, path);
+        if (IconOnly)
+        {
+            KioskIcons.Draw(g, new Rectangle(S(12), S(7), Width - S(24), Height - S(14)), Glyph, IconImage, KioskTheme.Text);
+            if (active)
+            {
+                int w = Math.Max(S(16), Width / 3);
+                using var underline = new SolidBrush(KioskTheme.AccentLine);
+                g.FillRectangle(underline, (Width - w) / 2, Height - S(4), w, S(3));
+            }
+            return;
+        }
         TextRenderer.DrawText(g, Text, Font, new Rectangle(S(12), 0, Math.Max(0, CloseBounds.Left - S(16)), Height), KioskTheme.Text,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         var close = CloseBounds;

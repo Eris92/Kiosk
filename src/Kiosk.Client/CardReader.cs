@@ -82,7 +82,9 @@ internal sealed class CardReader : IDisposable
             // SCARD_STATE_CHANGED is transient; the upper word event counter is retained.
             var value = states[i].EventState & ~2u;
             if (evaluatedStates[i] != value) changed = true;
-            states[i].CurrentState = value;
+            // Keep SCARD_STATE_UNAWARE for an immediate non-waiting snapshot.
+            // Asking to wait for a change with a zero timeout adds a PC/SC
+            // service round-trip on the common unchanged path on some readers.
             evaluatedStates[i] = value;
         }
         if (!changed) return cachedSnapshot;

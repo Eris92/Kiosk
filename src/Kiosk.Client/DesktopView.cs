@@ -360,6 +360,12 @@ internal sealed class MenuTile : Button
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
     }
 
+    /// <summary>Icon on the left of the tile: the program's own icon, or a glyph of the Windows icon font.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Image? IconImage { get; init; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal string? Glyph { get; init; }
+
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal string Category
     {
@@ -380,13 +386,20 @@ internal sealed class MenuTile : Button
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+        g.Clear(Parent?.BackColor ?? KioskTheme.Surface); // Rounded corners show the menu, not black.
         using var tile = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(12));
         using var fill = new SolidBrush(pressed ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.22) : hovered ? Color.FromArgb(32, 48, 69) : KioskTheme.Surface);
-        using var stroke = new Pen(hovered || Focused ? KioskTheme.AccentLine : KioskTheme.Border);
+        using var stroke = new Pen(hovered || Focused && ShowFocusCues ? KioskTheme.AccentLine : KioskTheme.Border);
         g.FillPath(fill, tile);
         g.DrawPath(stroke, tile);
         var textColor = Enabled ? KioskTheme.Text : KioskTheme.Muted;
         int left = S(17);
+        if (IconImage != null || Glyph != null)
+        {
+            int icon = S(30);
+            KioskIcons.Draw(g, new Rectangle(left, (Height - icon) / 2, icon, icon), Glyph, IconImage, Enabled ? KioskTheme.AccentLine : KioskTheme.Muted);
+            left += icon + S(14);
+        }
         int right = S(17);
         int titleHeight = Math.Max(Font.Height + S(5), S(28));
         int titleTop = category.Length == 0 ? (Height - titleHeight) / 2 : S(17);

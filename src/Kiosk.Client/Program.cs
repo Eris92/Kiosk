@@ -12,6 +12,9 @@ internal static class Program
         if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner));
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
+        if (args.Length == 5 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort) &&
+            int.TryParse(args[3], out var timeout) && bool.TryParse(args[4], out var prompt))
+            return RdpUserHost.Run(args[1], rdpPort, timeout, prompt);
 #if KIOSK_SELF_TEST
         if (SelfTestEntry.TryRun(args, out var testResult)) return testResult;
 #endif
@@ -21,6 +24,12 @@ internal static class Program
             var config = Configuration.Load(path);
             KioskTheme.SetAccent(config.AccentColor);
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
+            // "Uruchom ponownie": the previous copy may still be closing — wait for it a moment.
+            if (!first)
+            {
+                try { first = instance.WaitOne(TimeSpan.FromSeconds(15)); }
+                catch (AbandonedMutexException) { first = true; }
+            }
             if (!first) throw new InvalidOperationException("Kiosk is already running in this session.");
             Application.Run(new KioskForm(config, path));
             return 0;

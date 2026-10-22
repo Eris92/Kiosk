@@ -102,6 +102,9 @@ internal sealed class IdleScreen : Form
         finally { starting = false; }
     }
 
+    /// <summary>Reloads the page (timed refresh); programs keep running.</summary>
+    internal void Reload() { try { web?.CoreWebView2?.Reload(); } catch (Exception ex) { Audit.Write("idle_screen_reload_error", ex.Message); } }
+
     private async Task RestartAppAsync()
     {
         if (restartingApp || disposed) return;

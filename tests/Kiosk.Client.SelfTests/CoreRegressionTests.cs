@@ -40,8 +40,8 @@ internal sealed partial class KioskForm
 
         // Delimiters in user-supplied names must not collide in the taskbar cache.
         using var bar = new Taskbar();
-        bar.SetTasks([("a", "b|c=d", false), ("e", "f", false)]);
-        bar.SetTasks([("a", "b", false), ("c", "d|e=f", true)]);
+        bar.SetTasks([("a", "b|c=d", false, null, null, false), ("e", "f", false, null, null, false)]);
+        bar.SetTasks([("a", "b", false, null, null, false), ("c", "d|e=f", true, null, null, false)]);
         if (!bar.Controls.OfType<TabButton>().Select(t => t.Text).SequenceEqual(new[] { "b", "d|e=f" }))
             throw new InvalidOperationException("Taskbar cache confused different window sets.");
 
