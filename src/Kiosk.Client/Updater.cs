@@ -462,7 +462,7 @@ internal static class Updater
 
     private static void RunSc(string verb)
     {
-        using var sc = Process.Start(new ProcessStartInfo("sc.exe", verb + " " + CardServiceName) { UseShellExecute = false, CreateNoWindow = true })!;
+        using var sc = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), verb + " " + CardServiceName) { UseShellExecute = false, CreateNoWindow = true })!;
         sc.WaitForExit(30000);
         if (verb == "stop") Thread.Sleep(3000);
     }

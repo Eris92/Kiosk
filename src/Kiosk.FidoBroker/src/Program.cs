@@ -200,12 +200,27 @@ namespace FidoRun
         }
         public TraceLog()
         {
-            string directory = Path.Combine(Path.GetTempPath(), "FidoRun");
+            string directory = Path.Combine(LogRoot(), "FidoRun");
             Directory.CreateDirectory(directory);
+            // A folder someone redirected elsewhere (a junction) never receives SYSTEM's log.
+            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException("Log folder is a reparse point: " + directory);
             PathName = Path.Combine(directory, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Process.GetCurrentProcess().Id + ".log");
             writer = new StreamWriter(new FileStream(PathName, FileMode.CreateNew, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
             writer.AutoFlush = true;
         }
+        // As SYSTEM (the Kiosk Card service) never C:\Windows\Temp, where any user can create the FidoRun folder first:
+        // Windows' own SYSTEM temp folder, else next to this program (Program Files, administrators only).
+        internal static string LogRoot()
+        {
+            using (System.Security.Principal.WindowsIdentity self = System.Security.Principal.WindowsIdentity.GetCurrent())
+            {
+                if (!self.IsSystem) return Path.GetTempPath();
+            }
+            string systemTemp = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SystemTemp");
+            if (Directory.Exists(systemTemp)) return systemTemp;
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+        }
+
         public void Write(string message)
         {
             string line = DateTime.UtcNow.ToString("HH:mm:ss.fff") + " " + message.Replace('\r', ' ').Replace('\n', ' ');

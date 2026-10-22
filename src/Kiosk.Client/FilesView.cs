@@ -488,7 +488,10 @@ internal static class FileAssociation
     internal static bool IsProgram(string path) => Programs.Contains(Path.GetExtension(path).ToLowerInvariant());
 
     private static readonly string[] Programs = [".exe", ".com", ".scr", ".pif", ".msi", ".msix", ".appx", ".bat", ".cmd", ".ps1", ".psm1",
-        ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".cpl", ".msc", ".jar", ".application", ".appref-ms"];
+        ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".cpl", ".msc", ".jar", ".application", ".appref-ms",
+        // Files Windows opens in Explorer, a shell window or an installer: a way out of the Kiosk just the same.
+        ".zip", ".cab", ".iso", ".img", ".vhd", ".vhdx", ".library-ms", ".search-ms", ".searchconnector-ms", ".chm", ".settingcontent-ms",
+        ".rdp", ".diagcab", ".msu", ".msp", ".xll", ".appinstaller", ".theme", ".themepack", ".ms-settings", ".website", ".scf", ".inf"];
 
     private static readonly string[] Viewable = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".pdf", ".txt", ".log", ".csv", ".xml", ".json"];
 

@@ -33,35 +33,6 @@ internal static class Program
         if (args.Length is 3 or 4 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2], args.Length == 4 ? args[3] : null);
         if (args.Length == 3 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort)) return RdpUserHost.Run(args[1], rdpPort);
         if (args.Length == 1 && args[0] == FilesHost.Argument) return FilesHost.Run();
-        if (args.Length == 2 && args[0] == "--card-info")
-        {
-            // Diagnostics through the Kiosk Card service (no PIN).
-            var answer = CardService.Call(new CardService.Request { Op = "info", Reader = args[1] });
-            Console.WriteLine(answer.Code + ": " + answer.Message);
-            return answer.Code == 0 ? 0 : 1;
-        }
-        if (args.Length == 2 && args[0] == "--ctap-info")
-        {
-            // Diagnostics: talks FIDO2 to the card in the given reader without a PIN (authenticatorGetInfo).
-            try { using var card = new CtapCard(args[1]); Console.WriteLine(card.Info()); return 0; }
-            catch (Exception ex) { Console.WriteLine(ex.Message); return 1; }
-        }
-        if (args.Length >= 2 && args[0] == "--try-app")
-        {
-            // Diagnostic: host one application exactly as the Kiosk would, to check whether it can be embedded.
-            using var host = new Form { Text = "Kiosk – test aplikacji", Size = new Size(1280, 800), StartPosition = FormStartPosition.CenterScreen };
-            var view = new ApplicationView();
-            host.Controls.Add(view);
-            var timer = new System.Windows.Forms.Timer { Interval = 250 };
-            timer.Tick += (_, _) => { if (view.Started && !view.Refresh()) host.Close(); };
-            host.Shown += async (_, _) =>
-            {
-                try { await view.StartAsync(new ApplicationEntry { Name = "Test", Path = args[1], Arguments = string.Join(" ", args.Skip(2)) }); timer.Start(); }
-                catch (Exception ex) { MessageBox.Show(host, ex.Message, "Test aplikacji"); host.Close(); }
-            };
-            Application.Run(host);
-            return 0;
-        }
         bool selfTest = args.Length > 0 && args[0] == "--self-test";
         try
         {

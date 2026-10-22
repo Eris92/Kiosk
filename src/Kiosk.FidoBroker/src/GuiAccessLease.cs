@@ -53,7 +53,7 @@ namespace FidoRun
         private const string EdgeRendererSid = "S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-924012159-129201922";
         private int references = 1;
         private string sidKey;
-        private readonly string cleanupReport = Path.Combine(Path.GetTempPath(), "FidoRun",
+        private readonly string cleanupReport = Path.Combine(TraceLog.LogRoot(), "FidoRun",
             "gui-access-" + System.Diagnostics.Process.GetCurrentProcess().Id + ".log");
         private GuiAccessLease(Action<string> logger) { log = logger; }
         private sealed class AclLock : IDisposable

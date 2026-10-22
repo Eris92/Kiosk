@@ -195,7 +195,7 @@ internal static class Watchdog
         if (result is not (unchecked((int)0x8010001D) or unchecked((int)0x8010001E))) return;
         if (DateTime.UtcNow - lastScardStart < TimeSpan.FromMinutes(5)) return;
         lastScardStart = DateTime.UtcNow;
-        using var sc = Process.Start(new ProcessStartInfo("sc.exe", "start SCardSvr") { UseShellExecute = false, CreateNoWindow = true })!;
+        using var sc = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), "start SCardSvr") { UseShellExecute = false, CreateNoWindow = true })!;
         sc.WaitForExit(30000);
         Audit.Write("watchdog_restart_scard", "0x" + result.ToString("X8") + " -> sc " + sc.ExitCode);
     }

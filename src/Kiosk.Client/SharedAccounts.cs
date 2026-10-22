@@ -76,8 +76,9 @@ internal static class SharedAccounts
     internal static bool IsInstalledKiosk(string? program)
     {
         if (program == null || !string.Equals(Path.GetFileName(program), "Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase)) return false;
-        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles).TrimEnd('\\') + "\\";
-        return Path.GetFullPath(program).StartsWith(programFiles, StringComparison.OrdinalIgnoreCase);
+        // Exactly the installed Kiosk: another Program Files folder may be writable by users (some programs set it so).
+        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Kiosk", "Kiosk.Client.exe");
+        return string.Equals(Path.GetFullPath(program), installed, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Account Read(string file, string name)
