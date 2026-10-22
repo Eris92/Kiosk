@@ -115,7 +115,10 @@ internal sealed class ApplicationView : Panel
         AppNative.ProcessInfo process;
         if (logon != null)
         {
-            var started = logon.Start(entry.Path, commandLine, directory);
+            // Off the window's thread: the sign-in program or the service may take a while, the Kiosk stays responsive.
+            var path = entry.Path;
+            var started = await Task.Run(() => logon.Start(path, commandLine, directory));
+            if (IsDisposed) { AppNative.TerminateProcess(started.Process, 1); AppNative.CloseHandle(started.Thread); AppNative.CloseHandle(started.Process); job?.Dispose(); job = null; return; }
             process = new AppNative.ProcessInfo { Process = started.Process, Thread = started.Thread };
         }
         else if (!AppNative.CreateProcess(entry.Path, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,

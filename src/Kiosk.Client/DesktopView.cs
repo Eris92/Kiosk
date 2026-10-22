@@ -170,6 +170,14 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The window the card sign-in screen becomes part of (created on first use, on the UI thread).</summary>
     internal IntPtr SignInPlace => signInPlace.Handle;
 
+    /// <summary>The Kiosk took the foreground back: the keyboard goes to the PIN screen when it is shown, not to the Kiosk.</summary>
+    internal void FocusSignIn()
+    {
+        if (!signInPlace.Visible || !signInPlace.IsHandleCreated) return;
+        var screen = AppNative.GetWindow(signInPlace.Handle, 5);   // GW_CHILD: the sign-in program's window
+        if (screen != IntPtr.Zero) AppNative.SetFocus(screen);
+    }
+
     internal event Action? ResumeRequested;
 
     internal DesktopView()

@@ -73,7 +73,8 @@ internal sealed partial class KioskForm
                 _ = RegisterUnknownCardAsync();
                 return;
             }
-            // A fresh sign-in screen follows on the next tick.
+            // A fresh sign-in screen follows after the usual pause (not at once: a screen per tick piled up).
+            signInFailedAt = DateTime.UtcNow;
             Audit.Write("selfservice_card_signin_failed", outcome.Message);
             notice = "Nie udało się zalogować kartą: " + outcome.Message;
             RefreshChrome();

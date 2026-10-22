@@ -97,6 +97,8 @@ internal sealed class Taskbar : Panel
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
     private string taskSignature = "";
+    /// <summary>One font for every task button (a new one per rebuild was never released).</summary>
+    private static readonly Font TaskFont = new("Segoe UI", 10, FontStyle.Bold);
 
     internal TaskButton MenuButton { get; } = new("", primary: true) { Glyph = KioskIcons.Menu };
     internal TaskButton LockButton { get; } = new("Zablokuj");
@@ -167,7 +169,7 @@ internal sealed class Taskbar : Panel
             {
                 // Same look as a browser tab: title plus its own × close button.
                 // Icon only; the name is in the tooltip. Middle click or the right-click menu closes the window.
-                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold), Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
+                var button = new TabButton(window.Title) { Font = TaskFont, Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
                 tips.SetToolTip(button, window.Title);
                 var key = window.Key;
                 button.Selected += () => TaskClicked?.Invoke(key);

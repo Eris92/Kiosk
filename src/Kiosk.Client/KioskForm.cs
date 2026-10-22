@@ -797,7 +797,7 @@ internal sealed partial class KioskForm : Form
             if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1))
             {
                 Audit.Write("main_idle_hidden", MainIdleReason(idle));
-                mainIdle.Hide(); Activate();
+                mainIdle.Hide(); Activate(); desktop.FocusSignIn();
             }
         }
         else if (someone && idle >= (uint)config.IdleAfterSeconds * 1000u)

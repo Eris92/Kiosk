@@ -225,7 +225,8 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     {
         if (secret != null) { Array.Clear(secret); secret = null; }
         token?.Dispose(); token = null;
-        card?.Dispose(); card = null; // Signs the person out: their programs close with it.
+        // Signs the person out: their programs close with it. In the background: the answer can take seconds.
+        if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

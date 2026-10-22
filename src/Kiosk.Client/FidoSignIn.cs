@@ -59,7 +59,7 @@ internal sealed class FidoSignIn : IDisposable
             if (!listening.StartsWith("OK", StringComparison.Ordinal))
             {
                 Audit.Write("fido_prepare_failed", LastError = listening.StartsWith("ERROR ", StringComparison.Ordinal) ? listening[6..] : listening);
-                signIn.Dispose();
+                _ = Task.Run(signIn.Dispose);
                 return null;
             }
             Audit.Write("fido_listening");
@@ -68,7 +68,7 @@ internal sealed class FidoSignIn : IDisposable
         catch (Exception ex)
         {
             Audit.Write("fido_prepare_failed", LastError = ex.Message);
-            signIn.Dispose();
+            _ = Task.Run(signIn.Dispose);
             return null;
         }
     }
@@ -87,10 +87,10 @@ internal sealed class FidoSignIn : IDisposable
     {
         string answer;
         try { answer = await Task.Run(() => Send("wait", 30000, Timeout.Infinite)); }
-        catch (Exception ex) { Dispose(); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
+        catch (Exception ex) { _ = Task.Run(Dispose); return new(null, "Nie udało się połączyć z logowaniem kartą: " + ex.Message); }
         if (!answer.StartsWith("OK ", StringComparison.Ordinal))
         {
-            Dispose();
+            _ = Task.Run(Dispose);   // Not on the window's thread: closing can take seconds.
             return new(null, answer.StartsWith("ERROR ", StringComparison.Ordinal) ? answer[6..] : answer);
         }
         var parts = answer[3..].Split('\t');

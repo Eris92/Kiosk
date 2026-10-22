@@ -297,6 +297,15 @@ internal sealed class BrowserView : UserControl
         PageScripts.Attach(core, kiosk: singlePage && !windowsAccount, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
         core.Settings.AreDevToolsEnabled = false;
+        // A crashed or hung page shows itself again instead of staying blank until someone closes it.
+        core.ProcessFailed += (_, e) =>
+        {
+            Audit.Write("browser_process_failed", e.ProcessFailedKind + " " + e.Reason);
+            if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive or CoreWebView2ProcessFailedKind.FrameRenderProcessExited)
+                try { core.Reload(); } catch (Exception ex) { Audit.Write("browser_reload_failed", ex.Message); }
+            else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+                message.Text = "Przeglądarka została zamknięta przez system. Zamknij to okno i otwórz je ponownie.";
+        };
         // No way out of the Kiosk through the browser: Ctrl+P / Ctrl+S / Ctrl+O open Windows' file dialogs, which can
         // browse and start programs. Reload stays on the toolbar; copy, paste and typing work as before.
         core.Settings.AreBrowserAcceleratorKeysEnabled = false;
