@@ -78,6 +78,7 @@ internal sealed partial class KioskForm : Form
     private DateTime? disconnectedSince;
     private DateTime? shellLockRequestedAt;
     private bool shellUnlockNotified;
+    private bool shellLockNotified;
     private IntPtr shellNotificationHandle;
     private DateTime nextShellNotificationAttempt;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
@@ -833,12 +834,14 @@ internal sealed partial class KioskForm : Form
                 disconnectedSince ??= DateTime.UtcNow;
                 shellLockRequestedAt = null;
                 shellUnlockNotified = false;
+                if (change == WindowsSession.SessionLock) shellLockNotified = true;
             }
             else if (change == WindowsSession.SessionUnlock)
             {
                 shellLockRequestedAt = null;
                 shellCardKey = null;
                 shellUnlockNotified = true;
+                shellLockNotified = false;
                 // Keep the time spent away until ShellTick has enforced the
                 // retention limit, even if its timer did not run while locked.
             }
@@ -875,7 +878,7 @@ internal sealed partial class KioskForm : Form
             return;
         }
         else if (disconnectedSince != null && shellLockRequestedAt == null &&
-                 WindowsSession.CanResume(state, shellUnlockNotified))
+                 WindowsSession.CanResume(state, shellUnlockNotified, shellLockNotified))
         {
             disconnectedSince = null;
             shellCardKey = null;

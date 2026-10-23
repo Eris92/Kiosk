@@ -62,8 +62,9 @@ internal static class WindowsSession
 
     // Some RDS hosts only expose connection state through WTSQuerySessionInformation.
     // Their own unlock notification is sufficient when the queried state is Unknown.
-    internal static bool CanResume(Availability state, bool unlockNotified) =>
-        state == Availability.Active || state == Availability.Unknown && unlockNotified;
+    // After an explicit lock event, a temporarily stale Active query is not an unlock.
+    internal static bool CanResume(Availability state, bool unlockNotified, bool lockNotified) =>
+        !lockNotified && (state == Availability.Active || state == Availability.Unknown && unlockNotified);
 
     /// <summary>Windows' own state, including a locked local console.</summary>
     internal static Availability State()

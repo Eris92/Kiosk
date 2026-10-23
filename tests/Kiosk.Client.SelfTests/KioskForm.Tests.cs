@@ -316,7 +316,13 @@ internal sealed partial class KioskForm
             throw new InvalidOperationException("Windows unlock discarded the retention timer or failed to mark the session resumable.");
         var lockAgain = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionLock), IntPtr.Zero);
         WndProc(ref lockAgain);
-        if (shellUnlockNotified) throw new InvalidOperationException("Windows lock retained a stale unlock notification.");
+        if (shellUnlockNotified || !shellLockNotified ||
+            WindowsSession.CanResume(WindowsSession.Availability.Active, shellUnlockNotified, shellLockNotified))
+            throw new InvalidOperationException("Windows lock accepted a stale active state as an unlock.");
+        var unlockAgain = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionUnlock), IntPtr.Zero);
+        WndProc(ref unlockAgain);
+        if (shellLockNotified || !shellUnlockNotified)
+            throw new InvalidOperationException("Windows unlock did not clear the lock notification.");
         disconnectedSince = null;
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");

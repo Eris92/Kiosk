@@ -10,11 +10,13 @@ internal static class WindowsSessionTests
             WindowsSession.RetentionExpired(locked, locked.AddSeconds(599), 600) ||
             !WindowsSession.RetentionExpired(locked, locked.AddSeconds(600), 600))
             throw new InvalidOperationException("Windows session retention boundary is incorrect.");
-        if (!WindowsSession.CanResume(WindowsSession.Availability.Active, false) ||
-            !WindowsSession.CanResume(WindowsSession.Availability.Unknown, true) ||
-            WindowsSession.CanResume(WindowsSession.Availability.Unknown, false) ||
-            WindowsSession.CanResume(WindowsSession.Availability.Locked, true) ||
-            WindowsSession.CanResume(WindowsSession.Availability.Disconnected, true))
+        if (!WindowsSession.CanResume(WindowsSession.Availability.Active, false, false) ||
+            !WindowsSession.CanResume(WindowsSession.Availability.Unknown, true, false) ||
+            WindowsSession.CanResume(WindowsSession.Availability.Unknown, false, false) ||
+            WindowsSession.CanResume(WindowsSession.Availability.Locked, true, false) ||
+            WindowsSession.CanResume(WindowsSession.Availability.Disconnected, true, false) ||
+            WindowsSession.CanResume(WindowsSession.Availability.Active, false, true) ||
+            WindowsSession.CanResume(WindowsSession.Availability.Unknown, true, true))
             throw new InvalidOperationException("Windows session resumed without an active state or unlock notification.");
     }
 }
