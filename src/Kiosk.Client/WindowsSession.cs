@@ -128,3 +128,26 @@ internal static class WindowsSession
     [DllImport("user32.dll", SetLastError = true)] private static extern bool LockWorkStation();
     [DllImport("secur32.dll", CharSet = CharSet.Unicode)] private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
 }
+
+/// <summary>Throttles asynchronous Windows logoff requests while retaining the first reason.</summary>
+internal sealed class SignOutRetry
+{
+    private const long RetryMilliseconds = 10_000;
+    private long nextAttemptAt;
+    private bool attempted;
+
+    internal string? Reason { get; private set; }
+
+    /// <returns>True when a logoff call was made; failure is populated if that call threw.</returns>
+    internal bool Request(string reason, long nowMilliseconds, Action signOut, out Exception? failure)
+    {
+        Reason ??= reason;
+        failure = null;
+        if (attempted && nowMilliseconds < nextAttemptAt) return false;
+        attempted = true;
+        nextAttemptAt = nowMilliseconds + RetryMilliseconds;
+        try { signOut(); }
+        catch (Exception ex) { failure = ex; }
+        return true;
+    }
+}

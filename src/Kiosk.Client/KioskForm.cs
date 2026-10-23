@@ -6,11 +6,9 @@ using Windows.Security.Credentials.UI;
 namespace Kiosk.Client;
 
 /// <summary>
-/// The kiosk shell for a shared PC: a desktop, one Menu button on the bottom taskbar and embedded
-/// windows (remote desktops, browser, notes, applications). Every card gets its own session.
-/// Removing the card parks the session (windows keep running, hidden); another card gets its own
-/// session at once; reinserting a card brings its session back. Sessions expire after
-/// ChangeUserAfterSeconds of inactivity. Nothing here touches the Windows lock screen.
+/// A desktop with one bottom Menu and embedded remote desktops, browser, notes and applications.
+/// Shared-account mode parks a separate session per card; WindowsShell uses the authenticated
+/// Windows account and locks/disconnects that Windows session when required.
 /// </summary>
 internal sealed partial class KioskForm : Form
 {
@@ -79,16 +77,17 @@ internal sealed partial class KioskForm : Form
     private DateTime? shellLockRequestedAt;
     private bool shellUnlockNotified;
     private bool shellLockNotified;
+    private readonly SignOutRetry shellSignOut = new();
     private IntPtr shellNotificationHandle;
     private DateTime nextShellNotificationAttempt;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
     private string? notice;
     private ChromeState? lastChrome;
     private readonly record struct ChromeState(UserSession? Current, Control? View, bool Locked, bool Verified,
-        bool Verifying, bool RequireRemoval, int Sessions, int Windows, string? Notice, string? SessionNotice,
+        bool Verifying, bool RequireRemoval, bool SigningOut, int Sessions, int Windows, string? Notice, string? SessionNotice,
         string Name, string ReaderStatus);
 
-    private bool CanUseApps => current is { Locked: false };
+    private bool CanUseApps => current is { Locked: false } && shellSignOut.Reason == null;
 
     internal KioskForm(Config config, string? configPath = null)
     {
@@ -137,6 +136,7 @@ internal sealed partial class KioskForm : Form
             if (ShellMode)
             {
                 ShellTick();
+                if (shellSignOut.Reason != null) return;
                 MonitorRdp();
                 MonitorApplications();
                 return;
@@ -864,6 +864,7 @@ internal sealed partial class KioskForm : Form
 
     private void ShellTick()
     {
+        if (shellSignOut.Reason is { } pendingReason) { SignOutWindows(pendingReason); return; }
         var now = DateTime.UtcNow;
         if (shellNotificationHandle == IntPtr.Zero && now >= nextShellNotificationAttempt) TryRegisterShellNotifications();
         var state = WindowsSession.State();
@@ -919,10 +920,27 @@ internal sealed partial class KioskForm : Form
 
     private void SignOutWindows(string reason)
     {
-        Audit.Write(reason, current?.Identity.Name ?? "");
-        closeConfirmed = true;
-        try { WindowsSession.SignOut(); }
-        catch (Exception ex) { closeConfirmed = false; notice = "Nie udało się wylogować z Windows: " + ex.Message; Audit.Write("signout_failed", ex.Message); }
+        bool firstRequest = shellSignOut.Reason == null;
+        if (firstRequest)
+        {
+            Audit.Write(reason, current?.Identity.Name ?? "");
+            closeConfirmed = true;
+            timer.Interval = 1000;
+            notice = null;
+        }
+        if (!shellSignOut.Request(reason, Environment.TickCount64, WindowsSession.SignOut, out var failure)) return;
+        if (failure != null)
+        {
+            notice = "Nie udało się wylogować z Windows: " + failure.Message;
+            Audit.Write("signout_failed", failure.Message);
+        }
+        if (firstRequest && !IsDisposed)
+        {
+            menu.HideMenu();
+            HideTaskMenu();
+            if (visibleView != desktop) ShowView(desktop);
+            else RefreshChrome();
+        }
     }
 
     // ---------------------------------------------------------------- shell chrome
@@ -938,7 +956,7 @@ internal sealed partial class KioskForm : Form
     {
         RefreshHosts();
         var state = new ChromeState(current, visibleView, current?.Locked == true, current?.Verified == true,
-            verifying, requireRemoval, sessions.Count, current?.Windows.Count ?? 0, notice, current?.Notice,
+            verifying, requireRemoval, shellSignOut.Reason != null, sessions.Count, current?.Windows.Count ?? 0, notice, current?.Notice,
             current?.Name ?? "", reader.Status);
         if (lastChrome == state) return;
         lastChrome = state;
@@ -949,7 +967,9 @@ internal sealed partial class KioskForm : Form
         var retention = config.ChangeUserAfterSeconds > 0
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
             : "Sesja czeka na powrót karty aż do wylogowania.";
-        if (current is { Locked: true } locked)
+        if (shellSignOut.Reason != null)
+            desktop.UpdateStatus("Wylogowywanie", notice ?? "Trwa kończenie sesji Windows.");
+        else if (current is { Locked: true } locked)
         {
             var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
             var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
