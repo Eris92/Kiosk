@@ -6,8 +6,8 @@ namespace Kiosk.Client;
 
 /// <summary>
 /// Embedded Edge (WebView2) with tabs and a dark toolbar that matches the Kiosk shell.
-/// All tabs of one person share one InPrivate profile (one sign-in covers every tab);
-/// each person's browser has its own profile, removed when their session closes.
+/// Tabs share a profile. Shared-account card sessions use separate temporary InPrivate profiles;
+/// WindowsShell uses the signed-in Windows user's persistent profile for SSO.
 /// </summary>
 internal sealed class BrowserView : UserControl
 {

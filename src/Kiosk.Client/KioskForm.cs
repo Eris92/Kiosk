@@ -895,10 +895,13 @@ internal sealed partial class KioskForm : Form
             if (now - requested >= TimeSpan.FromSeconds(5)) SignOutWindows("windows_lock_unconfirmed");
             return;
         }
-        var observedCard = reader.Snapshot(config.ReaderName);
-        if (!config.DisconnectOnCardRemoval) shellCardKey = observedCard;
-        else if (shellCardKey == null) shellCardKey = observedCard;
-        else if (observedCard != shellCardKey) { DisconnectWindows("card_removed_or_changed"); return; }
+        if (config.DisconnectOnCardRemoval)
+        {
+            var observedCard = reader.Snapshot(config.ReaderName);
+            if (shellCardKey == null) shellCardKey = observedCard;
+            else if (observedCard != shellCardKey) { DisconnectWindows("card_removed_or_changed"); return; }
+        }
+        else shellCardKey = null;
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
