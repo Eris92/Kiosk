@@ -41,6 +41,8 @@ internal static class SelfTestEntry
         }
         if (args.Length > 0 && args[0] == "--app-host-fixture")
         {
+            if (args.Length == 2 && int.TryParse(args[1], out var delay) && delay is >= 0 and <= 10000)
+                Thread.Sleep(delay);
             using var fixture = new Form { Text = "Kiosk host test", Size = new Size(480, 320) };
             fixture.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, Text = "Hosted application test" });
             Application.Run(fixture);

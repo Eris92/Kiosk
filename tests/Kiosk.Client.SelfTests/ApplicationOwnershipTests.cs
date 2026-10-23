@@ -62,6 +62,15 @@ internal sealed partial class KioskForm
             throw new InvalidOperationException("Closing the second window killed the third window.");
         third.Dispose();
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using (var slow = new ApplicationView(scope))
+        {
+            surface.Controls.Add(slow);
+            ShowView(slow);
+            await slow.StartAsync(entry with { Name = "Slow startup", Arguments = "--app-host-fixture 5500" })
+                .WaitAsync(TimeSpan.FromSeconds(12));
+            if (!slow.Started || slow.HostedWindow == IntPtr.Zero || AppNative.GetParent(slow.HostedWindow) != slow.Handle)
+                throw new InvalidOperationException("A slow application was not embedded after the polling interval increased.");
+        }
         ShowView(desktop);
 
         static HashSet<IntPtr> TopLevelWindows(uint processId)

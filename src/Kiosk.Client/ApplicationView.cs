@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -93,16 +94,16 @@ internal sealed class ApplicationView : Panel
         catch { AppNative.TerminateProcess(process.Process, 1); throw; }
         finally { AppNative.CloseHandle(process.Thread); AppNative.CloseHandle(process.Process); }
 
-        var deadline = DateTime.UtcNow.AddSeconds(30); // Office and Electron apps can take a while.
-        DateTime? handedOver = null;
-        while (!IsDisposed && DateTime.UtcNow < deadline)
+        var launchTimer = Stopwatch.StartNew();
+        TimeSpan? handedOverAt = null;
+        while (!IsDisposed && launchTimer.Elapsed < TimeSpan.FromSeconds(30)) // Office and Electron apps can take a while.
         {
             var window = FindMainWindow();
             if (window != IntPtr.Zero) { Embed(window); return; }
             if (ActiveProcesses() == 0)
             {
                 // The program passed the request to a copy already running in another Kiosk view (e.g. a second Edge window).
-                handedOver ??= DateTime.UtcNow;
+                handedOverAt ??= launchTimer.Elapsed;
                 var handed = FindHandedOverWindow(before);
                 if (handed != IntPtr.Zero)
                 {
@@ -113,10 +114,17 @@ internal sealed class ApplicationView : Panel
                         throw new Win32Exception();
                     job?.Dispose(); job = sharedJob; adopted = true; Embed(handed); return;
                 }
-                if (DateTime.UtcNow - handedOver < TimeSpan.FromSeconds(10)) { await Task.Delay(100); continue; }
+                var handoverElapsed = launchTimer.Elapsed - handedOverAt.Value;
+                if (handoverElapsed < TimeSpan.FromSeconds(10))
+                {
+                    await Task.Delay(handoverElapsed < TimeSpan.FromSeconds(1) ? 100 : 250);
+                    continue;
+                }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
             }
-            await Task.Delay(50);
+            // Fast launches retain the 50 ms response; slow launches stop enumerating every desktop window 20 times/s.
+            await Task.Delay(launchTimer.Elapsed < TimeSpan.FromSeconds(1) ? 50 :
+                launchTimer.Elapsed < TimeSpan.FromSeconds(5) ? 100 : 250);
         }
         if (!IsDisposed) throw new InvalidOperationException("Brak zgodnego okna aplikacji. Program może używać istniejącej instancji, wymagać administratora lub nie obsługiwać osadzania.");
     }
