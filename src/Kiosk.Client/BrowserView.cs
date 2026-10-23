@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -30,6 +31,7 @@ internal sealed class BrowserView : UserControl
     private readonly List<Tab> tabs = new();
     private Tab? active;
     private CoreWebView2Environment? environment;
+    private uint browserProcessId;
     private Task? initialization;
     private bool disposed;
     private string homeUrl = "about:blank";
@@ -61,6 +63,9 @@ internal sealed class BrowserView : UserControl
     /// <summary>The page in the active tab.</summary>
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
+#if KIOSK_SELF_TEST
+    internal string ProfileFolder => userDataFolder;
+#endif
 
     internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false)
     {
@@ -221,6 +226,7 @@ internal sealed class BrowserView : UserControl
             await web.EnsureCoreWebView2Async(environment, options);
             if (disposed || web.IsDisposed || !tabs.Contains(tab)) return null;
             var core = web.CoreWebView2;
+            browserProcessId = core.BrowserProcessId;
             core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
             core.Settings.AreDevToolsEnabled = false;
             // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.
@@ -407,11 +413,7 @@ internal sealed class BrowserView : UserControl
                 if (!Guid.TryParseExact(Path.GetFileName(folder), "N", out _) || liveProfiles.ContainsKey(folder)) continue;
                 try
                 {
-                    // Only folders created by this browser code are eligible. An active view keeps
-                    // the marker exclusively open, including when another Kiosk process is running.
-                    if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0 ||
-                        File.ReadAllText(Path.Combine(folder, ProfileMarkerName)) != ProfileMarkerText) continue;
-                    Directory.Delete(folder, recursive: true);
+                    DeleteOwnedProfile(folder);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
@@ -422,10 +424,69 @@ internal sealed class BrowserView : UserControl
         }
     }
 
+    private static bool DeleteOwnedProfile(string folder)
+    {
+        // The marker is the ownership proof and the cross-process lock. Keep it until
+        // every browser file has gone: recursive deletion can fail halfway through
+        // while WebView2 still holds a file, and a later pass must recognize the folder.
+        if (!Guid.TryParseExact(Path.GetFileName(folder), "N", out _) ||
+            (File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) return false;
+        var markerPath = Path.Combine(folder, ProfileMarkerName);
+        if (!File.Exists(markerPath)) return false;
+        if ((File.GetAttributes(markerPath) & FileAttributes.ReparsePoint) != 0) return false;
+        using (var marker = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            using var reader = new StreamReader(marker, System.Text.Encoding.UTF8, true, 1024, leaveOpen: true);
+            if (reader.ReadToEnd() != ProfileMarkerText) return false;
+            DeleteProfileContents(folder, markerPath);
+        }
+        File.Delete(markerPath);
+        Directory.Delete(folder);
+        return true;
+    }
+
+    private static void DeleteProfileContents(string directory, string markerPath)
+    {
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        {
+            if (string.Equals(path, markerPath, StringComparison.OrdinalIgnoreCase)) continue;
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Katalog profilu przeglądarki zawiera przekierowanie.");
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                DeleteProfileContents(path, markerPath);
+                Directory.Delete(path);
+            }
+            else File.Delete(path);
+        }
+    }
+
+    private static bool BrowserProcessRunning(uint processId)
+    {
+        if (processId > int.MaxValue) return true;
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException) { return false; }
+        catch (InvalidOperationException) { return false; }
+        catch (System.ComponentModel.Win32Exception) { return true; }
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing && disposed) return;
         if (disposing) disposed = true; // Stop async continuations before disposing their WebView controls.
+        var knownBrowserProcessId = browserProcessId;
+        Task? browserExited = null;
+        if (disposing && !windowsAccount && environment != null)
+        {
+            var exited = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            environment.BrowserProcessExited += (_, e) => { if (knownBrowserProcessId == 0 || e.BrowserProcessId == knownBrowserProcessId) exited.TrySetResult(true); };
+            browserExited = exited.Task;
+        }
         base.Dispose(disposing);
         if (!disposing || windowsAccount) return; // A Windows user's own profile stays, like a normal browser.
         // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
@@ -442,18 +503,27 @@ internal sealed class BrowserView : UserControl
                 try { await pendingInitialization; }
                 catch (Exception) { }
             }
-            marker?.Dispose();
             try
             {
+                // Keep the marker locked until WebView2 releases its folder. If the
+                // notification is missed, the OS process state supplies the fallback.
+                if (browserExited != null && knownBrowserProcessId != 0)
+                {
+                    while (!browserExited.IsCompleted && BrowserProcessRunning(knownBrowserProcessId))
+                        await Task.WhenAny(browserExited, Task.Delay(5000));
+                }
+                else if (browserExited != null) await Task.WhenAny(browserExited, Task.Delay(5000));
+                if (browserExited == null && pendingInitialization != null) await Task.Delay(5000);
+                marker?.Dispose();
                 for (int attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
                 {
-                    try { Directory.Delete(folder, true); }
+                    try { if (!DeleteOwnedProfile(folder)) break; }
                     catch (IOException) { await Task.Delay(1000); }
                     catch (UnauthorizedAccessException) { await Task.Delay(1000); }
                 }
                 if (Directory.Exists(folder)) Audit.Write("browser_profile_cleanup_deferred", Path.GetFileName(folder));
             }
-            finally { liveProfiles.TryRemove(folder, out _); }
+            finally { marker?.Dispose(); liveProfiles.TryRemove(folder, out _); }
         });
     }
 }
