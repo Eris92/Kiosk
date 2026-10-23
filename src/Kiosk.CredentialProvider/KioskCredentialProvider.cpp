@@ -20,7 +20,6 @@ static const wchar_t DefaultInner[] = L"{F8A1793B-7873-4046-B2A7-1F318747F427}";
 static const wchar_t SettingsKey[] = L"SOFTWARE\\Kiosk\\CredentialProvider";
 
 static LONG g_objects = 0, g_locks = 0;
-static HINSTANCE g_module = nullptr;
 
 static void ReadSetting(const wchar_t* name, wchar_t* value, DWORD chars, const wchar_t* fallback)
 {
@@ -373,6 +372,6 @@ STDAPI DllCanUnloadNow() { return g_objects == 0 && g_locks == 0 ? S_OK : S_FALS
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
 {
-    if (reason == DLL_PROCESS_ATTACH) { g_module = instance; DisableThreadLibraryCalls(instance); }
+    if (reason == DLL_PROCESS_ATTACH) DisableThreadLibraryCalls(instance);
     return TRUE;
 }

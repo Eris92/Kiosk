@@ -29,8 +29,6 @@ internal static class CardVault
 
     internal sealed record Result(UserLogon? Logon, int Code, string Message);
 
-    internal static bool Available => true;
-
     private static string FileFor(string cardId)
     {
         var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Cards");

@@ -92,9 +92,10 @@ if ($PSCmdlet.ShouldProcess($TileImage, 'draw tile picture')) {
     Set-KioskDirectoryAcl (Split-Path -Parent $TileImage) -UsersRead
     if (Test-Path -LiteralPath $TileImage) { Set-KioskFileAcl $TileImage -UsersRead }
     $size = 448
-    $bitmap = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $bitmap = $null; $graphics = $null; $pen = $null; $card = $null; $brush = $null
     try {
+        $bitmap = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.SmoothingMode = 'AntiAlias'
         $graphics.Clear([System.Drawing.Color]::FromArgb(24, 35, 54))
         $accent = [System.Drawing.ColorTranslator]::FromHtml($AccentColor)
@@ -104,10 +105,15 @@ if ($PSCmdlet.ShouldProcess($TileImage, 'draw tile picture')) {
         $card.AddArc($x, $y, $r, $r, 180, 90); $card.AddArc($x + $w - $r, $y, $r, $r, 270, 90)
         $card.AddArc($x + $w - $r, $y + $h - $r, $r, $r, 0, 90); $card.AddArc($x, $y + $h - $r, $r, $r, 90, 90); $card.CloseFigure()
         $graphics.DrawPath($pen, $card)
-        $graphics.FillRectangle((New-Object System.Drawing.SolidBrush $accent), $x + 46, $y + 58, 74, 58)
+        $brush = New-Object System.Drawing.SolidBrush $accent
+        $graphics.FillRectangle($brush, $x + 46, $y + 58, 74, 58)
         $bitmap.Save($TileImage, [System.Drawing.Imaging.ImageFormat]::Bmp)
     }
-    finally { $graphics.Dispose(); $bitmap.Dispose() }
+    finally {
+        foreach ($resource in @($brush, $card, $pen, $graphics, $bitmap)) {
+            if ($null -ne $resource) { $resource.Dispose() }
+        }
+    }
     Set-KioskFileAcl $TileImage -UsersRead
 }
 

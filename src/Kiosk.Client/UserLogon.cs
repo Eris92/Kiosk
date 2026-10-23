@@ -21,8 +21,6 @@ internal sealed class UserLogon : IDisposable
 
     /// <summary>The account as Windows shows it, e.g. AzureAD\JanKowalski.</summary>
     internal string DisplayName { get; }
-    /// <summary>The login typed in the dialog (UPN or DOMAIN\user), for RDP.</summary>
-    internal string Login => domain == null ? user : domain + "\\" + user;
 
     private UserLogon(string user, string? domain, char[] password, int length, string displayName)
     {
@@ -44,9 +42,6 @@ internal sealed class UserLogon : IDisposable
     internal string User => user;
     internal string Sid { get; private set; } = "";
     internal bool IsAdministrator { get; private set; }
-    /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
-    internal string? ProfileDirectory =>
-        Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
     internal string? Domain => domain;
 
     /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
