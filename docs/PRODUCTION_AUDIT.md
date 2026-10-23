@@ -24,6 +24,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 - Sesje rozróżniają blokadę, odłożenie i wylogowanie; czas zachowania jest egzekwowany także po powrocie z blokady Windows. Na konsoli używany jest `LockWorkStation`, w sesji zdalnej rozłączenie WTS; brak potwierdzenia blokady powoduje próbę wylogowania.
 - Kontrolka RDP stosuje zaufanie serwera/NLA, wybór metody i ustawienie pytania o poświadczenia. Przekierowanie karty jest włączone tylko dla profilu `SmartCard`. Każdy profil ma własną instancję kontrolki; pomocniczy proces zachowuje wybraną metodę i nazwę użytkownika.
 - Przeglądarka, Notatnik i zgodne okna Win32 są w obszarze Kiosku. Osadzanie programu nie obejmuje dowolnej aplikacji Store/UWP, podniesionych okien ani każdej dodatkowej ramki/dialogu; zgodność konkretnego EXE wymaga testu.
+- Polecenia uruchamiane z menu należą do sesji karty; jej zakończenie zamyka całą grupę procesów polecenia. Test uruchamia proces potomny i sprawdza zamknięcie obu procesów.
 - Skrypty instalacji zapisują stan do wycofania, nie dotykają już działających sesji i ograniczają ścieżki oraz ACL konfiguracji i dzienników. Pakowanie bierze tylko jawnie dozwolone pliki, sprawdza hash każdego składnika i opcjonalnie weryfikuje podpis. Źródłowe testy są oddzielone od binariów produkcyjnych.
 
 ## Dowody lokalne

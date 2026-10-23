@@ -39,6 +39,7 @@ Jeżeli potrzebny jest osobny skonfigurowany katalog testowy:
 | `Bookmarks`, `BrowserUrl` | Nazwane adresy HTTP/HTTPS i strona startowa przeglądarki. |
 | `BrowserOnlyBookmarks`, `BrowserAllowedDomains` | Ograniczenie nawigacji do domen zakładek i dodatkowych dozwolonych domen; logowanie SSO może wymagać dopisania domen dostawcy tożsamości. |
 | `Applications` | Unikalna nazwa, pełna ścieżka EXE, argumenty i opcjonalny katalog roboczy; `kiosk:notatnik` oznacza wbudowany edytor. |
+| `Commands` | Polecenia EXE/CMD/BAT/PS1 uruchamiane z menu w tle. `AsUser` wymaga zalogowania danej osoby w trybie Kiosk; proces i jego potomkowie kończą się z sesją. |
 | `IdleScreens`, `IdleAfterSeconds` | Treści stron/aplikacji na monitorach i czas powrotu ekranu głównego do treści podczas braku aktywnego użytkownika. |
 | `TestMode` | Dostępność funkcji testowych/wyjścia; pełny ekran sam w sobie nie ogranicza funkcji systemu Windows. |
 

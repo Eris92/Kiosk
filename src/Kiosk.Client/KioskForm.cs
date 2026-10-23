@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Windows.Security.Credentials.UI;
 
 namespace Kiosk.Client;
@@ -37,7 +38,7 @@ internal sealed partial class KioskForm : Form
         internal bool AutoConnected { get; set; }
         internal DateTime InactiveSince { get; set; } = DateTime.UtcNow;
         internal string? Notice { get; set; }
-        internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0;
+        internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0 || CommandJobs.Count > 0;
         /// <summary>True only for the authenticated Windows shell identity, never a claimed certificate UPN.</summary>
         internal bool IsWindowsAdmin { get; set; }
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
@@ -51,6 +52,7 @@ internal sealed partial class KioskForm : Form
         internal bool ScreensRetryOnUnlock { get; set; }
         internal bool Closed { get; set; }
         internal CancellationTokenSource Lifetime { get; } = new();
+        internal HashSet<SafeFileHandle> CommandJobs { get; } = new();
         internal bool AdminCertificateVerified { get; set; }
     }
 
@@ -449,6 +451,8 @@ internal sealed partial class KioskForm : Form
     {
         session.Closed = true;
         session.Lifetime.Cancel();
+        foreach (var job in session.CommandJobs.ToArray()) job.Dispose();
+        session.CommandJobs.Clear();
         if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
@@ -1014,45 +1018,21 @@ internal sealed partial class KioskForm : Form
             ".cmd" or ".bat" => (Path.Combine(system, "cmd.exe"), "/c \"\"" + command.Path + "\" " + command.Arguments + "\""),
             _ => (command.Path, command.Arguments)
         };
-        var line = "\"" + program + "\" " + arguments;
         var directory = Path.GetDirectoryName(command.Path);
         Audit.Write("command_started", command.Name);
         notice = "Polecenie „" + command.Name + "” działa…";
         RefreshChrome();
         try
         {
-            int code;
-            if (logon != null)
-            {
-                var (process, thread) = logon.Start(program, line, directory, show: 0); // SW_HIDE
-                try
-                {
-                    if (AppNative.ResumeThread(thread) == uint.MaxValue)
-                    {
-                        int error = Marshal.GetLastWin32Error();
-                        AppNative.TerminateProcess(process, 1);
-                        throw new Win32Exception(error);
-                    }
-                    await WaitForProcessAsync(process, session.Lifetime.Token);
-                    if (!GetExitCodeProcess(process, out var exit)) throw new Win32Exception(Marshal.GetLastWin32Error());
-                    code = unchecked((int)exit);
-                }
-                finally { AppNative.CloseHandle(thread); AppNative.CloseHandle(process); }
-            }
-            else
-            {
-                var start = new System.Diagnostics.ProcessStartInfo(program, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = directory ?? "" };
-                using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Nie można uruchomić programu.");
-                await process.WaitForExitAsync(session.Lifetime.Token);
-                code = process.ExitCode;
-            }
+            int code = await SessionCommand.RunAsync(program, arguments, directory, logon,
+                session.CommandJobs, session.Lifetime.Token);
             Audit.Write("command_finished", command.Name + ": " + code);
             if (session.Closed || current != session || IsDisposed) return;
             notice = "Polecenie „" + command.Name + "” " + (code == 0 ? "zakończone." : "zakończone z kodem " + code + ".");
         }
         catch (OperationCanceledException) when (session.Closed || IsDisposed)
         {
-            Audit.Write("command_detached", command.Name);
+            Audit.Write("command_stopped", command.Name);
             return;
         }
         catch (Exception ex)
@@ -1063,23 +1043,6 @@ internal sealed partial class KioskForm : Form
         }
         if (!IsDisposed) RefreshChrome();
     }
-
-    private sealed class ProcessWaitHandle : WaitHandle
-    {
-        internal ProcessWaitHandle(IntPtr process) =>
-            SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(process, ownsHandle: false);
-    }
-
-    private static async Task WaitForProcessAsync(IntPtr process, CancellationToken cancellation)
-    {
-        using var wait = new ProcessWaitHandle(process);
-        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var registration = ThreadPool.RegisterWaitForSingleObject(wait, (_, _) => completed.TrySetResult(), null, Timeout.Infinite, true);
-        try { await completed.Task.WaitAsync(cancellation); }
-        finally { registration.Unregister(null); }
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 
     /// <summary>Menu → Zamknij: close the Kiosk or start it again (same program, same configuration).</summary>
     private void AskCloseOrRestart()

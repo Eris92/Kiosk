@@ -70,10 +70,7 @@ internal sealed class ApplicationView : Panel
         ProgramPath = Path.GetFullPath(entry.Path);
         _ = Handle;
         var before = WindowsOfHostedProcesses();
-        job = AppNative.CreateJobObject(IntPtr.Zero, null);
-        if (job.IsInvalid) throw new Win32Exception();
-        var limits = new AppNative.JobLimits { Basic = new AppNative.BasicLimits { Flags = 0x2000 } }; // KILL_ON_JOB_CLOSE
-        if (!AppNative.SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<AppNative.JobLimits>())) throw new Win32Exception();
+        job = AppNative.CreateKillOnCloseJob();
         // SW_SHOWNOACTIVATE: the window starts normally shown (SW_HIDE or a minimised start makes some apps,
         // e.g. KeePass with "minimize to tray", hide themselves or stay blank). It is adopted within ~50 ms.
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = 4 };
@@ -421,6 +418,20 @@ internal sealed class ApplicationView : Panel
 
 internal static class AppNative
 {
+    internal static SafeFileHandle CreateKillOnCloseJob()
+    {
+        var job = CreateJobObject(IntPtr.Zero, null);
+        if (job.IsInvalid) { job.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        var limits = new JobLimits { Basic = new BasicLimits { Flags = 0x2000 } }; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<JobLimits>()))
+        {
+            var error = new Win32Exception(Marshal.GetLastWin32Error());
+            job.Dispose();
+            throw error;
+        }
+        return job;
+    }
+
     [DllImport("kernel32.dll")] internal static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool DuplicateHandle(IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess,
