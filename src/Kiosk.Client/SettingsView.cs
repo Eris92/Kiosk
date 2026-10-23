@@ -4,8 +4,8 @@ internal sealed class SettingsView : UserControl
 {
     private static readonly (RdpAuthentication Value, string Label)[] AuthenticationOptions =
     [
-        (RdpAuthentication.SmartCard, "Karta inteligentna (PIN)"),
-        (RdpAuthentication.WindowsCurrentUser, "Windows Hello / bieżący użytkownik"),
+        (RdpAuthentication.SmartCard, "Karta inteligentna (certyfikat)"),
+        (RdpAuthentication.WindowsCurrentUser, "Bieżące konto Windows (Remote Credential Guard)"),
         (RdpAuthentication.EntraId, "Microsoft Entra ID")
     ];
     private const string NoAutoConnect = "(nie łącz automatycznie)";
@@ -103,7 +103,7 @@ internal sealed class SettingsView : UserControl
         connections.DataError += (_, e) => e.ThrowException = false;
         SetupGridTab(remote, connections,
             "Każde połączenie pojawia się w Menu. Logowanie Entra ID wymaga pełnej nazwy DNS komputera. " +
-            "Karta uwierzytelnia konto przypisane do jej certyfikatu; Windows Hello potwierdza bieżące konto Windows. Metodę musi obsługiwać serwer.");
+            "Karta używa certyfikatu i mapowania konta na serwerze. Remote Credential Guard używa zalogowanego konta Windows; samo Hello nie loguje do RDP. Metodę musi obsługiwać serwer.");
 
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));

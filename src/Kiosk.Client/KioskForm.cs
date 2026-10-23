@@ -981,7 +981,7 @@ internal sealed partial class KioskForm : Form
 
     private static string AuthenticationLabel(RdpAuthentication authentication) => authentication switch
     {
-        RdpAuthentication.WindowsCurrentUser => "Windows Hello / bieżący użytkownik",
+        RdpAuthentication.WindowsCurrentUser => "Bieżące konto Windows (Remote Credential Guard)",
         RdpAuthentication.EntraId => "Microsoft Entra ID",
         _ => "Karta inteligentna"
     };

@@ -11,10 +11,12 @@ Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie 
 | Stanowisko | Tożsamość lokalnych procesów w `WindowsShell` | Profil RDP do sprawdzenia w środowisku |
 | --- | --- | --- |
 | Konto lokalne, Windows Hello | Token zalogowanego konta lokalnego | Zdalne poświadczenia wymagają własnej konfiguracji; Hello lokalnego konta nie mapuje go automatycznie do RDS. |
-| Konto domenowe, certyfikat lub Hello | Token zalogowanego konta domenowego | `SmartCard` przekierowuje kartę; `WindowsCurrentUser` włącza Remote Credential Guard. Serwer, AD/PKI i polityki muszą zaakceptować metodę. |
+| Konto domenowe, certyfikat lub Hello | Token zalogowanego konta domenowego | `SmartCard` przekierowuje kartę; `WindowsCurrentUser` włącza Remote Credential Guard dla bieżącego konta Windows. Serwer, AD/PKI i polityki muszą zaakceptować metodę. |
 | Konto Entra, Hello | Token zalogowanego konta Entra | `EntraId` wymaga FQDN oraz wspieranej konfiguracji klienta i hosta. Faktyczną tożsamość sprawdza się po stronie serwera. |
 
 `WindowsShell` uruchamia Kiosk i lokalne EXE jako osobę zalogowaną do Windows. RDP uruchomione w osobnym procesie po funkcji „Zaloguj” również używa uwierzytelnionego tokenu tej osoby i zachowuje ustawioną metodę RDP. Wspólna sesja `Kiosk` bez osobnego logowania pozostaje pod kontem Windows uruchamiającym Kiosk. Odczyt certyfikatu/UPN z karty, UID, sama obecność karty i potwierdzenie Hello bieżącej sesji nie stanowią dowodu, że karta należy do tego tokenu. Karta bez certyfikatu PIV nie staje się kartą RDP.
+
+`Test-Prerequisites.ps1` raportuje dołączenie urządzenia oraz `NgcSet`/`AzureAdPrt` dla konta uruchamiającego skrypt. Wynik służy do doboru scenariusza testowego; nie stwierdza, że Windows Hello, karta lub sesja RDP uwierzytelniły tę samą osobę. Etykieta `WindowsCurrentUser` w aplikacji wskazuje Remote Credential Guard zamiast sugerować, że sam PIN Hello jest metodą zdalnego logowania.
 
 PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym kluczem certyfikatu; uprawnienie administracyjne z `cert:` wymaga takiego dowodu. `RequireCredentialPrompt` steruje oknem poświadczeń kontrolki RDP; Windows lub karta mogą użyć własnej pamięci poświadczeń. Ta opcja nie gwarantuje nowego żądania PIN przy każdym połączeniu. Logowanie Windows Hello i jego zasady PIN należą do Windows/organizacji.
 
