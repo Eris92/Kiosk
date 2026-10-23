@@ -13,6 +13,7 @@ param(
     [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install the .NET 10 SDK.' }
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $destination = [IO.Path]::GetFullPath($OutputPath).TrimEnd('\')
@@ -44,6 +45,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed; the previous build was retained.' }
     Copy-Item -LiteralPath $configSource -Destination (Join-Path $staging 'client.json')
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'Kiosk.Client.exe') -PathType Leaf)) { throw 'Publish did not produce Kiosk.Client.exe.' }
+    Assert-KioskClientConfig (Join-Path $staging 'Kiosk.Client.exe') (Join-Path $staging 'client.json')
     if (Test-Path -LiteralPath $destination) { Move-Item -LiteralPath $destination -Destination $previous }
     try { Move-Item -LiteralPath $staging -Destination $destination; $published = $true }
     catch {

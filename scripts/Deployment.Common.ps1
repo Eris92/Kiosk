@@ -32,6 +32,24 @@ function Assert-KioskCardServiceReady {
     }
 }
 
+function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath) {
+    $report = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-validation-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    $arguments = '--validate-config "{0}" "{1}"' -f $ConfigPath, $report
+    $process = Start-Process -FilePath $Executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    try {
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            $process.WaitForExit(5000) | Out-Null
+            throw 'Client configuration validation timed out.'
+        }
+        $detail = if (Test-Path -LiteralPath $report) { [IO.File]::ReadAllText($report) } else { 'The client did not return a validation report.' }
+        if ($process.ExitCode -ne 0 -or $detail -ne 'OK') { throw "Client configuration validation failed: $detail" }
+    } finally {
+        $process.Dispose()
+        if (Test-Path -LiteralPath $report) { Remove-Item -LiteralPath $report -Force }
+    }
+}
+
 function Get-KioskClientSource {
     $root = Split-Path -Parent $PSScriptRoot
     if (Test-Path -LiteralPath (Join-Path $root 'src\Kiosk.Client\Kiosk.Client.csproj')) { return Join-Path $root 'out\client' }

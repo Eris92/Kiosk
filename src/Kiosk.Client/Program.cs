@@ -8,6 +8,22 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // Deployment validates the exact candidate configuration without opening a desktop window.
+        if (args.Length == 3 && args[0] == "--validate-config")
+        {
+            try
+            {
+                Configuration.Load(args[1]);
+                File.WriteAllText(args[2], "OK");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                try { File.WriteAllText(args[2], ex.Message); }
+                catch (Exception) { } // The nonzero exit code still rejects installation.
+                return 1;
+            }
+        }
         // The Windows service has no desktop; dispatch it before WinForms setup.
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         ApplicationConfiguration.Initialize();

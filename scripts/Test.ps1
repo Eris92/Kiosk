@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param([int]$TimeoutSeconds = 120)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 & (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
 if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
@@ -19,6 +20,19 @@ try {
     Get-Content -LiteralPath $result
     if ($process.ExitCode -ne 0) { throw "Embedded UI self-test failed: $($process.ExitCode)." }
 } finally { $process.Dispose() }
+$invalidConfig = Join-Path $directory 'invalid-client.json'
+try {
+    [IO.File]::WriteAllText($invalidConfig, '{"BrowserUrl":"file:///C:/Windows"}')
+    $rejected = $false
+    try { Assert-KioskClientConfig (Join-Path $directory 'Kiosk.Client.exe') $invalidConfig }
+    catch {
+        if ($_.Exception.Message -notmatch 'Client configuration validation failed:.*HTTP/HTTPS') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'The deployment preflight accepted an invalid browser URL.' }
+} finally {
+    if (Test-Path -LiteralPath $invalidConfig) { Remove-Item -LiteralPath $invalidConfig -Force }
+}
 $service = Start-Process -FilePath (Join-Path $directory 'Kiosk.Client.exe') -ArgumentList '--card-service' -WorkingDirectory $directory -WindowStyle Hidden -PassThru
 try {
     if (-not $service.WaitForExit(10000)) { $service.Kill(); throw 'Service-mode entry did not return outside the Windows Service Control Manager.' }

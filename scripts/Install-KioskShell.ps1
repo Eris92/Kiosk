@@ -108,16 +108,27 @@ if ($Uninstall) {
 }
 if (-not $SourcePath) { $SourcePath = Get-KioskClientSource }
 $source = (Resolve-Path -LiteralPath $SourcePath).ProviderPath
-if (-not (Test-Path -LiteralPath (Join-Path $source 'Kiosk.Client.exe') -PathType Leaf)) { throw 'Publish the production client first.' }
+$sourceExe = Join-Path $source 'Kiosk.Client.exe'
+if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) { throw 'Publish the production client first.' }
 $edition = (Get-CimInstance Win32_OperatingSystem).Caption
 if ($Method -eq 'Auto') { $Method = if ($edition -match 'Enterprise|Education|IoT') { 'ShellLauncher' } else { 'DefaultProfile' } }
 $configSource = if (Test-Path -LiteralPath $ConfigPath) { $ConfigPath } else { $SourceConfig }
-Get-Content -LiteralPath $configSource -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+$json = Get-Content -LiteralPath $configSource -Raw -Encoding UTF8 | ConvertFrom-Json
+$json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
+$json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
+$candidateJson = $json | ConvertTo-Json -Depth 16
 $release = Join-Path $InstallPath ('ClientVersions\release-' + [Guid]::NewGuid().ToString('N'))
 $exe = Join-Path $release 'Kiosk.Client.exe'
 $shellCommand = '"{0}" "{1}"' -f $exe, [IO.Path]::GetFullPath($ConfigPath)
 Write-Output "Windows: $edition; method: $Method"
 if (-not $PSCmdlet.ShouldProcess($InstallPath, 'copy an isolated client version and configure the shell for future sign-ins')) { return }
+$candidate = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-shell-config-' + [Guid]::NewGuid().ToString('N') + '.json')
+try {
+    [IO.File]::WriteAllText($candidate, $candidateJson, [Text.UTF8Encoding]::new($false))
+    Assert-KioskClientConfig $sourceExe $candidate
+} finally {
+    if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
+}
 $journal = Journal
 if ($journal.State.Method -and $journal.State.Method -ne $Method) { throw 'Uninstall the recorded shell method before changing installation methods.' }
 $journal.State.Method = $Method
@@ -128,10 +139,7 @@ Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -ne 'client.j
 $directory = Split-Path -Parent $ConfigPath
 Set-KioskDirectoryAcl $directory -UsersRead
 if (Test-Path -LiteralPath $ConfigPath) { Set-KioskFileAcl $ConfigPath -UsersRead }
-$json = Get-Content -LiteralPath $configSource -Raw -Encoding UTF8 | ConvertFrom-Json
-$json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
-$json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
-$json | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+$candidateJson | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
 Set-KioskFileAcl $ConfigPath -UsersRead
 if ($Method -eq 'ShellLauncher') {
     $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-EmbeddedShellLauncher
