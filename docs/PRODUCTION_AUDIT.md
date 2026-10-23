@@ -39,6 +39,8 @@ Mikropomiar `--benchmark` na tym samym stanowisku (po rozgrzaniu, trzy przebiegi
 
 To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się również wersją .NET. Zmiana paska zmniejszyła koszt powtarzanego odświeżania. W tych pomiarach czytnik nie wykazał wiarygodnej poprawy czasu, choć topologia jest obecnie sprawdzana rzadziej przy aktywnej liście czytników.
 
+Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. Pobrany artefakt z udanego CI dla rewizji a5b5efd przeszedł ponowną kontrolę pełnego składu po zaostrzeniu reguł. Próba ponownej kompilacji natywnej DLL na tej stacji kończy się brakiem Visual Studio Build Tools; pełny pakiet musi ponownie przejść CI Windows. Paczka pozostaje niepodpisanym kandydatem.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

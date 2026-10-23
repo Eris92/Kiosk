@@ -74,7 +74,7 @@ try {
             if ($result.Status -ne 'Valid' -or $result.SignerCertificate.Thumbprint -ne $thumbprint) { throw "Code signing failed or signer was untrusted: $file ($($result.Status))." }
         }
     }
-    $files = @(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName | ForEach-Object {
+    $files = @(Get-ChildItem -LiteralPath $stage -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
         $relative = $_.FullName.Substring($stage.Length + 1).Replace('\','/')
         [ordered]@{Path=$relative;Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
     })

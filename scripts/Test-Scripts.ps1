@@ -56,4 +56,58 @@ try {
     if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
     if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
 }
-Write-Output 'PowerShell/JSON/XML validation and isolated HKCU rollback tests passed.'
+$outRoot = [IO.Path]::GetFullPath((Join-Path $root 'out')).TrimEnd('\')
+$fixture = Join-Path $outRoot ('verify-fixture-' + [Guid]::NewGuid().ToString('N'))
+$verify = Join-Path $PSScriptRoot 'Verify-Package.ps1'
+try {
+    $required = @(
+        'client\Kiosk.Client.exe', 'client\Kiosk.Client.dll', 'client\client.json',
+        'credential-provider\KioskCredentialProvider.dll', 'config\client.json',
+        'scripts\Install-KioskShell.ps1', 'scripts\Install-KioskCardService.ps1',
+        'scripts\Install-KioskCredentialProvider.ps1', 'scripts\Set-KioskSignInScreen.ps1'
+    )
+    foreach ($name in $required) {
+        $target = Join-Path $fixture $name
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        if ($name -in @('client\client.json','config\client.json')) {
+            Copy-Item -LiteralPath (Join-Path $root 'config\client.json') -Destination $target
+        } else { [IO.File]::WriteAllText($target, 'fixture') }
+    }
+    $entries = @(Get-ChildItem -LiteralPath $fixture -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
+        [ordered]@{Path=$_.FullName.Substring($fixture.Length + 1).Replace('\','/');Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+    })
+    $manifest = [ordered]@{Format=1;Files=$entries}
+    $manifestPath = Join-Path $fixture 'package.json'
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    & $verify -PackagePath $fixture | Out-Null
+    try { & $verify -PackagePath $fixture -RequireSigned | Out-Null; throw 'Verifier accepted unsigned client binaries.' }
+    catch { if ($_.Exception.Message -notmatch 'trusted Authenticode signature') { throw } }
+
+    $hidden = Join-Path $fixture 'client\unlisted.txt'
+    [IO.File]::WriteAllText($hidden, 'must be rejected')
+    [IO.File]::SetAttributes($hidden, [IO.FileAttributes]::Hidden)
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted a hidden unlisted file.' }
+    catch { if ($_.Exception.Message -notmatch 'unlisted, duplicated or missing') { throw } }
+    Remove-Item -LiteralPath $hidden -Force
+
+    $rogue = Join-Path $fixture 'client\Rogue.exe'
+    [IO.File]::WriteAllText($rogue, 'must be rejected')
+    $manifest.Files += [ordered]@{Path='client/Rogue.exe';Sha256=(Get-FileHash -LiteralPath $rogue -Algorithm SHA256).Hash.ToLowerInvariant()}
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted an unexpected executable.' }
+    catch { if ($_.Exception.Message -notmatch 'Unexpected executable') { throw } }
+    $manifest.Files = @($manifest.Files | Where-Object { $_.Path -ne 'client/Rogue.exe' })
+    Remove-Item -LiteralPath $rogue -Force
+
+    $manifest.Files[0].Path = 'client/../outside.bin'
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted a traversal path.' }
+    catch { if ($_.Exception.Message -notmatch 'Invalid path in package manifest') { throw } }
+} finally {
+    $resolved = [IO.Path]::GetFullPath($fixture)
+    if ((Split-Path -Parent $resolved) -ne $outRoot -or (Split-Path -Leaf $resolved) -notmatch '^verify-fixture-[a-f0-9]{32}$') {
+        throw 'Unexpected package test cleanup path.'
+    }
+    if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+}
+Write-Output 'PowerShell/JSON/XML, HKCU rollback and isolated package verifier tests passed.'

@@ -4,6 +4,10 @@ param([int]$TimeoutSeconds = 120)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 & (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
+if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
+    & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell 5.1 script tests failed.' }
+}
 & (Join-Path $PSScriptRoot 'Build.ps1') -SelfTest
 $directory = Join-Path $root 'out\self-test'
 $result = Join-Path $directory 'self-test.txt'

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Installs the Kiosk sign-in tile: the Windows security key (FIDO2) sign-in with the Kiosk picture and title.
 

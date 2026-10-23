@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Gives the Windows sign-in screen the Kiosk look: Kiosk background with "Przyłóż kartę", no user list,
 sign-in with a security key (FIDO2 card) turned on. Windows still does the sign-in, so the Kiosk

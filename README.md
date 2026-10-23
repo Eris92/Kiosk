@@ -91,6 +91,8 @@ SHA256 potwierdza spójność paczki; nie potwierdza tożsamości wydawcy. Repoz
 .\scripts\Verify-Package.ps1 -PackagePath .\out\release-001 -RequireSigned -TrustedSignerThumbprint '<ODCISK_CERTYFIKATU_ORGANIZACJI>'
 ```
 
+Weryfikator paczki odrzuca ukryte pliki spoza wykazu, dowiązania i junctions oraz nieprzewidziane skrypty i EXE. Opcja -RequireSigned sprawdza zaufany podpis każdego EXE/DLL i skryptu wdrożenia; -TrustedSignerThumbprint wiąże własne pliki Kiosku z certyfikatem organizacji. Hash manifestu nie uwierzytelnia samego manifestu, dlatego finalny pakiet należy pobrać z zaufanego kanału wydawania.
+
 Nie publikuj plików PFX/kluczy, lokalnych konfiguracji ani zaszyfrowanego magazynu kont użytkowników. Podpisu organizacji i zachowania na docelowym Windows nie da się potwierdzić na samej maszynie deweloperskiej.
 
 ## Instalacja powłoki i opcjonalnych składników
