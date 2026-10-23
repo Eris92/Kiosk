@@ -57,6 +57,29 @@ try {
     if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
 }
 $outRoot = [IO.Path]::GetFullPath((Join-Path $root 'out')).TrimEnd('\')
+$atomicRoot = Join-Path $outRoot ('atomic-config-' + [Guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $atomicRoot -Force | Out-Null
+    $atomicFile = Join-Path $atomicRoot 'client.json'
+    [IO.File]::WriteAllText($atomicFile, '{"value":1}')
+    $protectedAcl = Get-Acl -LiteralPath $atomicFile
+    $protectedAcl.SetAccessRuleProtection($true, $true)
+    Set-Acl -LiteralPath $atomicFile -AclObject $protectedAcl
+    $originalAcl = (Get-Acl -LiteralPath $atomicFile).Sddl
+    Set-KioskConfigAtomically $atomicFile '{"value":2}'
+    if ([IO.File]::ReadAllText($atomicFile) -ne '{"value":2}' -or (Get-Acl -LiteralPath $atomicFile).Sddl -ne $originalAcl) {
+        throw 'Atomic configuration replacement changed content or ACL unexpectedly.'
+    }
+    if (@(Get-ChildItem -LiteralPath $atomicRoot -Force).Count -ne 1) { throw 'Atomic configuration replacement left a temporary file.' }
+    $fresh = Join-Path $atomicRoot 'fresh.json'
+    Set-KioskConfigAtomically $fresh '{"value":3}'
+    if ([IO.File]::ReadAllText($fresh) -ne '{"value":3}') { throw 'Atomic configuration creation failed.' }
+} finally {
+    $resolvedAtomic = [IO.Path]::GetFullPath($atomicRoot)
+    if (-not $resolvedAtomic.StartsWith($outRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $resolvedAtomic) -notmatch '^atomic-config-[a-f0-9]{32}$') { throw 'Unexpected atomic config test cleanup path.' }
+    if (Test-Path -LiteralPath $resolvedAtomic) { Remove-Item -LiteralPath $resolvedAtomic -Recurse -Force }
+}
 $fixture = Join-Path $outRoot ('verify-fixture-' + [Guid]::NewGuid().ToString('N'))
 $verify = Join-Path $PSScriptRoot 'Verify-Package.ps1'
 try {

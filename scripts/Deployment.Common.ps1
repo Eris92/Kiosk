@@ -100,6 +100,26 @@ function Assert-KioskDataFilePath([string]$Path, [string]$Extension) {
     return $full
 }
 
+function Set-KioskConfigAtomically([string]$Path, [string]$Content) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $directory = [IO.Path]::GetDirectoryName($full)
+    $temporary = Join-Path $directory ('.' + [IO.Path]::GetFileName($full) + '.tmp-' + [Guid]::NewGuid().ToString('N'))
+    $backup = Join-Path $directory ('.' + [IO.Path]::GetFileName($full) + '.backup-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText($temporary, $Content, [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $full) {
+            if ((Get-Item -LiteralPath $full -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Kiosk configuration is a junction or symbolic link: $full"
+            }
+            # ReplaceFile keeps the destination ACL and never exposes a partially written JSON file.
+            [IO.File]::Replace($temporary, $full, $backup)
+        } else { [IO.File]::Move($temporary, $full) }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
+    }
+}
+
 function Set-KioskFileAcl([string]$Path, [switch]$UsersRead) {
     $file = [IO.Path]::GetFullPath($Path)
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Kiosk file does not exist: $file" }

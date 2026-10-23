@@ -139,7 +139,7 @@ Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -ne 'client.j
 $directory = Split-Path -Parent $ConfigPath
 Set-KioskDirectoryAcl $directory -UsersRead
 if (Test-Path -LiteralPath $ConfigPath) { Set-KioskFileAcl $ConfigPath -UsersRead }
-$candidateJson | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+Set-KioskConfigAtomically $ConfigPath $candidateJson
 Set-KioskFileAcl $ConfigPath -UsersRead
 if ($Method -eq 'ShellLauncher') {
     $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-EmbeddedShellLauncher
