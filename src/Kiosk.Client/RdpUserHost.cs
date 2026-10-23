@@ -32,7 +32,7 @@ internal static class RdpUserHost
             var payload = Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
             var request = JsonSerializer.Deserialize<LaunchRequest>(payload);
             var connection = request?.Connection;
-            return connection is { Server.Length: > 0 and <= 255, Name: not null, UserName: not null } &&
+            return connection is { Server.Length: > 0 and <= 255, Name.Length: > 0 and <= 128, UserName.Length: <= 1024 } &&
                    !connection.Server.Any(char.IsWhiteSpace) && connection.Port is >= 1 and <= 65535 &&
                    Enum.IsDefined(connection.Authentication) && request!.Timeout is >= 10 and <= 300
                 ? request : null;

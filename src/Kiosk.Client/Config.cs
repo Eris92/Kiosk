@@ -123,8 +123,10 @@ internal sealed record Config
         if (!Configuration.IsWebUrl(BrowserUrl)) throw new InvalidDataException("Strona startowa musi mieć adres HTTP/HTTPS.");
         foreach (var connection in RdpConnections)
         {
-            if (connection == null || string.IsNullOrWhiteSpace(connection.Name) || string.IsNullOrWhiteSpace(connection.Server) ||
-                connection.Server.Any(char.IsWhiteSpace) || connection.Port is < 1 or > 65535 || connection.UserName == null ||
+            if (connection == null || string.IsNullOrWhiteSpace(connection.Name) || connection.Name.Length > 128 ||
+                string.IsNullOrWhiteSpace(connection.Server) || connection.Server.Length > 255 ||
+                connection.Server.Any(char.IsWhiteSpace) || connection.Port is < 1 or > 65535 ||
+                connection.UserName == null || connection.UserName.Length > 1024 ||
                 !Enum.IsDefined(connection.Authentication)) throw new InvalidDataException("Każde połączenie RDP wymaga nazwy, hosta, portu i sposobu logowania.");
             if (connection.Authentication == RdpAuthentication.EntraId &&
                 (System.Net.IPAddress.TryParse(connection.Server, out _) || !connection.Server.Contains('.')))
@@ -173,7 +175,8 @@ internal sealed record Config
         if (BrowserOnlyBookmarks && Bookmarks.Length == 0)
             throw new InvalidDataException("Tryb „tylko strony z zakładek” wymaga co najmniej jednej zakładki.");
         foreach (var app in Applications)
-            if (app == null || string.IsNullOrWhiteSpace(app.Name) || app.Arguments == null || app.WorkingDirectory == null)
+            if (app == null || string.IsNullOrWhiteSpace(app.Name) || app.Path == null ||
+                app.Arguments == null || app.WorkingDirectory == null)
                 throw new InvalidDataException("Aplikacja wymaga nazwy i pełnej ścieżki do pliku EXE.");
             else if (!app.IsBuiltInNotes && (!Path.IsPathFullyQualified(app.Path) ||
                 !string.Equals(Path.GetExtension(app.Path), ".exe", StringComparison.OrdinalIgnoreCase) ||

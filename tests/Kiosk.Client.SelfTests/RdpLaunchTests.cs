@@ -20,5 +20,8 @@ internal static class RdpLaunchTests
         }
         if (RdpUserHost.Parse("not-valid!") != null || RdpUserHost.Parse("") != null)
             throw new InvalidOperationException("RDP helper accepted an invalid request.");
+        var oversized = new RdpConnection { Name = new string('N', 129), Server = "host.example.org" };
+        if (RdpUserHost.Parse(RdpUserHost.ArgumentsFor(oversized, 60, true).Split(' ')[1]) != null)
+            throw new InvalidOperationException("RDP helper accepted an oversized connection name.");
     }
 }

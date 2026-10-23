@@ -22,6 +22,9 @@ internal sealed partial class KioskForm
             basic with { Commands = [new CommandEntry { Name = "relative", Path = "script.ps1" }] },
             basic with { Commands = [new CommandEntry { Name = "unsafe", Path = "C:\\file.txt" }] },
             basic with { Commands = [new CommandEntry { Name = "A", Path = "C:\\tool.exe" }, new CommandEntry { Name = "a", Path = "C:\\other.exe" }] },
+            basic with { Applications = [new ApplicationEntry { Name = "invalid", Path = null! }] },
+            basic with { RdpConnections = [new RdpConnection { Name = "RDP", Server = new string('s', 256) }] },
+            basic with { RdpConnections = [new RdpConnection { Name = "RDP", Server = "host.example", UserName = new string('u', 1025) }] },
             basic with { AdminCards = [new AdminCard { Id = "uid:untrusted" }] }
         })
         {
