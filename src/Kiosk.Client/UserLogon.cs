@@ -57,7 +57,7 @@ internal sealed class UserLogon : IDisposable
             throw new ArgumentException("The password must be NUL-terminated at its declared length.", nameof(password));
         bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
         code = ok ? 0 : Marshal.GetLastWin32Error();
-        // Entra ID accounts are "AzureAD\jan@firma.pl" on this PC (as in runas /user:AzureAD\...).
+        // Entra ID accounts may use the AzureAD\user@tenant form on this PC.
         if (!ok && domain == null && login.Contains('@'))
         {
             token.Dispose();

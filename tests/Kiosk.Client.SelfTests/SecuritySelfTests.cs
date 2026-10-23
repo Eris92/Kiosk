@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 
 namespace Kiosk.Client;
 
@@ -49,6 +50,23 @@ internal static class SecuritySelfTests
             Reject<AuthenticationTagMismatchException>(() => aes.Decrypt(nonce, cipher, tag, output, CardVault.AccountData("admin", "domain")));
         }
         finally { CryptographicOperations.ZeroMemory(key); CryptographicOperations.ZeroMemory(output); }
+
+        // A damaged or old account file must return to enrollment instead of
+        // trapping the person behind an exception on every card insertion.
+        var cardId = "self-test-corrupt:" + Guid.NewGuid().ToString("N");
+        var cards = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Cards");
+        var entryPath = Path.Combine(cards, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cardId))) + ".json");
+        Directory.CreateDirectory(cards);
+        try
+        {
+            File.WriteAllText(entryPath, "{\"Version\":1,\"Direct\":true,\"User\":\"test\",\"Salt\":\"AA==\"}");
+            if (CardVault.Open(cardId, "unused reader", "unused PIN") is not { Logon: null, Code: CardPin.NoKey })
+                throw new InvalidOperationException("Corrupt card account did not return to enrollment.");
+            File.WriteAllText(entryPath, "{\"Version\":0,\"Direct\":true,\"User\":\"test\"}");
+            if (CardVault.Open(cardId, "unused reader", "unused PIN") is not { Logon: null, Code: CardPin.NoKey })
+                throw new InvalidOperationException("Legacy card account bypassed account-metadata authentication.");
+        }
+        finally { File.Delete(entryPath); }
 
         // A copied public certificate cannot authorize a different private key.
         var challenge = SHA256.HashData(RandomNumberGenerator.GetBytes(32));

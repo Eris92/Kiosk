@@ -20,8 +20,8 @@ internal static class WindowsSession
     internal static CardIdentity CurrentUser()
     {
         using var identity = WindowsIdentity.GetCurrent();
-        var upn = UserName(8);          // NameUserPrincipal: k.lechmyc@investa.pl / user@tenant
-        var display = UserName(3);      // NameDisplay: Krzysztof Lechmyc (domain accounts)
+        var upn = UserName(8);          // NameUserPrincipal: user@tenant
+        var display = UserName(3);      // NameDisplay for accounts that provide it
         var name = display.Length > 0 ? display : upn.Length > 0 ? upn : identity.Name[(identity.Name.IndexOf('\\') + 1)..];
         // The person's own certificates (a signed-in card propagates its certificates here) for websites.
         string[] thumbprints;

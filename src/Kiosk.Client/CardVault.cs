@@ -59,7 +59,7 @@ internal static class CardVault
             entry = JsonSerializer.Deserialize<Entry>(data) ?? throw new InvalidDataException();
             ValidateEntry(entry);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException or ArgumentException or InvalidDataException)
         { return new(null, CardPin.NoKey, "Nie można odczytać zapisanego konta. Zapamiętaj kartę ponownie."); }
         if (!entry.Direct) { Forget(cardId); return new(null, CardPin.NoKey, "Kartę trzeba zapamiętać ponownie."); }
         var answer = CardService.Call(new CardService.Request { Op = "open", Reader = reader, Pin = pin, CredentialId = entry.CredentialId, Salt = entry.Salt });
@@ -73,7 +73,7 @@ internal static class CardVault
             var cipher = Convert.FromBase64String(entry.Cipher);
             plain = new byte[cipher.Length];
             using (var aes = new AesGcm(key, 16)) aes.Decrypt(Convert.FromBase64String(entry.Nonce), cipher,
-                Convert.FromBase64String(entry.Tag), plain, entry.Version == 1 ? AccountData(entry.User, entry.Domain) : null);
+                Convert.FromBase64String(entry.Tag), plain, AccountData(entry.User, entry.Domain));
             int length = plain.Length / 2;
             var password = new char[length + 1];
             Encoding.Unicode.GetChars(plain, 0, plain.Length, password, 0);
@@ -135,7 +135,7 @@ internal static class CardVault
 
     private static void ValidateEntry(Entry entry)
     {
-        if (entry.Version is < 0 or > 1 || string.IsNullOrWhiteSpace(entry.User) || entry.User.Length > 514 ||
+        if (entry.Version != 1 || string.IsNullOrWhiteSpace(entry.User) || entry.User.Length > 514 ||
             entry.User.Contains('\0') || entry.Domain?.Contains('\0') == true || entry.Domain?.Length > 338 ||
             Convert.FromBase64String(entry.Salt).Length != 32 || Convert.FromBase64String(entry.Nonce).Length != 12 ||
             Convert.FromBase64String(entry.Tag).Length != 16 || Convert.FromBase64String(entry.CredentialId).Length is < 1 or > 4096 ||
