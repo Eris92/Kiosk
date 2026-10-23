@@ -25,7 +25,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 - Kontrolka RDP stosuje zaufanie serwera/NLA, wybór metody i ustawienie pytania o poświadczenia. Przekierowanie karty jest włączone tylko dla profilu `SmartCard`. Każdy profil ma własną instancję kontrolki; pomocniczy proces zachowuje wybraną metodę i nazwę użytkownika.
 - Przeglądarka, Notatnik i zgodne okna Win32 są w obszarze Kiosku. Osadzanie programu nie obejmuje dowolnej aplikacji Store/UWP, podniesionych okien ani każdej dodatkowej ramki/dialogu; zgodność konkretnego EXE wymaga testu.
 - Polecenia uruchamiane z menu należą do sesji karty; jej zakończenie zamyka całą grupę procesów polecenia. Test uruchamia proces potomny i sprawdza zamknięcie obu procesów.
-- Skrypty instalacji zapisują stan do wycofania, nie dotykają już działających sesji i ograniczają ścieżki oraz ACL konfiguracji i dzienników. Pakowanie bierze tylko jawnie dozwolone pliki, sprawdza hash każdego składnika i opcjonalnie weryfikuje podpis. Źródłowe testy są oddzielone od binariów produkcyjnych.
+- Usługa karty uruchamia się bez inicjalizacji WinForms i zgłasza Windowsowi `Running` dopiero po utworzeniu chronionego pipe’a; gdy nie może go ponownie otworzyć, zgłasza błąd i kończy pracę. Przy zatrzymywaniu utrzymuje `StopPending` do zakończenia wątku obsługi. Skrypty instalacji zapisują stan do wycofania, nie dotykają już działających sesji i ograniczają ścieżki oraz ACL konfiguracji i dzienników. Pakowanie bierze tylko jawnie dozwolone pliki, sprawdza hash każdego składnika i opcjonalnie weryfikuje podpis. Źródłowe testy są oddzielone od binariów produkcyjnych.
 
 ## Dowody lokalne
 
@@ -41,6 +41,8 @@ Mikropomiar `--benchmark` na tym samym stanowisku (po rozgrzaniu, trzy przebiegi
 To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się również wersją .NET. Zmiana paska zmniejszyła koszt powtarzanego odświeżania. Ostatni pomiar czytnika to seria 1000 natychmiastowych pytań o wskazany, nieistniejący czytnik; po pierwszej odpowiedzi kolejne nie odpytują PC/SC, dopóki nie nadejdzie sekundowy termin odświeżenia topologii. Przy działającym, wskazanym czytniku obecność karty nadal jest sprawdzana co 250 ms. Nowy czytnik lub powracająca usługa mogą zostać zauważone do około 1 s później.
 
 Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. Pobrany artefakt z udanego CI dla rewizji 2eae10b przeszedł ponowną kontrolę pełnego składu po zaostrzeniu reguł; CI na `main` zbudowało natywną DLL i paczkę. Próba kompilacji tej DLL na stacji deweloperskiej kończy się brakiem Visual Studio Build Tools. Paczka pozostaje niepodpisanym kandydatem.
+
+Lokalna usługa `KioskCard` była zarejestrowana jako LocalSystem/Automatic, ale zatrzymana (`ExitCode=1067`); jej binarium w Program Files różni się od bieżącego builda. Dziennik Service Control Manager zawiera wcześniejsze zdarzenia 7034 (nieoczekiwane zakończenie) i 7000 (przekroczony czas startu). Nie dowodzi to przyczyny, lecz wymaga osobnego sprawdzenia po aktualizacji usługi na urządzeniu testowym.
 
 ## Bramka akceptacyjna przed produkcją
 

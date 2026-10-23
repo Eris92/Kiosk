@@ -19,3 +19,8 @@ try {
     Get-Content -LiteralPath $result
     if ($process.ExitCode -ne 0) { throw "Embedded UI self-test failed: $($process.ExitCode)." }
 } finally { $process.Dispose() }
+$service = Start-Process -FilePath (Join-Path $directory 'Kiosk.Client.exe') -ArgumentList '--card-service' -WorkingDirectory $directory -WindowStyle Hidden -PassThru
+try {
+    if (-not $service.WaitForExit(10000)) { $service.Kill(); throw 'Service-mode entry did not return outside the Windows Service Control Manager.' }
+    if ($service.ExitCode -ne 1063) { throw "Unexpected service-mode result outside the Service Control Manager: $($service.ExitCode)." }
+} finally { $service.Dispose() }

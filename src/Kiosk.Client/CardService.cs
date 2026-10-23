@@ -174,6 +174,7 @@ internal static class CardService
     private static readonly CancellationTokenSource shutdown = new();
     private static ServiceMain? main;            // kept alive for the native callback
     private static HandlerEx? handler;
+    private static int listenerExitCode;
 
     /// <summary>Entry point when started by the Service Control Manager.</summary>
     internal static int Run()
@@ -187,20 +188,47 @@ internal static class CardService
     {
         handler = (control, _, _, _) =>
         {
-            if (control is 1 or 5) { SetStatus(3); shutdown.Cancel(); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
+            if (control is 1 or 5) { SetStatus(3, 1); shutdown.Cancel(); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
             return 0;
         };
         statusHandle = RegisterServiceCtrlHandlerEx(ServiceName, handler, IntPtr.Zero);
         if (statusHandle == IntPtr.Zero) return;
-        SetStatus(4); // RUNNING
-        var listener = new Thread(Listen) { IsBackground = true };
-        listener.Start();
+        SetStatus(2, 1); // START_PENDING until the pipe is bound and its ACL is set.
+        PipeSecurity security;
+        NamedPipeServerStream firstPipe;
+        try
+        {
+            security = PipePermissions();
+            firstPipe = CreatePipe(security);
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("card_service_start_failed", ex.Message);
+            SetStatus(1, exitCode: 1);
+            return;
+        }
+        var listener = new Thread(() => Listen(firstPipe, security)) { IsBackground = true };
+        try { listener.Start(); }
+        catch (Exception ex)
+        {
+            firstPipe.Dispose();
+            Audit.Write("card_service_start_failed", ex.Message);
+            SetStatus(1, exitCode: 1);
+            return;
+        }
+        if (!stopping.IsSet) SetStatus(4); // RUNNING only when a client can connect.
         stopping.Wait();
-        listener.Join(2000); // Pending pipe I/O observes cancellation; a card operation is bounded separately.
-        SetStatus(1); // STOPPED
+        SetStatus(3, 1);
+        // A card operation may still be in progress. Keep SCM informed while it
+        // finishes instead of reporting STOPPED with a live listener thread.
+        int checkpoint = 2;
+        while (listener.IsAlive && !listener.Join(2000) && checkpoint <= 47)
+            SetStatus(3, checkpoint++);
+        if (listener.IsAlive) Audit.Write("card_service_stop_timeout");
+        SetStatus(1, exitCode: listener.IsAlive ? 1 : Volatile.Read(ref listenerExitCode));
     }
 
-    private static void Listen()
+    private static PipeSecurity PipePermissions()
     {
         // SYSTEM and administrators: full; signed-in (interactive) users: may connect and send requests.
         var security = new PipeSecurity();
@@ -208,37 +236,84 @@ internal static class CardService
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
-        while (!stopping.IsSet)
-        {
-            try
-            {
-                using var pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 4096, 4096, security);
-                pipe.WaitForConnectionAsync(shutdown.Token).GetAwaiter().GetResult();
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
-                timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                var line = ReadMessageAsync(reader, timeout.Token).GetAwaiter().GetResult();
-                var request = JsonSerializer.Deserialize<Request>(line);
-                var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." } : Handle(request);
-                timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
-                response.Secret = null;
-                try
-                {
-                    pipe.WriteAsync(bytes, timeout.Token).AsTask().GetAwaiter().GetResult();
-                    pipe.WriteAsync(new byte[] { (byte)'\n' }, timeout.Token).AsTask().GetAwaiter().GetResult();
-                    pipe.FlushAsync(timeout.Token).GetAwaiter().GetResult();
-                }
-                finally { CryptographicOperations.ZeroMemory(bytes); }
-            }
-            catch (Exception) { stopping.Wait(200); } // One bad client must not stop the service.
-        }
+        return security;
     }
 
-    private static void SetStatus(int state)
+    private static NamedPipeServerStream CreatePipe(PipeSecurity security) =>
+        NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 4096, 4096, security);
+
+    private static NamedPipeServerStream? CreateNextPipe(PipeSecurity security)
     {
-        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 : 0, WaitHint = 3000 };
+        var started = Environment.TickCount64;
+        while (!stopping.IsSet)
+        {
+            try { return CreatePipe(security); }
+            // The previous client can briefly retain its disconnected pipe
+            // handle. Keep the first-instance guarantee while it closes.
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) &&
+                Environment.TickCount64 - started < 3000) { stopping.Wait(100); }
+        }
+        return null;
+    }
+
+    private static void Listen(NamedPipeServerStream pipe, PipeSecurity security)
+    {
+        try
+        {
+            while (!stopping.IsSet)
+            {
+                using (pipe)
+                {
+                    try { ServeConnection(pipe); }
+                    catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { return; }
+                    catch (Exception) { stopping.Wait(200); } // One bad client must not stop the service.
+                }
+                if (stopping.IsSet) return;
+                try
+                {
+                    var next = CreateNextPipe(security);
+                    if (next == null) return;
+                    pipe = next;
+                }
+                catch (Exception ex)
+                {
+                    Audit.Write("card_service_pipe_failed", ex.Message);
+                    Volatile.Write(ref listenerExitCode, 1);
+                    stopping.Set();
+                    return;
+                }
+            }
+        }
+        finally { pipe.Dispose(); }
+    }
+
+    private static void ServeConnection(NamedPipeServerStream pipe)
+    {
+        pipe.WaitForConnectionAsync(shutdown.Token).GetAwaiter().GetResult();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
+        var line = ReadMessageAsync(reader, timeout.Token).GetAwaiter().GetResult();
+        var request = JsonSerializer.Deserialize<Request>(line);
+        var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." } : Handle(request);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+        response.Secret = null;
+        try
+        {
+            pipe.WriteAsync(bytes, timeout.Token).AsTask().GetAwaiter().GetResult();
+            pipe.WriteAsync(new byte[] { (byte)'\n' }, timeout.Token).AsTask().GetAwaiter().GetResult();
+            pipe.FlushAsync(timeout.Token).GetAwaiter().GetResult();
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    private static void SetStatus(int state, int checkpoint = 0, int exitCode = 0)
+    {
+        var pending = state is 2 or 3;
+        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 : 0,
+            Win32ExitCode = exitCode, CheckPoint = pending ? checkpoint : 0, WaitHint = pending ? 5000 : 0 };
         SetServiceStatus(statusHandle, ref status);
     }
 

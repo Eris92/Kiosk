@@ -8,10 +8,11 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // The Windows service has no desktop; dispatch it before WinForms setup.
+        if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         ApplicationConfiguration.Initialize();
         if (args.Length == 4 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner), args[3]);
-        if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
         if (args.Length == 2 && args[0] == RdpUserHost.Argument)
             return RdpUserHost.Run(args[1]);
 #if KIOSK_SELF_TEST
