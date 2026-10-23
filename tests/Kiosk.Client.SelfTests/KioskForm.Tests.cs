@@ -282,6 +282,19 @@ internal sealed partial class KioskForm
         StartWindowsSession();
         if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
             throw new InvalidOperationException("Windows shell session failed.");
+        disconnectedSince = DateTime.UtcNow.AddSeconds(-1);
+        shellLockRequestedAt = DateTime.UtcNow;
+        var remoteConnect = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.RemoteConnect), IntPtr.Zero);
+        WndProc(ref remoteConnect);
+        if (shellLockRequestedAt == null || shellUnlockNotified) throw new InvalidOperationException("RDP transport reconnection was treated as Windows unlock.");
+        var unlock = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionUnlock), IntPtr.Zero);
+        WndProc(ref unlock);
+        if (shellLockRequestedAt != null || !shellUnlockNotified || disconnectedSince == null)
+            throw new InvalidOperationException("Windows unlock discarded the retention timer or failed to mark the session resumable.");
+        var lockAgain = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionLock), IntPtr.Zero);
+        WndProc(ref lockAgain);
+        if (shellUnlockNotified) throw new InvalidOperationException("Windows lock retained a stale unlock notification.");
+        disconnectedSince = null;
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;

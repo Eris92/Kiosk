@@ -60,6 +60,11 @@ internal static class WindowsSession
     internal static bool RetentionExpired(DateTime? unavailableSince, DateTime nowUtc, int seconds) =>
         unavailableSince.HasValue && seconds > 0 && nowUtc - unavailableSince.Value >= TimeSpan.FromSeconds(seconds);
 
+    // Some RDS hosts only expose connection state through WTSQuerySessionInformation.
+    // Their own unlock notification is sufficient when the queried state is Unknown.
+    internal static bool CanResume(Availability state, bool unlockNotified) =>
+        state == Availability.Active || state == Availability.Unknown && unlockNotified;
+
     /// <summary>Windows' own state, including a locked local console.</summary>
     internal static Availability State()
     {

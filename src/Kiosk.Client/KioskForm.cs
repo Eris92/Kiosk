@@ -77,6 +77,7 @@ internal sealed partial class KioskForm : Form
     private string? shellCardKey;
     private DateTime? disconnectedSince;
     private DateTime? shellLockRequestedAt;
+    private bool shellUnlockNotified;
     private IntPtr shellNotificationHandle;
     private DateTime nextShellNotificationAttempt;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
@@ -808,13 +809,20 @@ internal sealed partial class KioskForm : Form
             {
                 disconnectedSince ??= DateTime.UtcNow;
                 shellLockRequestedAt = null;
+                shellUnlockNotified = false;
             }
-            else if (change is WindowsSession.SessionUnlock or WindowsSession.RemoteConnect)
+            else if (change == WindowsSession.SessionUnlock)
             {
                 shellLockRequestedAt = null;
                 shellCardKey = null;
+                shellUnlockNotified = true;
                 // Keep the time spent away until ShellTick has enforced the
                 // retention limit, even if its timer did not run while locked.
+            }
+            else if (change == WindowsSession.RemoteConnect)
+            {
+                // Transport reconnection can still leave Windows at its lock screen.
+                shellCardKey = null;
             }
         }
         base.WndProc(ref message);
@@ -843,12 +851,14 @@ internal sealed partial class KioskForm : Form
             SignOutWindows("session_expired");
             return;
         }
-        else if (state == WindowsSession.Availability.Active && shellLockRequestedAt == null && disconnectedSince != null)
+        else if (disconnectedSince != null && shellLockRequestedAt == null &&
+                 WindowsSession.CanResume(state, shellUnlockNotified))
         {
             disconnectedSince = null;
             shellCardKey = null;
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
+        if (disconnectedSince == null) shellUnlockNotified = false;
         if (disconnectedSince != null)
             return;
         if (shellLockRequestedAt is { } requested)
@@ -869,6 +879,7 @@ internal sealed partial class KioskForm : Form
     private void DisconnectWindows(string reason)
     {
         menu.HideMenu();
+        shellUnlockNotified = false;
         Audit.Write(reason, current?.Identity.Name ?? "");
         try { WindowsSession.LockOrDisconnect(); shellLockRequestedAt = DateTime.UtcNow; }
         catch (Exception ex)
