@@ -14,8 +14,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - name: Validate scripts and run separate embedded UI self-tests
@@ -28,7 +30,7 @@ jobs:
         shell: pwsh
         run: ./scripts/Verify-Package.ps1 -PackagePath ./out/package
       - name: Upload unsigned deployment candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Kiosk-win-x64-candidate
           path: out/package/
@@ -36,7 +38,7 @@ jobs:
           retention-days: 30
       - name: Upload self-test diagnostics separately
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Kiosk-self-test-results
           path: out/self-test/self-test*.txt
