@@ -160,8 +160,21 @@ internal sealed partial class KioskForm
         if (!IsAdmin(bobSession, adminTest) || IsAdmin(bobSession, adminTest with { AllowWindowsAdministrators = false }))
             throw new InvalidOperationException("Windows administrator check failed.");
 
-        menu.Populate("test", BuildMenu());
+        menu.Populate("test", BuildMenu(), () => true);
         if (menu.ItemCount < config.RdpConnections.Length + 3) throw new InvalidOperationException("Menu is incomplete.");
+        using (var guardedMenu = new StartMenu())
+        {
+            int runs = 0;
+            var item = new MenuItemSpec("Test", "", () => runs++);
+            var section = new MenuSection("Test", [item]);
+            foreach (var (allowed, expected) in new[] { (false, 0), (true, 1) })
+            {
+                guardedMenu.Populate("test", [section], () => allowed);
+                guardedMenu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
+                guardedMenu.Controls.OfType<Panel>().Single().Controls.OfType<MenuTile>().Single().PerformClick();
+                if (runs != expected) throw new InvalidOperationException("Menu action ignored its session guard.");
+            }
+        }
 
         // In-app lock hides every window; resume with the same card restores the last one.
         Lock("self_test_lock", 0);

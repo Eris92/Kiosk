@@ -70,7 +70,7 @@ internal sealed class TaskButton : Button
     }
 }
 
-/// <summary>The bottom bar: one Menu button, open windows and session actions, like the Windows taskbar.</summary>
+/// <summary>The bottom bar: one Menu button, open windows and a clock, like the Windows taskbar.</summary>
 internal sealed class Taskbar : Panel
 {
     private readonly List<TabButton> tasks = new();
@@ -80,10 +80,6 @@ internal sealed class Taskbar : Panel
     private (string Key, string Title, string? Glyph, Image? Icon, bool OtherScreen)[] taskWindows = [];
 
     internal TaskButton MenuButton { get; } = new("", primary: true) { Glyph = KioskIcons.Menu };
-    internal TaskButton LockButton { get; } = new("Zablokuj");
-    internal TaskButton LogoutButton { get; } = new("Wyloguj");
-    internal TaskButton ExitButton { get; } = new("Zamknij test");
-    internal Label Status { get; } = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     internal event Action<string>? TaskClicked;
     internal event Action<string>? TaskCloseRequested;
     /// <summary>Right-click on a window button: its key, the button and the click point (for a context menu).</summary>
@@ -96,13 +92,9 @@ internal sealed class Taskbar : Panel
         BackColor = KioskTheme.Taskbar;
         ForeColor = KioskTheme.Text;
         DoubleBuffered = true;
-        Status.Font = new Font("Segoe UI", 9.5f);
-        Status.ForeColor = KioskTheme.Muted;
         clock.Font = new Font("Segoe UI", 9.5f);
         clock.ForeColor = KioskTheme.Text;
-        Controls.AddRange(new Control[] { MenuButton, LockButton, LogoutButton, ExitButton, Status, clock });
-        // A clean bar: Menu, windows and the clock. Lock, sign-out and close live in Menu → System.
-        LockButton.Visible = LogoutButton.Visible = ExitButton.Visible = Status.Visible = false;
+        Controls.AddRange(new Control[] { MenuButton, clock });
         clockTimer.Tick += (_, _) => UpdateClock();
         clockTimer.Start();
         UpdateClock();
@@ -160,9 +152,6 @@ internal sealed class Taskbar : Panel
         for (int i = 0; i < tasks.Count; i++) tasks[i].Active = windows[i].Active;
     }
 
-    private int Measure(Control control, int minimum) =>
-        Math.Max(Scale(minimum), TextRenderer.MeasureText(control.Text, control.Font).Width + Scale(28));
-
     private void ArrangeControls()
     {
         if (clock == null) return;
@@ -173,19 +162,6 @@ internal sealed class Taskbar : Panel
         int clockWidth = Scale(86);
         clock.SetBounds(right - clockWidth, top, clockWidth, height);
         right -= clockWidth + gap * 2;
-        foreach (var button in new[] { ExitButton, LogoutButton, LockButton })
-        {
-            if (!button.Visible) continue;
-            int width = Measure(button, 96);
-            button.SetBounds(right - width, top, width, height);
-            right -= width + gap;
-        }
-        if (Status.Visible)
-        {
-            int statusWidth = Scale(220);
-            Status.SetBounds(right - statusWidth, top, statusWidth, height);
-            right -= statusWidth + gap;
-        }
 
         int each = Scale(58);
         // Windows on other screens: on the right, next to the clock (newest nearest the clock).
@@ -254,7 +230,7 @@ internal sealed class StartMenu : Form
         HiddenAt = DateTime.UtcNow;
     }
 
-    internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections)
+    internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections, Func<bool> canRun)
     {
         content.SuspendLayout();
         foreach (Control control in content.Controls.Cast<Control>().ToArray()) { content.Controls.Remove(control); control.Dispose(); }
@@ -280,7 +256,7 @@ internal sealed class StartMenu : Form
                 var item = section.Items[i];
                 var tile = new MenuTile(item.Title, item.Category) { Enabled = item.Enabled, Glyph = item.Glyph, IconImage = item.Icon };
                 tile.SetBounds(margin + (i % columns) * (tileWidth + gap), y + (i / columns) * (tileHeight + gap), tileWidth, tileHeight);
-                tile.Click += (_, _) => { HideMenu(); item.Run(); };
+                tile.Click += (_, _) => { HideMenu(); if (canRun()) item.Run(); };
                 content.Controls.Add(tile);
                 ItemCount++;
             }

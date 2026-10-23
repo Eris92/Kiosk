@@ -16,7 +16,6 @@ internal sealed partial class KioskForm : Form
 {
     private sealed class RdpSession
     {
-        internal required RdpConnection Connection { get; init; }
         internal required RdpHost Host { get; init; }
         internal DateTime ConnectingSince { get; init; }
         internal bool WasConnected { get; set; }
@@ -109,12 +108,9 @@ internal sealed partial class KioskForm : Form
         visibleView = desktop;
 
         taskbar.MenuButton.Click += (_, _) => ToggleMenu();
-        taskbar.TaskClicked += ActivateWindow;
-        taskbar.TaskCloseRequested += key => { if (ConfirmClose(key)) CloseWindow(key, "window_closed"); };
+        taskbar.TaskClicked += key => { if (CheckCard()) ActivateWindow(key); };
+        taskbar.TaskCloseRequested += key => { if (CheckCard() && ConfirmClose(key)) CloseWindow(key, "window_closed"); };
         taskbar.TaskMenuRequested += ShowTaskMenu;
-        taskbar.LockButton.Click += (_, _) => Lock("manual_lock", 0);
-        taskbar.LogoutButton.Click += (_, _) => { if (current != null && ConfirmEnd([current])) Logout("manual_logout"); };
-        taskbar.ExitButton.Click += (_, _) => Close();
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
@@ -945,12 +941,7 @@ internal sealed partial class KioskForm : Form
         lastChrome = state;
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
-        taskbar.LockButton.Enabled = CanUseApps;
-        taskbar.LogoutButton.Enabled = current != null;
-        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(current, w); return (w.Key, w.Title, w.View == visibleView, glyph, icon, HostOf(w.View) != null); }).ToArray() : []);
-        taskbar.Status.Text = current == null ? (requireRemoval ? "Wyjmij kartę" : "Brak karty") + (others > 0 ? " · zachowane sesje: " + others : "") :
-            (current.Locked ? "🔒 " : "● ") + current.Name + (others > 0 ? " · inne sesje: " + others : "");
-        taskbar.Status.ForeColor = CanUseApps ? Color.FromArgb(110, 214, 150) : KioskTheme.Muted;
+        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(w); return (w.Key, w.Title, w.View == visibleView, glyph, icon, HostOf(w.View) != null); }).ToArray() : []);
 
         var retention = config.ChangeUserAfterSeconds > 0
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
@@ -977,9 +968,11 @@ internal sealed partial class KioskForm : Form
     private void ToggleMenu()
     {
         if (menu.Visible) { menu.HideMenu(); return; }
-        if (!CanUseApps) return;
+        if (!CheckCard()) return;
         if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
-        menu.Populate(CanUseApps ? "Wybierz, co chcesz uruchomić." : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.", BuildMenu());
+        var owner = current!;
+        menu.Populate("Wybierz, co chcesz uruchomić.", BuildMenu(),
+            () => current == owner && !owner.Locked && !owner.Closed && CheckCard());
         menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle));
     }
 
@@ -1026,7 +1019,7 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>Taskbar icon of a window: the program's own icon, or the icon of the Kiosk function.</summary>
-    private static (string? Glyph, Image? Icon) IconFor(UserSession session, Window w)
+    private static (string? Glyph, Image? Icon) IconFor(Window w)
     {
         if (w.Key.StartsWith("rdp:")) return (KioskIcons.Remote, null);
         if (w.Key == BrowserKey || w.Key.StartsWith("browser:") || w.Key.StartsWith("web:")) return (KioskIcons.Browser, null);
@@ -1245,7 +1238,7 @@ internal sealed partial class KioskForm : Form
         try
         {
             host = CreateRdp(connection, config.RequireCredentialPrompt);
-            session.Rdp[connection.Name] = new RdpSession { Connection = connection, Host = host, ConnectingSince = DateTime.UtcNow };
+            session.Rdp[connection.Name] = new RdpSession { Host = host, ConnectingSince = DateTime.UtcNow };
             AddWindow(session, key, connection.Name, host);
             // Fresh COM control per connection and per person; never store a PIN/password or reuse credentials.
             host.Client.Connect();
@@ -1471,11 +1464,13 @@ internal sealed partial class KioskForm : Form
         if (candidate.Closed || candidate != current || !CanUseApps || !IsAdmin(candidate) || !CheckCard()) return;
         var session = current!;
         var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
-        view.IdentifyScreensRequested += ShowScreenNumbers;
+        view.IdentifyScreensRequested += () => { if (current == session && !session.Locked && CheckCard()) ShowScreenNumbers(); };
         settingsView = view;
         view.CancelRequested += () => CloseWindow(SettingsKey, "settings_closed", session);
         view.SaveRequested += updated =>
         {
+            if (settingsView != view || current != session || session.Locked || session.Closed ||
+                !IsAdmin(session) || !CheckCard()) return;
             Configuration.Save(configPath, updated);
             bool modeChanged = updated.SessionMode != config.SessionMode;
             // A live change must not convert an existing card session into the
