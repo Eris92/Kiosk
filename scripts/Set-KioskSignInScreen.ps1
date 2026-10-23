@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
 Gives the Windows sign-in screen the Kiosk look: Kiosk background with "Przyłóż kartę", no user list,
 sign-in with a security key (FIDO2 card) turned on. Windows still does the sign-in, so the Kiosk
@@ -24,9 +24,10 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
-$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
-
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+Assert-KioskAdministrator
+$ImagePath = Assert-KioskDataFilePath $ImagePath '.png'
+$journal = $null
 $csp = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP'
 $personalization = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization'
 $systemPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
@@ -35,32 +36,28 @@ $securityKey = 'HKLM:\SOFTWARE\Microsoft\Policies\PassportForWork\SecurityKey'
 # Password and Windows Hello (PIN / face / fingerprint) credential providers.
 $hiddenProviders = '{60b78e88-ead8-445c-9cfd-0b87f74ea6cd},{D6886603-9D2F-4EB2-B667-1971041FA96B}'
 
-function Set-Value($Path, $Name, $Value, $Type = 'DWord') {
-    if ($PSCmdlet.ShouldProcess("$Path\$Name", "set $Value")) {
-        if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-        New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
-    }
-}
-
-function Remove-Value($Path, $Name) {
-    if ((Test-Path $Path) -and $PSCmdlet.ShouldProcess("$Path\$Name", 'remove')) {
-        Remove-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue
+function Set-Value($Path, $Name, $Value, $Type = 'DWord', [switch]$CommaSet) {
+    if ($PSCmdlet.ShouldProcess("$Path\$Name", 'write sign-in setting (previous value retained)')) {
+        if (-not $script:journal) { $script:journal = Open-KioskRegistryJournal 'signin-screen' }
+        Set-KioskRegistryValue $script:journal $Path $Name $Value $Type -CommaSet:$CommaSet
     }
 }
 
 if ($Uninstall) {
-    foreach ($name in 'LockScreenImagePath', 'LockScreenImageUrl', 'LockScreenImageStatus') { Remove-Value $csp $name }
-    Remove-Value $personalization 'NoChangingLockScreen'
-    foreach ($name in 'DisableAcrylicBackgroundOnLogon', 'EnumerateLocalUsers', 'BlockUserFromShowingAccountDetailsOnSignin', 'ExcludedCredentialProviders') { Remove-Value $systemPolicy $name }
-    Remove-Value $securityKey 'UseSecurityKeyForSignin'
-    Write-Output 'Kiosk sign-in screen removed (the image file is left in place).'
+    $state = Join-Path $env:ProgramData 'Kiosk\DeploymentState\signin-screen.clixml'
+    if (-not (Test-Path -LiteralPath $state)) { throw 'No saved deployment state exists. Restore the previous sign-in policies from your management system or export.' }
+    if ($PSCmdlet.ShouldProcess('Kiosk sign-in screen', 'restore recorded policy values')) {
+        $journal = Open-KioskRegistryJournal 'signin-screen'
+        Restore-KioskRegistryJournal $journal
+    }
+    Write-Output 'Recorded sign-in policies restored where unchanged; image retained. Review policy-conflict warnings.'
     return
 }
-
 # 1. Background image in the Kiosk colours. The sign-in tile sits in the middle, so the text goes above it.
 if ($PSCmdlet.ShouldProcess($ImagePath, 'draw sign-in background')) {
     Add-Type -AssemblyName System.Drawing
-    New-Item -ItemType Directory -Force -Path (Split-Path $ImagePath) | Out-Null
+    Set-KioskDirectoryAcl (Split-Path -Parent $ImagePath) -UsersRead
+    if (Test-Path -LiteralPath $ImagePath) { Set-KioskFileAcl $ImagePath -UsersRead }
     $width = 3840; $height = 2160
     $bitmap = New-Object System.Drawing.Bitmap $width, $height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -88,6 +85,7 @@ if ($PSCmdlet.ShouldProcess($ImagePath, 'draw sign-in background')) {
         $bitmap.Save($ImagePath, [System.Drawing.Imaging.ImageFormat]::Png)
     }
     finally { $graphics.Dispose(); $bitmap.Dispose() }
+    Set-KioskFileAcl $ImagePath -UsersRead
 }
 Set-Value $csp 'LockScreenImagePath' $ImagePath 'String'
 Set-Value $csp 'LockScreenImageUrl' $ImagePath 'String'
@@ -102,7 +100,12 @@ Set-Value $systemPolicy 'DisableAcrylicBackgroundOnLogon' 1
 
 # 3. Security key (FIDO2 card) sign-in for Entra ID accounts.
 Set-Value $securityKey 'UseSecurityKeyForSignin' 1
-if ($SecurityKeyOnly) { Set-Value $systemPolicy 'ExcludedCredentialProviders' $hiddenProviders 'String' }
+if ($SecurityKeyOnly) {
+    $current = (Get-ItemProperty -Path $systemPolicy -Name ExcludedCredentialProviders -ErrorAction SilentlyContinue).ExcludedCredentialProviders
+    $providers = @($current -split ',' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
+    foreach ($id in $hiddenProviders -split ',') { if ($providers -notcontains $id) { $providers += $id } }
+    Set-Value $systemPolicy 'ExcludedCredentialProviders' ($providers -join ',') 'String' -CommaSet
+}
 
 Write-Output "Done. Background: $ImagePath"
 Write-Output 'Lock the PC (Win+L) or sign out to see the sign-in screen.'

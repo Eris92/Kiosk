@@ -18,16 +18,18 @@ internal static class MultiWindowFixture
         }
         using var lifetime = new CancellationTokenSource();
         using var context = new ApplicationContext();
+        using var dispatch = new Control();
+        _ = dispatch.Handle; // This UI-thread handle survives closing the first application window.
         var windows = new List<Form>();
+        int created = 0;
         void Open()
         {
-            var form = new Form { Text = "Kiosk multi-window fixture " + windows.Count, Size = new Size(480, 320) };
+            var form = new Form { Text = "Kiosk multi-window fixture " + created++, Size = new Size(480, 320) };
             windows.Add(form);
             form.FormClosed += (_, _) => { windows.Remove(form); if (windows.Count == 0) context.ExitThread(); };
             form.Show();
         }
         Open();
-        var dispatch = windows[0];
         _ = Task.Run(async () =>
         {
             try

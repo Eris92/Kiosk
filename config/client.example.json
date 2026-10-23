@@ -1,23 +1,27 @@
 {
+  "ConfigVersion": 2,
   "RdpConnections": [
     {
-      "Name": "Pulpit zdalny",
+      "Name": "RDS",
       "Server": "rds.example.local",
       "Port": 3389,
       "UserName": "",
       "Authentication": "SmartCard"
+    },
+    {
+      "Name": "RDP bieżącego użytkownika",
+      "Server": "desktop.example.local",
+      "Port": 3389,
+      "UserName": "",
+      "Authentication": "WindowsCurrentUser"
     }
   ],
   "ReaderName": "",
-  "BrowserUrl": "https://www.google.com",
+  "BrowserUrl": "https://portal.example.local",
   "Bookmarks": [
     {
-      "Name": "Google",
-      "Url": "https://www.google.com"
-    },
-    {
-      "Name": "wp",
-      "Url": "https://wp.pl"
+      "Name": "Portal",
+      "Url": "https://portal.example.local"
     }
   ],
   "EnableBrowser": true,
@@ -29,30 +33,15 @@
       "Path": "kiosk:notatnik",
       "Arguments": "",
       "WorkingDirectory": ""
-    },
-    {
-      "Name": "Excel",
-      "Path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
-      "Arguments": "--new-window",
-      "WorkingDirectory": ""
-    },
-    {
-      "Name": "VS Code",
-      "Path": "C:\\Users\\Kris\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
-      "Arguments": "--new-window",
-      "WorkingDirectory": ""
-    },
-    {
-      "Name": "KeePass",
-      "Path": "X:\\keepass-main\\KeePass.exe",
-      "Arguments": "",
-      "WorkingDirectory": ""
     }
   ],
+  "IdleScreens": [],
+  "IdleAfterSeconds": 5,
   "LockAfterSeconds": 300,
   "ChangeUserAfterSeconds": 600,
-  "UnlockMethod": "Card",
-  "SessionMode": "Kiosk",
+  "UnlockMethod": "CardAndPin",
+  "SignInAsUser": false,
+  "SessionMode": "WindowsShell",
   "DisconnectOnCardRemoval": true,
   "AccentColor": "#3DDC84",
   "AdminCards": [],
@@ -60,6 +49,5 @@
   "RequireCredentialPrompt": true,
   "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
-  "TestMode": true,
-  "ConfigVersion": 2
+  "TestMode": false
 }

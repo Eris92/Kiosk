@@ -47,5 +47,29 @@ internal static class BrowserLifecycleTests
         idle.Interactive = false;
         if ((AppNative.GetWindowLongPtr(idle.Handle, -20).ToInt64() & noActivate) == 0)
             throw new InvalidOperationException("View-only screen remained interactive.");
+
+        // Only marked, inactive GUID profiles belong to the cleanup routine. A profile
+        // locked by another live browser must survive until that browser releases it.
+        var root = Path.Combine(Path.GetTempPath(), "KioskBrowserCleanup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var stale = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        var active = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        var unrelated = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stale);
+        Directory.CreateDirectory(active);
+        Directory.CreateDirectory(unrelated);
+        File.WriteAllText(Path.Combine(stale, BrowserView.ProfileMarkerName), BrowserView.ProfileMarkerText);
+        var activeMarker = Path.Combine(active, BrowserView.ProfileMarkerName);
+        File.WriteAllText(activeMarker, BrowserView.ProfileMarkerText);
+        using (var lockFile = new FileStream(activeMarker, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            BrowserView.CleanupAbandonedProfiles(root);
+            if (Directory.Exists(stale) || !Directory.Exists(active) || !Directory.Exists(unrelated))
+                throw new InvalidOperationException("Browser cleanup removed a live or unowned profile, or left an orphan.");
+        }
+        BrowserView.CleanupAbandonedProfiles(root);
+        if (Directory.Exists(active)) throw new InvalidOperationException("Browser cleanup did not remove the released profile.");
+        Directory.Delete(unrelated);
+        Directory.Delete(root);
     }
 }

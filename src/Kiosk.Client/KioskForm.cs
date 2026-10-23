@@ -47,7 +47,11 @@ internal sealed partial class KioskForm : Form
         internal Dictionary<string, int>? Layout { get; set; }
         /// <summary>The screens' content was opened as this person (editable) after their first unlock.</summary>
         internal bool ScreensOpened { get; set; }
+        internal bool ScreensOpening { get; set; }
+        internal bool ScreensRetryOnUnlock { get; set; }
         internal bool Closed { get; set; }
+        internal CancellationTokenSource Lifetime { get; } = new();
+        internal bool AdminCertificateVerified { get; set; }
     }
 
     private const string BrowserKey = "browser", NotesKey = "notes", SettingsKey = "settings";
@@ -68,8 +72,11 @@ internal sealed partial class KioskForm : Form
     private string? cardKey;
     private bool requireRemoval, inTick, closeConfirmed, verifying;
     private CancellationTokenSource? pinCheck;
-    private bool shellCardSeen;
+    private string? shellCardKey;
     private DateTime? disconnectedSince;
+    private DateTime? shellLockRequestedAt;
+    private IntPtr shellNotificationHandle;
+    private DateTime nextShellNotificationAttempt;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
     private string? notice;
     private ChromeState? lastChrome;
@@ -225,6 +232,7 @@ internal sealed partial class KioskForm : Form
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
         if (!session.Locked) session.InactiveSince = DateTime.UtcNow;
         session.Locked = true;
+        session.AdminCertificateVerified = false;
         if (current == session) current = null;
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
@@ -237,6 +245,7 @@ internal sealed partial class KioskForm : Form
         if (current is not { Locked: false } session) return;
         menu.HideMenu();
         session.Locked = true;
+        session.AdminCertificateVerified = false;
         session.InactiveSince = DateTime.UtcNow - TimeSpan.FromMilliseconds(idleMilliseconds);
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
@@ -245,7 +254,11 @@ internal sealed partial class KioskForm : Form
 
     private void Unlock(UserSession session)
     {
-        if (!session.ScreensOpened && !ShellMode && config.IdleScreens.Length > 0) { session.ScreensOpened = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
+        if (!session.ScreensOpened && !ShellMode && config.IdleScreens.Length > 0)
+        {
+            if (session.ScreensOpening) session.ScreensRetryOnUnlock = true;
+            else { session.ScreensOpening = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
+        }
         session.Locked = false;
         session.Verified = true;
         session.Notice = null;
@@ -390,10 +403,14 @@ internal sealed partial class KioskForm : Form
                 try
                 {
                     // A card without certificates is a FIDO2 card: Kiosk asks for its PIN and the card checks it (CTAP2).
-                    var result = session.Identity.Id.StartsWith("cert:")
-                        ? await CardPin.VerifyAsync(reader.ActiveReader, Handle, cancel.Token)
+                    var result = session.Identity.Id.StartsWith("cert:", StringComparison.OrdinalIgnoreCase)
+                        ? await CardPin.VerifyAsync(reader.ActiveReader, Handle, cancel.Token, session.Identity.Id[5..])
                         : await VerifyFidoPinAsync();
-                    if (result.Code == CardPin.Verified) return true;
+                    if (result.Code == CardPin.Verified)
+                    {
+                        if (session.Identity.Id.StartsWith("cert:", StringComparison.OrdinalIgnoreCase)) session.AdminCertificateVerified = true;
+                        return true;
+                    }
                     session.Notice = result.Message.Length > 0 ? result.Message : "Nie potwierdzono PIN-u karty.";
                     Audit.Write("unlock_pin_failed", result.Code.ToString());
                     return false;
@@ -431,10 +448,12 @@ internal sealed partial class KioskForm : Form
     private void CloseSession(UserSession session, string reason)
     {
         session.Closed = true;
+        session.Lifetime.Cancel();
         if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
         session.Logon = null;
+        session.Lifetime.Dispose();
         sessions.Remove(session.Identity.Id);
         Audit.Write(reason, session.Identity.Name);
     }
@@ -661,37 +680,56 @@ internal sealed partial class KioskForm : Form
     /// </summary>
     private async Task OpenScreenContentsAsync(UserSession session)
     {
-        var screens = OrderedScreens;
-        for (int n = 1; n <= screens.Length; n++)
+        bool complete = true;
+        try
         {
-            var content = config.IdleScreens.FirstOrDefault(s => s.Screen == n) ?? config.IdleScreens.FirstOrDefault(s => s.Screen == 0);
-            if (content == null || current != session || session.Locked) continue;
-            var title = "Ekran " + n;
-            try
+            var screens = OrderedScreens;
+            for (int n = 1; n <= screens.Length; n++)
             {
-                if (content.Url.Length > 0 && session.Logon == null)
+                var content = config.IdleScreens.FirstOrDefault(s => s.Screen == n) ?? config.IdleScreens.FirstOrDefault(s => s.Screen == 0);
+                if (content == null) continue;
+                if (session.Closed || current != session || session.Locked) { complete = false; break; }
+                var title = "Ekran " + n;
+                var key = content.Url.Length > 0 && session.Logon == null ? "web:" + n : "app:" + title;
+                if (session.Windows.Any(w => w.Key == key)) continue;
+                try
                 {
-                    // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
-                    var key = "web:" + n;
-                    var view = new BrowserView([], null, session.Identity.Thumbprints);
-                    AddWindow(session, key, title, view);
-                    if (n > 1) PlaceWindow(session, key, n, remember: false);
-                    await view.InitializeAsync(content.Url);
+                    if (content.Url.Length > 0 && session.Logon == null)
+                    {
+                        // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
+                        var view = new BrowserView([], null, session.Identity.Thumbprints);
+                        AddWindow(session, key, title, view);
+                        if (n > 1) PlaceWindow(session, key, n, remember: false);
+                        await view.InitializeAsync(content.Url);
+                    }
+                    else
+                    {
+                        var entry = content.Url.Length > 0 ? EdgeForScreen(n, content.Url)
+                            : new ApplicationEntry { Name = title, Path = content.Path, Arguments = content.Arguments };
+                        session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
+                        if (n > 1) session.Layout["app:" + title] = n; // Opens on its own screen.
+                        await StartApplicationAsync(session, entry);
+                    }
+                    Audit.Write("screen_opened_as_user", title);
                 }
-                else
+                catch (Exception ex)
                 {
-                    var entry = content.Url.Length > 0 ? EdgeForScreen(n, content.Url)
-                        : new ApplicationEntry { Name = title, Path = content.Path, Arguments = content.Arguments };
-                    session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
-                    if (n > 1) session.Layout["app:" + title] = n; // Opens on its own screen.
-                    await StartApplicationAsync(session, entry);
+                    complete = false;
+                    if (session.Windows.Any(w => w.Key == key)) CloseWindow(key, "screen_open_error", session);
+                    Audit.Write("screen_open_error", title + ": " + ex.Message);
                 }
-                Audit.Write("screen_opened_as_user", title);
             }
-            catch (Exception ex) { Audit.Write("screen_open_error", title + ": " + ex.Message); }
+            // The main screen's content (if any) is what the person sees first.
+            if (current == session && !session.Locked && session.Windows.FirstOrDefault(w => w.Title == "Ekran 1") is { } main && HostOf(main.View) == null) ShowView(main.View);
+            session.ScreensOpened = complete && !session.Closed && current == session && !session.Locked;
         }
-        // The main screen's content (if any) is what the person sees first.
-        if (current == session && !session.Locked && session.Windows.FirstOrDefault(w => w.Title == "Ekran 1") is { } main && HostOf(main.View) == null) ShowView(main.View);
+        finally
+        {
+            session.ScreensOpening = false;
+            bool retry = session.ScreensRetryOnUnlock && !session.ScreensOpened && !session.Closed && current == session && !session.Locked;
+            session.ScreensRetryOnUnlock = false;
+            if (retry && !IsDisposed) { session.ScreensOpening = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
+        }
     }
 
     /// <summary>The person's own Edge (their signed-in profile, SSO) for a screen. When their Edge already runs, it opens
@@ -741,24 +779,85 @@ internal sealed partial class KioskForm : Form
         Unlock(session);
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (ShellMode) TryRegisterShellNotifications();
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (shellNotificationHandle != IntPtr.Zero)
+        {
+            WindowsSession.UnregisterNotifications(shellNotificationHandle);
+            shellNotificationHandle = IntPtr.Zero;
+        }
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == WindowsSession.SessionChangeMessage && ShellMode)
+        {
+            var change = message.WParam.ToInt32();
+            if (change is WindowsSession.SessionLock or WindowsSession.ConsoleDisconnect or WindowsSession.RemoteDisconnect)
+            {
+                disconnectedSince ??= DateTime.UtcNow;
+                shellLockRequestedAt = null;
+            }
+            else if (change is WindowsSession.SessionUnlock or WindowsSession.RemoteConnect)
+            {
+                shellLockRequestedAt = null;
+                shellCardKey = null;
+                // Keep the time spent away until ShellTick has enforced the
+                // retention limit, even if its timer did not run while locked.
+            }
+        }
+        base.WndProc(ref message);
+    }
+
+    private void TryRegisterShellNotifications()
+    {
+        if (shellNotificationHandle != IntPtr.Zero || !IsHandleCreated) return;
+        var handle = Handle;
+        if (WindowsSession.RegisterNotifications(handle)) shellNotificationHandle = handle;
+        else nextShellNotificationAttempt = DateTime.UtcNow.AddSeconds(5);
+    }
+
     private void ShellTick()
     {
-        if (WindowsSession.IsDisconnected())
+        var now = DateTime.UtcNow;
+        if (shellNotificationHandle == IntPtr.Zero && now >= nextShellNotificationAttempt) TryRegisterShellNotifications();
+        var state = WindowsSession.State();
+        if (state is WindowsSession.Availability.Locked or WindowsSession.Availability.Disconnected)
         {
-            disconnectedSince ??= DateTime.UtcNow;
-            if (config.ChangeUserAfterSeconds > 0 && DateTime.UtcNow - disconnectedSince >= TimeSpan.FromSeconds(config.ChangeUserAfterSeconds))
-                SignOutWindows("session_expired");
+            disconnectedSince ??= now;
+            shellLockRequestedAt = null;
+        }
+        if (WindowsSession.RetentionExpired(disconnectedSince, now, config.ChangeUserAfterSeconds))
+        {
+            SignOutWindows("session_expired");
             return;
         }
-        if (disconnectedSince != null)
+        else if (state == WindowsSession.Availability.Active && shellLockRequestedAt == null && disconnectedSince != null)
         {
-            // The person signed in again (Windows checked their card / Hello): continue where they left off.
             disconnectedSince = null;
-            shellCardSeen = false;
+            shellCardKey = null;
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
-        if (reader.Snapshot(config.ReaderName) != null) shellCardSeen = true;
-        else if (shellCardSeen && config.DisconnectOnCardRemoval) { DisconnectWindows("card_removed"); return; }
+        if (disconnectedSince != null)
+            return;
+        if (shellLockRequestedAt is { } requested)
+        {
+            // LockWorkStation is asynchronous. If Windows has not confirmed the
+            // lock, fail closed by signing out rather than leaving work exposed.
+            if (now - requested >= TimeSpan.FromSeconds(5)) SignOutWindows("windows_lock_unconfirmed");
+            return;
+        }
+        var observedCard = reader.Snapshot(config.ReaderName);
+        if (!config.DisconnectOnCardRemoval) shellCardKey = observedCard;
+        else if (shellCardKey == null) shellCardKey = observedCard;
+        else if (observedCard != shellCardKey) { DisconnectWindows("card_removed_or_changed"); return; }
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
@@ -766,10 +865,14 @@ internal sealed partial class KioskForm : Form
     private void DisconnectWindows(string reason)
     {
         menu.HideMenu();
-        shellCardSeen = false;
         Audit.Write(reason, current?.Identity.Name ?? "");
-        try { WindowsSession.Disconnect(); }
-        catch (Exception ex) { notice = "Nie udało się rozłączyć sesji Windows: " + ex.Message; Audit.Write("disconnect_failed", ex.Message); }
+        try { WindowsSession.LockOrDisconnect(); shellLockRequestedAt = DateTime.UtcNow; }
+        catch (Exception ex)
+        {
+            notice = "Nie udało się zablokować sesji Windows: " + ex.Message;
+            Audit.Write("windows_lock_failed", ex.Message);
+            SignOutWindows("windows_lock_failed");
+        }
     }
 
     private void SignOutWindows(string reason)
@@ -849,7 +952,7 @@ internal sealed partial class KioskForm : Form
         bool can = CanUseApps;
         var s = current;
         var remote = config.RdpConnections.Select(c => new MenuItemSpec(c.Name,
-            (s?.Rdp.ContainsKey(c.Name) == true ? "Otwarte · " : "") + c.Server + " · " + AuthenticationLabel(c.Authentication),
+            (s?.Rdp.ContainsKey(c.Name) == true || s?.Applications.ContainsKey(RdpUserHost.WindowName(c)) == true ? "Otwarte · " : "") + c.Server + " · " + AuthenticationLabel(c.Authentication),
             () => OpenRdp(c), can, KioskIcons.Remote)).ToList();
         if (remote.Count == 0) remote.Add(new MenuItemSpec("Brak połączeń", "Dodaj je w Konfiguracji", () => { }, false));
         var apps = new List<MenuItemSpec>();
@@ -864,8 +967,8 @@ internal sealed partial class KioskForm : Form
         var system = new List<MenuItemSpec> { new("Pulpit", "Pokaż pulpit", () => ShowView(desktop), true, KioskIcons.Desktop) };
         if (config.IdleScreens.Length > 0)
             system.Add(new MenuItemSpec("Odśwież ekrany", "Uruchom ponownie treść ekranów", RefreshScreens, true, KioskIcons.Refresh));
-        if (configPath != null && s != null && IsAdmin(s))
-            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", OpenSettings, can, KioskIcons.Settings));
+        if (configPath != null && s != null && (IsAdmin(s) || IsConfiguredAdminCertificate(s, config)))
+            system.Add(new MenuItemSpec("Konfiguracja", "Ustawienia Kiosku", () => _ = OpenSettingsAsync(), can, KioskIcons.Settings));
         if (can)
         {
             system.Add(new MenuItemSpec("Zablokuj", "Zablokuj sesję", () => Lock("manual_lock", 0), true, KioskIcons.Lock));
@@ -874,7 +977,7 @@ internal sealed partial class KioskForm : Form
         // Closing the shell itself: in test mode, or for a Kiosk administrator.
         if (config.TestMode || s != null && IsAdmin(s))
             system.Add(new MenuItemSpec("Zamknij", "Zamknij lub uruchom ponownie Kiosk", AskCloseOrRestart, true, "\uE7E8"));
-        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => RunCommand(c), can,
+        var commandItems = config.Commands.Select(c => new MenuItemSpec(c.Name, "Polecenie", () => _ = RunCommandAsync(c), can,
             KioskIcons.Command, c.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? KioskIcons.ForProgram(c.Path) : null)).ToList();
         return [new("Pulpity zdalne", remote), new("Aplikacje", apps), new("Polecenia", commandItems), new("System", system)];
     }
@@ -891,10 +994,18 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>Menu → Polecenia: runs a program or script in the background and shows how it ended.</summary>
-    private void RunCommand(CommandEntry command)
+    private async Task RunCommandAsync(CommandEntry command)
     {
-        if (current is not { } session) return;
+        if (current is not { } session || !CheckCard()) return;
         if (command.Confirm && MessageBox.Show(this, "Uruchomić polecenie „" + command.Name + "”?", "Polecenie", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (session.Closed || current != session || !CheckCard()) return;
+        var logon = command.AsUser && !ShellMode ? session.Logon : null;
+        if (command.AsUser && !ShellMode && logon == null)
+        {
+            notice = "Polecenie wymaga zalogowania do konta Windows w menu Zaloguj.";
+            RefreshChrome();
+            return;
+        }
         var ext = Path.GetExtension(command.Path).ToLowerInvariant();
         var system = Environment.SystemDirectory;
         var (program, arguments) = ext switch
@@ -908,38 +1019,67 @@ internal sealed partial class KioskForm : Form
         Audit.Write("command_started", command.Name);
         notice = "Polecenie „" + command.Name + "” działa…";
         RefreshChrome();
-        _ = Task.Run(() =>
+        try
         {
             int code;
-            if (command.AsUser && session.Logon != null)
+            if (logon != null)
             {
-                var (process, thread) = session.Logon.Start(program, line, directory, show: 0); // SW_HIDE
-                AppNative.ResumeThread(thread);
-                AppNative.CloseHandle(thread);
-                WaitForSingleObject(process, uint.MaxValue);
-                GetExitCodeProcess(process, out var exit);
-                AppNative.CloseHandle(process);
-                code = (int)exit;
+                var (process, thread) = logon.Start(program, line, directory, show: 0); // SW_HIDE
+                try
+                {
+                    if (AppNative.ResumeThread(thread) == uint.MaxValue)
+                    {
+                        int error = Marshal.GetLastWin32Error();
+                        AppNative.TerminateProcess(process, 1);
+                        throw new Win32Exception(error);
+                    }
+                    await WaitForProcessAsync(process, session.Lifetime.Token);
+                    if (!GetExitCodeProcess(process, out var exit)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    code = unchecked((int)exit);
+                }
+                finally { AppNative.CloseHandle(thread); AppNative.CloseHandle(process); }
             }
             else
             {
                 var start = new System.Diagnostics.ProcessStartInfo(program, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = directory ?? "" };
-                using var process = System.Diagnostics.Process.Start(start)!;
-                process.WaitForExit();
+                using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Nie można uruchomić programu.");
+                await process.WaitForExitAsync(session.Lifetime.Token);
                 code = process.ExitCode;
             }
-            return code;
-        }).ContinueWith(t =>
+            Audit.Write("command_finished", command.Name + ": " + code);
+            if (session.Closed || current != session || IsDisposed) return;
+            notice = "Polecenie „" + command.Name + "” " + (code == 0 ? "zakończone." : "zakończone z kodem " + code + ".");
+        }
+        catch (OperationCanceledException) when (session.Closed || IsDisposed)
         {
-            var text = t.IsFaulted ? "nie udało się uruchomić: " + t.Exception!.InnerException!.Message : t.Result == 0 ? "zakończone." : "zakończone z kodem " + t.Result + ".";
-            notice = "Polecenie „" + command.Name + "” " + text;
-            Audit.Write("command_finished", command.Name + ": " + (t.IsFaulted ? "error" : t.Result.ToString()));
-            RefreshChrome();
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+            Audit.Write("command_detached", command.Name);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("command_finished", command.Name + ": error");
+            if (session.Closed || current != session || IsDisposed) return;
+            notice = "Polecenie „" + command.Name + "” nie udało się uruchomić: " + ex.Message;
+        }
+        if (!IsDisposed) RefreshChrome();
     }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    private sealed class ProcessWaitHandle : WaitHandle
+    {
+        internal ProcessWaitHandle(IntPtr process) =>
+            SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(process, ownsHandle: false);
+    }
+
+    private static async Task WaitForProcessAsync(IntPtr process, CancellationToken cancellation)
+    {
+        using var wait = new ProcessWaitHandle(process);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = ThreadPool.RegisterWaitForSingleObject(wait, (_, _) => completed.TrySetResult(), null, Timeout.Infinite, true);
+        try { await completed.Task.WaitAsync(cancellation); }
+        finally { registration.Unregister(null); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
 
     /// <summary>Menu → Zamknij: close the Kiosk or start it again (same program, same configuration).</summary>
     private void AskCloseOrRestart()
@@ -1078,9 +1218,9 @@ internal sealed partial class KioskForm : Form
     /// <summary>The remote desktop as the signed-in person: this program in RDP-only mode (see <see cref="RdpUserHost"/>).</summary>
     private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
     {
-        Name = connection.Name,
+        Name = RdpUserHost.WindowName(connection),
         Path = Environment.ProcessPath!,
-        Arguments = RdpUserHost.Argument + " " + connection.Server + " " + connection.Port + " " + config.ConnectTimeoutSeconds + " " + config.RequireCredentialPrompt
+        Arguments = RdpUserHost.ArgumentsFor(connection, config.ConnectTimeoutSeconds, config.RequireCredentialPrompt)
     };
 
     private void OpenRdp(RdpConnection connection)
@@ -1089,10 +1229,12 @@ internal sealed partial class KioskForm : Form
         if (current?.Rdp.ContainsKey(connection.Name) == true) { ActivateExisting(key); return; }
         if (!CheckCard()) return;
         var session = current!;
-        if (session.Logon != null && connection.Authentication != RdpAuthentication.EntraId)
+        if (session.Logon != null)
         {
-            // Signed in with "Zaloguj": the remote desktop runs as the person, with Remote Credential Guard (Kerberos).
-            // No password is sent — Credential Guard on this PC refuses to hand saved passwords to RDP anyway.
+            // Every selected authentication mode runs in the person's Windows
+            // context. The helper keeps the configured mode and user name.
+            var windowName = RdpUserHost.WindowName(connection);
+            if (session.Applications.ContainsKey(windowName)) { ActivateExisting("app:" + windowName); return; }
             _ = OpenApplicationAsync(RemoteDesktopAsUser(connection));
             return;
         }
@@ -1275,22 +1417,55 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>
-    /// Who may open Konfiguracja: a card on the AdminCards list, or (when allowed) a member of this PC's local
-    /// Administrators group. While the list is empty in test mode everyone may, so the first admin can add a card.
+    /// An authenticated Windows administrator, or a listed card after its selected certificate key has signed a
+    /// fresh challenge. Public certificate fields and card UIDs alone cannot grant administrator privileges.
     /// </summary>
     private bool IsAdmin(UserSession session, Config? settings = null)
     {
         settings ??= config;
-        if (settings.AdminCards.Any(a => a.Id == session.Identity.Id)) return true;
+        bool listed = settings.AdminCards.Any(a => a.Id.Equals(session.Identity.Id, StringComparison.OrdinalIgnoreCase));
+        if (listed && (session.Identity.Id.StartsWith("win:", StringComparison.OrdinalIgnoreCase) && ShellMode ||
+            session.Identity.Id.StartsWith("cert:", StringComparison.OrdinalIgnoreCase) && session.AdminCertificateVerified ||
+            settings.TestMode)) return true;
         if (settings.AllowWindowsAdministrators && (session.IsWindowsAdmin || session.Logon?.IsAdministrator == true)) return true;
         return settings.TestMode && settings.AdminCards.Length == 0;
     }
 
-    private void OpenSettings()
+    private static bool IsConfiguredAdminCertificate(UserSession session, Config settings) =>
+        session.Identity.Id.StartsWith("cert:", StringComparison.OrdinalIgnoreCase) &&
+        settings.AdminCards.Any(a => a.Id.Equals(session.Identity.Id, StringComparison.OrdinalIgnoreCase));
+
+    private async Task OpenSettingsAsync()
     {
         if (settingsView != null) { ActivateExisting(SettingsKey); return; }
         // Open windows stay as they are; saved settings apply to what is opened next.
-        if (configPath == null || !CanUseApps || !IsAdmin(current!)) return;
+        if (configPath == null || !CanUseApps || current is not { } candidate || !CheckCard()) return;
+        if (!IsAdmin(candidate) && IsConfiguredAdminCertificate(candidate, config))
+        {
+            if (verifying) return;
+            verifying = true;
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            pinCheck = cancel;
+            try
+            {
+                var result = await CardPin.VerifyAsync(reader.ActiveReader, Handle, cancel.Token, candidate.Identity.Id[5..]);
+                if (candidate.Closed || IsDisposed || candidate != current) return;
+                if (result.Code != CardPin.Verified)
+                {
+                    candidate.Notice = result.Message;
+                    Audit.Write("admin_card_proof_failed", result.Code.ToString());
+                    return;
+                }
+                if (!cardPresent() || (identifyCard() ?? UncertifiedCard())?.Id != candidate.Identity.Id) return;
+                cardKey = reader.Snapshot(config.ReaderName);
+                candidate.AdminCertificateVerified = true;
+                Audit.Write("admin_card_proof_verified");
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) { Audit.Write("admin_card_proof_error", ex.Message); candidate.Notice = ex.Message; return; }
+            finally { pinCheck = null; verifying = false; if (!IsDisposed) RefreshChrome(); }
+        }
+        if (candidate.Closed || candidate != current || !CanUseApps || !IsAdmin(candidate) || !CheckCard()) return;
         var session = current!;
         var view = new SettingsView(config, session.Identity, updated => IsAdmin(session, updated));
         view.IdentifyScreensRequested += ShowScreenNumbers;

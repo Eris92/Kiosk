@@ -1,12 +1,13 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Kiosk.Client;
 
-/// <summary>Who a session belongs to. Id is stable across removal and reinsertion; Upn (from the certificate) maps to a Windows account.</summary>
+/// <summary>Card identity for in-app sessions. A certificate UPN is a claim, not proof that the Windows token belongs to this card.</summary>
 internal sealed record CardIdentity(string Id, string Name, string Upn = "")
 {
     /// <summary>Thumbprints of all certificates on the card (for signing in to websites with the card).</summary>
@@ -29,12 +30,13 @@ internal static class CardPin
     internal sealed record Result(int Code, string Message);
 
     /// <summary>Starts the child check and waits for it; the PIN dialog is owned by <paramref name="owner"/>.</summary>
-    internal static async Task<Result> VerifyAsync(string reader, IntPtr owner, CancellationToken cancel)
+    internal static async Task<Result> VerifyAsync(string reader, IntPtr owner, CancellationToken cancel, string requiredThumbprint = "")
     {
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
         start.ArgumentList.Add(Argument);
         start.ArgumentList.Add(reader);
         start.ArgumentList.Add(owner.ToInt64().ToString());
+        start.ArgumentList.Add(requiredThumbprint);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(cancel);
         try { await process.WaitForExitAsync(cancel); }
@@ -44,7 +46,7 @@ internal static class CardPin
     }
 
     /// <summary>Child-process entry point. Returns the exit code and prints a Polish message.</summary>
-    internal static int Run(string reader, IntPtr owner)
+    internal static int Run(string reader, IntPtr owner, string requiredThumbprint)
     {
         try
         {
@@ -67,6 +69,7 @@ internal static class CardPin
                 if (names.Count == 0) return Exit(NoKey, "Na karcie w czytniku „" + reader + "” nie znaleziono klucza do sprawdzenia PIN-u.");
 
                 int last = 0;
+                bool mismatchedProof = false;
                 foreach (var name in names)
                 {
                     // Not silent: a key opened with NCRYPT_SILENT_FLAG refuses to show the PIN dialog (NTE_SILENT_CONTEXT).
@@ -74,14 +77,23 @@ internal static class CardPin
                     using (key)
                     {
                         if (!CanSign(key)) continue;
+                        using var certificate = CertificateForKey(key);
+                        if (certificate == null || requiredThumbprint.Length > 0 &&
+                            !string.Equals(certificate.Thumbprint, requiredThumbprint, StringComparison.OrdinalIgnoreCase)) continue;
                         SetProperty(key, "HWND Handle", BitConverter.GetBytes(owner.ToInt64()));
                         SetProperty(key, "Use Context", Encoding.Unicode.GetBytes("Odblokowanie Kiosku\0"));
-                        last = Sign(key);
-                        if (last == 0) return Exit(Verified, "PIN karty potwierdzony.");
+                        last = Sign(key, out var hash, out var signature);
+                        if (last == 0)
+                        {
+                            if (VerifySignature(certificate, hash, signature)) return Exit(Verified, "PIN karty i klucz certyfikatu potwierdzone.");
+                            mismatchedProof = true;
+                            continue;
+                        }
                         if (last is unchecked((int)0x8010006E) or unchecked((int)0x800704C7)) return Exit(Cancelled, "Anulowano wpisywanie PIN-u.");
                         if (last is unchecked((int)0x8010006B) or unchecked((int)0x8010006C)) return Exit(WrongPin, "Nieprawidłowy PIN karty.");
                     }
                 }
+                if (mismatchedProof) return Exit(Failed, "Klucz karty nie odpowiada wybranemu certyfikatowi.");
                 return last == 0 ? Exit(NoKey, "Karta nie ma klucza, którym można potwierdzić PIN.")
                     : Exit(Failed, "Nie udało się sprawdzić PIN-u karty (0x" + last.ToString("X8") + ").");
             }
@@ -110,11 +122,8 @@ internal static class CardPin
                     if (NCryptOpenKey(provider, out var key, scope + name, 0, Silent) != 0) continue;
                     using (key)
                     {
-                        if (NCryptGetProperty(key, "SmartCardKeyCertificate", null, 0, out var size, Silent) != 0 || size == 0) continue;
-                        var data = new byte[size];
-                        if (NCryptGetProperty(key, "SmartCardKeyCertificate", data, size, out _, Silent) != 0) continue;
-                        try { certificates.Add(System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(data)); }
-                        catch (CryptographicException) { }
+                        var certificate = CertificateForKey(key);
+                        if (certificate != null) certificates.Add(certificate);
                     }
                 }
             }
@@ -184,9 +193,31 @@ internal static class CardPin
         return (BitConverter.ToInt32(usage) & 0x2) != 0; // NCRYPT_ALLOW_SIGNING_FLAG
     }
 
-    private static int Sign(SafeNCryptKeyHandle key)
+    private static System.Security.Cryptography.X509Certificates.X509Certificate2? CertificateForKey(SafeNCryptKeyHandle key)
     {
-        var hash = SHA256.HashData(RandomNumberGenerator.GetBytes(32));
+        if (NCryptGetProperty(key, "SmartCardKeyCertificate", null, 0, out var size, Silent) != 0 || size is < 1 or > 65536) return null;
+        var data = new byte[size];
+        if (NCryptGetProperty(key, "SmartCardKeyCertificate", data, size, out _, Silent) != 0) return null;
+        try { return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(data); }
+        catch (CryptographicException) { return null; }
+    }
+
+    internal static bool VerifySignature(System.Security.Cryptography.X509Certificates.X509Certificate2 certificate, byte[] hash, byte[] signature)
+    {
+        try
+        {
+            using var rsa = certificate.GetRSAPublicKey();
+            if (rsa != null) return rsa.VerifyHash(hash, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            using var ecdsa = certificate.GetECDsaPublicKey();
+            return ecdsa?.VerifyHash(hash, signature) == true;
+        }
+        catch (CryptographicException) { return false; }
+    }
+
+    private static int Sign(SafeNCryptKeyHandle key, out byte[] hash, out byte[] signature)
+    {
+        hash = SHA256.HashData(RandomNumberGenerator.GetBytes(32));
+        signature = [];
         var group = new byte[64];
         bool rsa = NCryptGetProperty(key, "Algorithm Group", group, group.Length, out var length, Silent) == 0 &&
                    Encoding.Unicode.GetString(group, 0, length).TrimEnd('\0') == "RSA";
@@ -199,7 +230,7 @@ internal static class CardPin
             int flags = rsa ? 0x2 : 0; // NCRYPT_PAD_PKCS1_FLAG; no NCRYPT_SILENT_FLAG so Windows asks for the PIN.
             int status = NCryptSignHash(key, info, hash, hash.Length, null, 0, out var size, flags);
             if (status != 0) return status;
-            var signature = new byte[size];
+            signature = new byte[size];
             return NCryptSignHash(key, info, hash, hash.Length, signature, signature.Length, out _, flags);
         }
         finally { Marshal.FreeHGlobal(padding); Marshal.FreeHGlobal(algorithm); }

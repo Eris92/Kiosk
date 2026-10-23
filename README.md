@@ -1,253 +1,139 @@
-# Kiosk - smart card / RDS test client
+# Kiosk
 
-Fullscreen Windows launcher hosting Microsoft's RDP ActiveX control. Insert a
-certificate smart card, select Connect, choose the smart-card credential and
-enter your PIN in the Windows dialog. Card removal, reader failure, another card,
-manual disconnect and 300 seconds of inactivity close the connection. Remote
-applications are not terminated and the remote user is not logged off.
+Kiosk jest pulpitem pracy dla współdzielonego komputera Windows: dolne menu udostępnia nazwane połączenia RDP, przeglądarkę, Notatnik i skonfigurowane programy. Okna aplikacji można przełączać i rozmieszczać na monitorach. Zablokowanie lub odłożenie sesji ukrywa jej okna; zakończenie sesji zamyka jej lokalne programy. Zdalne sesje RDS są rozłączane bez wylogowania użytkownika serwera.
 
-This is a test implementation. COM/PCSC, credential dialogs, PIN caching and
-reconnection must be tested with your reader, middleware, PKI and RDS.
-Fullscreen is not an OS security boundary. No OS lockdown, auto-logon,
-firewall/registry changes or credential storage are performed by these files.
+## Uruchomienie lokalne
 
-## Prerequisites
-
-- Windows 11 x64 client with a PC/SC reader and certificate smart card, such as
-  YubiKey PIV. UID-only RFID and FIDO2-only credentials cannot authenticate this
-  RDP workflow. ATR is a change signal, not a user identity.
-- Configured Windows Server RDS Session Host, appropriate RDS CALs and individual
-  AD accounts. Windows 11 Pro cannot provide 3-4 concurrent local user sessions.
-- AD/PKI smart-card logon certificates, account mapping, trusted certificate
-  chain and reachable revocation endpoints. Check with `certutil -scinfo`.
-- Trusted RDS TLS certificate matching the configured server FQDN; NLA enabled.
-  The client rejects server authentication failures.
-- Direct Session Host connection on the configured TCP port (default 3389).
-  RD Gateway and broker/farm routing are not implemented in this version.
-- Set ReaderName to the exact physical PC/SC reader name when Windows Hello,
-  UICC or other virtual readers are present. Only that reader is monitored.
-  With ReaderName empty, exactly one usable card across all readers is required.
-
-Microsoft documentation:
-https://learn.microsoft.com/en-us/windows/security/identity-protection/smart-cards/smart-card-and-remote-desktop-services
-
-ActiveX API:
-https://learn.microsoft.com/en-us/windows/win32/termserv/msrdpclient9notsafeforscripting
-
-## Quick test - ready EXE
-
-1. Open Actions -> Build Windows client, open a successful run and download
-   Kiosk-win-x64. Extract the ZIP to C:\Kiosk. The client is self-contained;
-   installing a separate .NET runtime is not required.
-2. Edit client/client.json: set Server to your Session Host FQDN.
-   Keep TestMode true during testing. IdleSeconds defaults to 300.
-3. Run the read-only checks, then the client:
+Wymagane są Windows 11 x64, .NET 10 SDK do kompilacji oraz Microsoft Edge WebView2 Runtime do przeglądarki. Publikacja zawiera własny runtime .NET; na komputerze docelowym nie trzeba instalować SDK ani runtime .NET. RDP korzysta z systemowej kontrolki ActiveX. Czytnik musi obsługiwać PC/SC; uwierzytelnianie certyfikatem i operacje FIDO2 mają dodatkowe wymagania sprzętowe/polityk.
 
 ```powershell
-Set-Location C:\Kiosk
-.\scripts\Test-Prerequisites.ps1 -ConfigPath .\client\client.json
-certutil.exe -scinfo
-.\client\Kiosk.Client.exe
-```
-
-The PIN belongs in the Windows credential dialog. Select the smart-card tile
-if multiple methods are shown. Authentication is performed by Windows/RDS,
-not by a local card UID lookup. Enforce smart-card-only authentication on the
-relevant AD accounts with Smart card is required for interactive logon. Scope
-and test that policy first: it affects other interactive logons too. Without
-that enforcement a password credential may also be offered.
-
-After disconnect, remove and reinsert the card before another connection.
-The **Przeglądarka** button opens an embedded WebView2 browser inside the Kiosk
-window. It requires Microsoft Edge WebView2 Runtime. Set `BrowserUrl` in the
-client configuration to choose its start page (default: `https://www.google.com`).
-Each session uses a separate InPrivate profile under `%TEMP%\KioskBrowser`,
-independent of your personal Edge profile. Links requesting another window
-open in the embedded view; external application protocols are blocked.
-The **Notatnik** button opens a built-in plain-text editor with Open and Save As
-actions; it does not launch Windows Notepad. The top buttons switch between
-RDP, browser and notes without losing their current state.
-Card removal/change, inactivity, Disconnect and closing Kiosk dispose the local
-views and disconnect RDP. Save notes before removing the card: forced session
-end clears unsaved text. Manual Disconnect/Exit asks before discarding notes.
-Card presence enables local tools; it does not authenticate the user to websites.
-No automatic reconnect or credential reuse is requested by the client.
-TestMode false removes the window border and test exit; it does not restrict
-Alt+Tab, Ctrl+Alt+Del or Windows access. Production OS lockdown is separate.
-
-## Build locally
-
-Requires Windows x64 and .NET 8 SDK or a newer SDK that can target .NET 8:
-
-```powershell
-git clone https://github.com/Eris92/Kiosk.git
-Set-Location Kiosk
 .\scripts\Build.ps1
-notepad.exe .\out\client\client.json
-.\out\client\Kiosk.Client.exe
+if (-not (Test-Path .\client.local.json)) { Copy-Item .\config\client.development.json .\client.local.json }
+.\out\client\Kiosk.Client.exe .\client.local.json
 ```
 
-Scripts support Windows PowerShell 5.1 and PowerShell 7. The session launcher
-requires STA. Sign scripts or use your approved execution policy; no policy
-bypass is included. The EXE is unsigned; production signing/deployment is separate.
+Domyślna konfiguracja produkcyjna ma WindowsShell, TestMode=false, Notatnik, stronę example.org i pustą listę RDP. Do lokalnego testu użyj config/client.development.json (Kiosk, TestMode=true). Nie zawiera adresów, kont ani ścieżek konkretnego stanowiska. `client.local.json` jest ignorowany przez Git i **nigdy nie jest automatycznie kopiowany do publikacji**. Lokalny skrót powinien przekazywać pełną ścieżkę tego pliku jako pierwszy argument EXE. Zmiana binariów nie wymaga zmiany pliku lokalnego.
 
-## Local configuration: RDP, applications and bookmarks
-
-In TestMode, open **Konfiguracja** before starting a card session. It edits the
-same JSON file passed to the launcher (the desktop shortcut uses
-`client.local.json`). Save applies changes immediately and persists them for the
-next run. Configuration is disabled while a session is active; finish the
-session first. In production, manage this file with administrator-only write
-permissions and keep TestMode disabled.
-
-- **Połączenie i sesja**: RDS server/port, reader, browser home page and idle limit.
-- **Zakładki przeglądarki**: add/edit/remove named HTTP/HTTPS links. These appear
-  as buttons below the address bar and navigate the embedded browser.
-- **Aplikacje**: choose an EXE, name, arguments and optional working directory.
-  After card detection, choose the entry from **Aplikacje ▾**. Select it again to
-  return to its running view.
-
-RDP now calls `Connect()` on the embedded ActiveX control directly; it does not
-launch an RDP shell or separate mstsc window. Credential/PIN prompts remain
-Windows dialogs. The remote desktop is scaled inside the Kiosk content area.
-Live RDS authentication still requires a real configured server and certificates.
-
-External application embedding supports compatible desktop Win32 main windows,
-not every Windows program. Kiosk starts each application suspended, assigns it
-to a kill-on-close Windows Job, then embeds only a window owned by that Job.
-The main window follows the panel size. Existing personal instances are never
-adopted or killed. Programs that reuse another instance, require elevation, use
-store/UWP activation or reject cross-process parenting may not embed; configure
-an application's own new-instance argument when supported. Additional dialogs
-may still be separate windows. Kiosk reports failure instead of claiming that
-an unsupported application was embedded. This is not OS lockdown.
-
-Save work before removing the card: session termination closes launched
-application processes and their descendants. Unsaved application data can be
-lost. Manual Disconnect/Exit asks before closing running external applications.
-
-Configuration example (merge these fields with the existing client settings):
-
-```json
-{
-  "Bookmarks": [
-    { "Name": "Portal", "Url": "https://portal.example.local" }
-  ],
-  "Applications": [
-    {
-      "Name": "My application",
-      "Path": "C:\\Apps\\Example\\Example.exe",
-      "Arguments": "",
-      "WorkingDirectory": "C:\\Apps\\Example"
-    }
-  ]
-}
-```
-
-## Applications in the authenticated RDS user session
-
-Copy scripts/Start-SessionLauncher.ps1 and config/apps.json to the Session Host.
-Edit application paths and URL. The Enova path is only an example. Run as the
-actual RDS user, without elevation:
+Jeżeli potrzebny jest osobny skonfigurowany katalog testowy:
 
 ```powershell
-powershell.exe -NoProfile -STA -File C:\Kiosk\scripts\Start-SessionLauncher.ps1 -ConfigPath C:\Kiosk\config\apps.json
+.\scripts\Build.ps1 -OutputPath .\out\local -ConfigPath .\client.local.json
+.\out\local\Kiosk.Client.exe
 ```
 
-Buttons launch Notepad, Enova or Edge as the remote user. Web SSO depends on the
-application and the RDS user's identity configuration; the launcher does not
-implement SSO itself. Edge uses the user's normal profile to preserve context.
-Closing the launcher does not close apps. Disconnect uses tsdiscon for its own
-RDP session. No logoff or server-side process termination is used.
+`Build.ps1` publikuje do czystego katalogu tymczasowego i podmienia wskazany katalog dopiero po powodzeniu. Ponowna publikacja usuwa stare pliki z tego katalogu wynikowego. Dane i własne pliki konfiguracyjne przechowuj poza katalogiem publikacji. Nie uruchamiaj kompilacji do katalogu działającej instalacji w Program Files.
 
-For production, put scripts/config in an administrator-managed directory with
-read-only user access. After manual validation, deploy startup using a scoped
-user logon policy or approved shortcut. No scheduled task or Explorer replacement
-is installed automatically.
+## Konfiguracja i tożsamość
 
-## RDS policy review
+**Menu → Konfiguracja** pozwala edytować listę RDP, aplikacje, zakładki i zasady sesji. Uprawnienia administratora Windows wynikają wyłącznie z faktycznie uwierzytelnionego tokenu Windows; nazwa/UPN certyfikatu karty nie dowodzi członkostwa w grupie administratorów. W produkcji wpis `cert:` na liście kart administratorów wymaga potwierdzenia PIN i podpisania świeżego wyzwania kluczem certyfikatu przed otwarciem ustawień; sam UID karty nie nadaje uprawnień. Jawnie włączony tryb testowy ma odrębne zasady. Nieznane pola i nieprawidłowa wersja konfiguracji są odrzucane. Plik produkcyjny powinien być zapisywalny wyłącznie przez administratorów. `config/client.example.json` jest wzorcem do dostosowania, a nie gotową konfiguracją sieci.
 
-| Setting | Required behavior |
+| Ustawienie | Znaczenie |
 | --- | --- |
-| Restrict each user to a single RDS session | Enabled: resume the existing user session |
-| Do not allow smart card device redirection | Disabled: allow smart cards |
-| Require NLA | Enabled |
-| Time limit for disconnected sessions | Preserve for the required workflow |
-| End session when time limits are reached | Disabled for this preservation workflow |
-| Interactive logon: smart card removal behavior | Review on RDS; logoff conflicts with keeping apps |
-| Credential saving / delegation | Do not save; review existing credentials and delegation policy |
+| `RdpConnections` | Lista unikalnych nazw, hostów, portów i metod logowania: `SmartCard`, `WindowsCurrentUser`, `EntraId`. |
+| `RequireCredentialPrompt` | Żądanie systemowego okna poświadczeń RDP. Wyłączenie pozwala Windows użyć dostępnych poświadczeń; nie wyłącza NLA ani wymagań serwera/PIN karty. |
+| `AutoConnectRdpName` | Nazwa istniejącego profilu otwieranego po odblokowaniu; pusty tekst wyłącza automatyczne łączenie. |
+| `UnlockMethod` | `Card` = sama obecność rozpoznanej karty; `CardAndPin` = sprawdzenie PIN-u karty; `CardAndWindowsHello` = potwierdzenie przez Hello bieżącej sesji Windows. |
+| `LockAfterSeconds` | Czas bezczynności do blokady; 10–86400 sekund. |
+| `ChangeUserAfterSeconds` | Czas zachowania odłożonej sesji; 0 zachowuje ją do ręcznego zakończenia. Po upływie limitu lokalne aplikacje są zamykane. |
+| `ReaderName` | Dokładna nazwa fizycznego czytnika; pusty tekst wymaga jednoznacznego wykrycia jednej karty. |
+| `Bookmarks`, `BrowserUrl` | Nazwane adresy HTTP/HTTPS i strona startowa przeglądarki. |
+| `BrowserOnlyBookmarks`, `BrowserAllowedDomains` | Ograniczenie nawigacji do domen zakładek i dodatkowych dozwolonych domen; logowanie SSO może wymagać dopisania domen dostawcy tożsamości. |
+| `Applications` | Unikalna nazwa, pełna ścieżka EXE, argumenty i opcjonalny katalog roboczy; `kiosk:notatnik` oznacza wbudowany edytor. |
+| `IdleScreens`, `IdleAfterSeconds` | Treści stron/aplikacji na monitorach i czas powrotu ekranu głównego do treści podczas braku aktywnego użytkownika. |
+| `TestMode` | Dostępność funkcji testowych/wyjścia; pełny ekran sam w sobie nie ogranicza funkcji systemu Windows. |
 
-Use scoped RDS collection/GPO settings. Check existing idle/disconnected-session
-limits to avoid unexpected logoff. The client disables drive, printer and
-clipboard redirection and automatic reconnect; enforce equivalent policies on
-the server. Standard users and individual certificates are required.
+Sama obecność/UID/ATR karty nie uwierzytelnia konta Windows ani Entra. Hello potwierdza użytkownika już zalogowanego do Windows. Dostęp lokalny, poświadczenia RDP oraz rzeczywisty użytkownik procesu są osobnymi elementami konfiguracji.
 
-## Acceptance tests
+- **`SessionMode: WindowsShell`**: osoba loguje się do Windows własnym kontem przez dopuszczoną na urządzeniu metodę (lokalne Hello, domenowy certyfikat lub Hello, Entra Hello), a Kiosk działa jako jej powłoka. Programy działają w kontekście tokenu tego konta; SSO zależy od systemu, aplikacji i polityk. Na fizycznej konsoli blokada/wyjęcie karty blokuje Windows; sesja RDP komputera Kiosk jest rozłączana. Po upływie limitu zachowania sesji Kiosk może wylogować użytkownika i zamknąć programy.
+- **`SessionMode: Kiosk`**: Kiosk przełącza własne sesje kart w jednej sesji Windows. Domyślnie programy mają tożsamość konta uruchamiającego Kiosk. To nie jest izolacja osobnych kont systemowych.
+- **`SignInAsUser`**: opcjonalne logowanie innym kontem Windows/Entra w trybie Kiosk. System sprawdza login/hasło; aplikacje uruchamiane są jako uwierzytelniony użytkownik. Opcjonalne zapamiętanie konta na karcie FIDO2 przechowuje zaszyfrowaną kopię poświadczeń chronioną sekretem sprzętowym karty. To oddzielna funkcja od logowania Windows natywną kartą/Hello; oceń ją zgodnie z zasadami przechowywania poświadczeń organizacji.
 
-1. User A connects with card/PIN, opens apps, records session ID with quser.
-   Remove card: desktop disappears locally; remote session becomes Disc and
-   apps survive.
-2. User B connects with their own card. Verify B cannot see A's desktop/apps.
-3. A reconnects with PIN: verify the same session ID and application state.
-4. Wait 300 seconds without local input: disconnect while applications survive.
-5. Unplug the configured reader, stop Smart Card service or rapidly
-   remove/reinsert: connection must close. PCSC event counters detect removal
-   between polling cycles when supported by the reader stack.
-6. Remove card while entering PIN, cancel credentials, use a wrong PIN, unplug
-   network and reject TLS trust: no desktop should become visible without fresh
-   authentication. Cancellation is cleaned up within ConnectTimeoutSeconds.
-7. Restart client with another card. Verify no prior user identity is reused.
-   Windows/provider PIN caching is outside this app: test middleware policy.
-8. Inspect client logs: %LOCALAPPDATA%\Kiosk\Logs\YYYY-MM-DD.jsonl and server
-   Security/TerminalServices logs. No PIN, password or card ID is logged.
+Dla prawdziwych osobnych profili użytkowników i SSO użyj WindowsShell na prawidłowo przyłączonym/zarządzanym urządzeniu. RDP uruchamiane pod innym uwierzytelnionym kontem ma osobny proces pomocniczy `--rdp-host`; ten parametr jest wewnętrznym protokołem aplikacji, nie opcją zapisywania haseł w skrótach.
 
-## Limitations and rollback
+Na komputerze lokalnym Hello potwierdza tylko lokalne konto Windows. Nie tworzy samo mapowania tego konta do użytkownika domeny/Entra ani zdalnego RDS. Podobnie certyfikat odczytany z karty lub jego UPN nie wiąże automatycznie karty z sesją odblokowaną przez Hello. Jeśli wymagany jest ten sam użytkownik we wszystkich aplikacjach i RDP, zapewnij osobne logowanie do Windows każdego użytkownika i sprawdź tożsamość otrzymaną na serwerze dla każdego profilu RDP. W trybie wspólnego konta Kiosk tego wymagania nie można zagwarantować samą kartą i Hello.
 
-Polling is 250 ms, not an instantaneous hardware interlock. Credential modal
-dialogs and reader-specific event counters require hardware testing. Client
-inactivity uses input in the local Windows session. The connection timeout is
-bounded, but interactive provider behavior requires testing on Windows.
+Osadzanie zewnętrznych programów obsługuje zgodne okna Win32. Nie każda aplikacja Store/UWP, program wymagający podwyższenia uprawnień lub ponownie używający istniejącej instancji może zostać osadzony. Gdy aplikacja to wspiera, ustaw argument nowej instancji. Dodatkowe okna dialogowe mogą pozostać osobnymi oknami. Kiosk nie przejmuje cudzych wcześniej uruchomionych procesów. Zakończenie sesji zamyka jej uruchomione procesy: zapisz pracę przed wylogowaniem/wygaśnięciem sesji.
 
-No machine installation changes: close using Exit test, remove any manually
-deployed startup shortcut and delete the directory. Restore independently made
-RDS/GPO changes from your export. Avoid logoff or killing remote apps when
-preserving state. Runtime verification on Windows/RDS is required before rollout.
+Przeglądarka w sesji Kiosk używa osobnego profilu InPrivate, niezależnego od prywatnego Edge. W kontekście zalogowanego konta Windows może korzystać z jego kontekstu/profilu dla SSO. Otwarcie strony nie dowodzi, że strona uwierzytelniła właściwego użytkownika.
 
-## Selecting the physical reader
+## RDP i wymagania środowiska
 
-For ACS ACR1252, set the following value in your client.local.json:
-
-```json
-"ReaderName": "ACS ACR1252 Dual Reader PICC 0"
-```
-
-Use the exact name shown on your machine. Windows Hello/UICC presence does not
-block that configured reader. Removing the selected card or reader still closes
-the connection even when virtual cards remain PRESENT. Selecting a reader scopes
-monitoring; it does not filter Windows/RDP credential providers. Choose the
-certificate belonging to the intended physical card in the Windows dialog.
-
-## Windows shell mode (shared PC with full SSO)
-
-Office, Outlook, OneDrive, the browser and RDP get single sign-on only for the account signed in to Windows.
-For a shared PC set `"SessionMode": "WindowsShell"`: every person signs in to Windows with their card or
-Windows Hello and the Kiosk replaces Explorer as their shell.
-
-- **Zablokuj**, idle time and card removal disconnect the Windows session (like Switch user): programs keep
-  running and the sign-in screen is ready for the next person. Signing in again returns to the same Kiosk.
-- **Wyloguj** signs the person out of Windows. A disconnected session is signed out after
-  `ChangeUserAfterSeconds` (0 = never).
-- Konfiguracja is shown to Kiosk administrators (AdminCards) and members of the local Administrators group.
-
-Setup, as administrator, on a domain-joined or Intune PC (supports `-WhatIf`, reverts with `-Uninstall`):
+Skonfiguruj rzeczywiste hosty FQDN i konta. Dla `SmartCard` potrzebne są certyfikaty logowania, mapowanie kont AD, zaufany łańcuch i osiągalne punkty CRL/OCSP, odpowiedni middleware oraz host RDS z NLA i zaufanym certyfikatem TLS. Karta FIDO2 bez certyfikatu PIV nie jest automatycznie kartą certyfikatową RDP. Metoda `EntraId` wymaga pełnej nazwy DNS oraz poprawnego dołączenia, polityk i zgodności urządzeń. Remote Credential Guard wymaga obsługi i odpowiednich zasad środowiska; samo ustawienie trybu w Kiosku nie konfiguruje tych zależności.
 
 ```powershell
-.\scripts\Build.ps1
-.\scripts\Install-KioskShell.ps1            # add -RequireSmartCard to forbid password sign-in
+.\scripts\Test-Prerequisites.ps1 -ConfigPath .\client.local.json
+.\scripts\Test-Prerequisites.ps1 -ConfigPath .\client.local.json -CheckNetwork
+certutil.exe -scinfo
 ```
 
-Windows Enterprise/Education uses Shell Launcher (administrators keep Explorer); Windows Pro writes the shell
-into the default user profile (accounts signing in for the first time get the Kiosk, existing profiles keep
-Explorer). Domain: the same settings can come from GPO (Custom User Interface, Interactive logon: Do not display
-last user name, Require smart card). Intune: `config/intune/ShellLauncher.xml` (AssignedAccess/ShellLauncher
-CSP, Enterprise/Education) plus the Kiosk as a Win32 app — a template to verify on a test device first.
+Test TCP jest opcjonalny i ograniczony czasem; nie potwierdza uwierzytelniania RDP. Sprawdź kolekcję RDS: pojedyncza sesja na użytkownika, limity odłączonych sesji i zasady niewylogowywania. Kiosk domyślnie ogranicza przekierowania i automatyczne ponowne łączenie; polityki serwera muszą odpowiadać wdrożeniu. RD Gateway i pełna obsługa brokerów/farm nie są konfigurowane przez te skrypty.
+
+Dokumentacja Microsoft: [smart cards and RDS](https://learn.microsoft.com/en-us/windows/security/identity-protection/smart-cards/smart-card-and-remote-desktop-services), [Shell Launcher](https://learn.microsoft.com/en-us/windows/configuration/shell-launcher/), [WESL_UserSetting](https://learn.microsoft.com/en-us/windows/configuration/shell-launcher/wesl-usersetting).
+
+## Sprawdzenie i paczka wdrożeniowa
+
+```powershell
+.\scripts\Test.ps1
+.\scripts\New-Package.ps1 -OutputPath .\out\package-001
+.\scripts\Verify-Package.ps1 -PackagePath .\out\package-001
+```
+
+Testy mają osobną publikację `out/self-test` z włączonym `KioskSelfTest`; zwykłe EXE nie zawiera testowych komend ani testowego generatora okien. Testy sprawdzają między innymi migracje konfiguracji, sesje/karty, osadzanie okien, ustawienia, notatki i WebView2. Testy skryptów wykonują walidację składni/JSON/XML oraz rollback na tymczasowym kluczu HKCU; nie instalują usług ani nie zmieniają polityk logowania.
+
+Natywna DLL kafelka wymaga Visual Studio Build Tools z narzędziami C++ x64 i Windows SDK. Build stosuje `/W4 /WX`, statyczny CRT, CFG, ASLR i NX. Brak kompilatora jest błędem, a nie pominiętym testem. CI buduje/testuje na Windows, kompiluje również DLL i publikuje niepodpisany kandydat wdrożeniowy **Kiosk-win-x64-candidate**; wyniki testów są osobnym artefaktem.
+
+`New-Package.ps1` zawsze buduje w nowym katalogu, kopiuje z listy tylko konfigurację domyślną, przykład i szablon Intune oraz wskazane skrypty wdrożenia. Plik rozwojowy `client.development.json` nie wchodzi do paczki. `package.json` zawiera rewizję źródeł, informację o zmianach śledzonych i nieśledzonych, stan Authenticode i SHA256 każdego pliku. Skrypt nie nadpisuje istniejącego pakietu. `Verify-Package.ps1` wykrywa pliki spoza wykazu, brak wymaganych składników oraz tryb testowy lub tryb sesji inny niż WindowsShell.
+
+SHA256 potwierdza spójność paczki; nie potwierdza tożsamości wydawcy. Repozytorium nie zawiera certyfikatu ani prywatnego klucza podpisu. W kontrolowanym środowisku wydawania użyj certyfikatu organizacji z EKU Code Signing i kluczem prywatnym w magazynie `Cert:\CurrentUser\My` lub `Cert:\LocalMachine\My`. Podpisanie wymaga czystego drzewa Git i znanej rewizji; skrypt podpisuje własne EXE/DLL/skrypty przed obliczeniem hashy. `-RequireSigned` sprawdza zaufanie Authenticode, a `-TrustedSignerThumbprint` dodatkowo konkretny certyfikat. Serwer znacznika czasu dla PowerShell podaj jako `http://` zgodnie z obsługą `Set-AuthenticodeSignature`.
+
+```powershell
+.\scripts\New-Package.ps1 -OutputPath .\out\release-001 -SigningCertificateThumbprint '<ODCISK_CERTYFIKATU_ORGANIZACJI>' -TimestampServer 'http://timestamp.example.org'
+.\scripts\Verify-Package.ps1 -PackagePath .\out\release-001 -RequireSigned -TrustedSignerThumbprint '<ODCISK_CERTYFIKATU_ORGANIZACJI>'
+```
+
+Nie publikuj plików PFX/kluczy, lokalnych konfiguracji ani zaszyfrowanego magazynu kont użytkowników. Podpisu organizacji i zachowania na docelowym Windows nie da się potwierdzić na samej maszynie deweloperskiej.
+
+## Instalacja powłoki i opcjonalnych składników
+
+Poniższe skrypty wykonuj w 64-bitowym PowerShell jako administrator. Obsługują `-WhatIf`. Uruchamianie klienta i testów nie wymaga instalacji powłoki, usługi ani kafelka. Przed zmianą ekranu logowania sprawdź procedurę odzyskania na urządzeniu testowym. Skrypty nie omijają execution policy; stosuj podpisy i politykę organizacji.
+
+```powershell
+.\scripts\Install-KioskShell.ps1 -WhatIf
+.\scripts\Install-KioskShell.ps1 -SourceConfig .\config\client.json
+# Opcjonalnie, jeżeli używasz weryfikacji FIDO2 przez usługę:
+.\scripts\Install-KioskCardService.ps1
+# Opcjonalne tło/kafelek systemowego ekranu logowania:
+.\scripts\Set-KioskSignInScreen.ps1 -WhatIf
+.\scripts\Install-KioskCredentialProvider.ps1 -WhatIf
+```
+
+Instalacja powłoki tworzy nowy katalog wersji poniżej Program Files i wskazuje go jako powłokę przyszłych logowań; działające sesje nie są zatrzymywane ani aktualizowane w miejscu. Konfiguracja jest ustawiana na WindowsShell i TestMode=false. Plik docelowy musi leżeć bezpośrednio w `%ProgramData%\Kiosk`; skrypt ogranicza ACL katalogu i pliku do SYSTEM/administratorów (odczyt dla użytkowników). Przy ponownej instalacji zachowuje istniejącą konfigurację, więc zmiany `-SourceConfig` wymagają osobnej aktualizacji tego pliku. Enterprise/Education/IoT Enterprise używa Shell Launcher; administratorzy otrzymują Explorer. `DefaultProfile` jest wariantem dla nowych profili na pozostałych edycjach: już istniejące profile pozostają bez zmian. Funkcja Windows może wymagać restartu; skrypt zgłasza to przed zmianą powłoki. `config/intune/ShellLauncher.xml` jest osobnym szablonem dla zarządzanej dystrybucji do stałej ścieżki. Zachowuje Explorer jako domyślną powłokę i wymaga wpisania konkretnych istniejących kont standardowych do przypisania profilu Kiosk; wpis grupy Administrators nie jest zamiennikiem indywidualnego konta w tym szablonie. Dopasuj konta/ścieżki i sprawdź profil na urządzeniu testowym.
+
+Usługa KioskCard instaluje odizolowaną wersję binariów w Program Files jako LocalSystem. Przy błędzie uruchomienia przywraca poprzednią ścieżkę i sposób startu usługi. Usuwanie usługi pozostawia pliki. Stare katalogi wersji powłoki/usługi pozostają do kontrolowanego usunięcia po zakończeniu używających ich sesji.
+
+Kafelek Kiosk opakowuje systemowy provider klucza zabezpieczeń; nie realizuje samodzielnie uwierzytelniania Windows. Domyślnie pozostawia standardowe opcje logowania. `-ReplaceWindowsSecurityKey`, `-MakeDefault`, `-HideOtherOptions` i `Set-KioskSignInScreen.ps1 -SecurityKeyOnly` to jawne zmiany polityk. Ukrywanie hasła/Hello lub `Install-KioskShell.ps1 -RequireSmartCard` może pozbawić lokalne konta możliwości zalogowania; wymaga osobnej walidacji rzeczywistego logowania i konta odzyskiwania.
+
+### Rollback
+
+```powershell
+.\scripts\Install-KioskCredentialProvider.ps1 -Uninstall -WhatIf
+.\scripts\Set-KioskSignInScreen.ps1 -Uninstall -WhatIf
+.\scripts\Install-KioskShell.ps1 -Uninstall -WhatIf
+.\scripts\Install-KioskCardService.ps1 -Uninstall -WhatIf
+```
+
+Po sprawdzeniu zakresu usuń `-WhatIf`. Skrypty zapisują poprzednie wartości w chronionym `%ProgramData%\Kiosk\DeploymentState`. Odinstalowanie odtwarza zarejestrowany stan, zamiast wymuszać wartości domyślne. Wartości polityk zmienione później przez inne wdrożenie są pozostawiane z ostrzeżeniem; listy wykluczonych providerów zachowują wpisy innych składników. Powłoka odmawia nadpisania późniejszej zmiany domyślnego shell, powłoki administratorów lub stanu Shell Launcher. Pliki instalacji, konfiguracja, obrazy i wcześniej utworzone profile nie są automatycznie usuwane. Rollback Shell Launcher nie odinstalowuje opcjonalnej funkcji Windows.
+
+Instalacja starszą wersją skryptów nie ma dziennika: automatyczny rollback nie zgaduje poprzednich zasad. Przywróć wcześniejsze ustawienia z eksportu/GPO/Intune. Awaryjne wyłączenie starego kafelka wymaga usunięcia **wyłącznie jego** klucza `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{7A4D2C1E-5B3F-4E8A-9C6D-2F1B8E4A7C30}` oraz przywrócenia poprzedniej listy `ExcludedCredentialProviders`/domyślnego providera; w razie braku logowania wykonuje to administrator przez środowisko odzyskiwania i załadowany hive SOFTWARE. Nie kasuj całej listy providerów ani niezwiązanych polityk.
+
+## Akceptacja przed wdrożeniem
+
+Przejście kompilacji i testów lokalnych nie potwierdza produkcyjnego logowania. Sprawdź na rzeczywistym środowisku:
+
+1. Kartę A/B, PIN/Hello, anulowanie i błędny PIN, wyjęcie/wymianę karty podczas dialogu, odpięcie czytnika i utratę sieci. Na fizycznej konsoli sprawdź odbiór zdarzeń blokady/odblokowania Windows oraz przełączanie kont. Osoba B nie może zobaczyć pulpitu ani programów A.
+2. Wszystkie profile RDP: zaufany TLS/NLA, faktyczną tożsamość procesu i użytkownika zdalnego, wymagane ponowne żądanie PIN oraz zachowanie sesji RDS po rozłączeniu.
+3. Blokadę i wygaśnięcie sesji, ponowne przyłożenie tej samej karty, zapis notatek i zgodność poszczególnych EXE z osadzaniem.
+4. Przeglądarkę, SSO, zakładki/dozwolone domeny, profile użytkowników, zawartość wielu monitorów i różne skalowanie DPI.
+5. Instalację, aktualizację, odinstalowanie i odzyskanie powłoki/kafelka na dedykowanym urządzeniu testowym; polityki organizacji i zachowanie już działających sesji. Potwierdzenie RDS/Entra i podpis certyfikatem organizacji są bramkami przed wdrożeniem produkcyjnym.
+
+Logi klienta: `%LOCALAPPDATA%\Kiosk\Logs\YYYY-MM-DD.jsonl`. Logowanie diagnostyczne kafelka jest opcjonalne; sprawdź zasady retencji danych o użytkownikach. Ostateczne potwierdzenie obejmuje logi Windows/RDS i zachowanie rzeczywistych kart, czytników, kont i polityk.

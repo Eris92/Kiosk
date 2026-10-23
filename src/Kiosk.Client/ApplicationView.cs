@@ -34,6 +34,7 @@ internal sealed class ApplicationView : Panel
     /// </summary>
     private bool overlay;
     private IntPtr overlayOwner;
+    private bool overlayDisabledByKiosk;
     private readonly System.Windows.Forms.Timer overlaySync = new() { Interval = 80 };
     private static bool overlaysHidden;
     private static event Action? OverlaysChanged;
@@ -108,7 +109,8 @@ internal sealed class ApplicationView : Panel
                 var handed = FindHandedOverWindow(before);
                 if (handed != IntPtr.Zero)
                 {
-                    var owner = hostedWindows.Values.First(v => ReferenceEquals(v.ownershipScope, ownershipScope) && v.OwnsWindow(handed));
+                    var owner = hostedWindows.Values.First(v => ReferenceEquals(v.ownershipScope, ownershipScope) &&
+                        string.Equals(v.ProgramPath, ProgramPath, StringComparison.OrdinalIgnoreCase) && v.OwnsWindow(handed));
                     var shared = owner.job ?? throw new InvalidOperationException("Sesja aplikacji została zamknięta.");
                     if (!AppNative.DuplicateHandle(AppNative.GetCurrentProcess(), shared, AppNative.GetCurrentProcess(), out var sharedJob, 0, false, 2))
                         throw new Win32Exception();
@@ -185,6 +187,22 @@ internal sealed class ApplicationView : Panel
     {
         if (!overlay || IsDisposed || HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow)) return;
         var form = FindForm();
+        // An owned top-level Chromium window does not inherit its owner's disabled state.
+        // Idle-screen content must remain view-only until an administrator enables editing.
+        bool disableInput = form is IdleScreen idle && !idle.Interactive;
+        if (disableInput)
+        {
+            if (AppNative.IsWindowEnabled(HostedWindow))
+            {
+                AppNative.EnableWindow(HostedWindow, false);
+                overlayDisabledByKiosk = true;
+            }
+        }
+        else if (overlayDisabledByKiosk)
+        {
+            AppNative.EnableWindow(HostedWindow, true);
+            overlayDisabledByKiosk = false;
+        }
         bool show = form != null && Visible && form.Visible && form.WindowState != FormWindowState.Minimized && ClientSize.Width > 0 &&
             !(overlaysHidden && form is KioskForm); // The Menu opens on the main Kiosk screen.
         if (!show)
@@ -254,7 +272,12 @@ internal sealed class ApplicationView : Panel
     {
         var pids = new HashSet<uint>();
         foreach (var (w, view) in hostedWindows)
-            if (ReferenceEquals(view.ownershipScope, ownershipScope) && AppNative.IsWindow(w)) { AppNative.GetWindowThreadProcessId(w, out var pid); pids.Add(pid); }
+            if (ReferenceEquals(view.ownershipScope, ownershipScope) &&
+                string.Equals(view.ProgramPath, ProgramPath, StringComparison.OrdinalIgnoreCase) && AppNative.IsWindow(w))
+            {
+                AppNative.GetWindowThreadProcessId(w, out var pid);
+                pids.Add(pid);
+            }
         var found = new HashSet<IntPtr>();
         if (pids.Count == 0) return found;
         AppNative.EnumWindows((window, _) =>
@@ -348,6 +371,8 @@ internal sealed class ApplicationView : Panel
         if (overlay) { SyncOverlay(null, EventArgs.Empty); AppNative.SetForegroundWindow(HostedWindow); }
         else AppNative.SetFocus(HostedWindow);
     }
+
+    internal void RefreshOverlayInteraction() => SyncOverlay(null, EventArgs.Empty);
 
     protected override void OnVisibleChanged(EventArgs e)
     {
@@ -452,6 +477,8 @@ internal static class AppNative
     [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] internal static extern bool MoveWindow(IntPtr window, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] internal static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32.dll")] internal static extern bool EnableWindow(IntPtr window, bool enable);
     [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(IntPtr window, StringBuilder name, int length);

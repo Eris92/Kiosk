@@ -14,7 +14,9 @@ internal static class RdpConfiguration
         settings.RDPPort = connection.Port;
         settings.EnableCredSspSupport = true;
         settings.AuthenticationLevel = 1; // Reject server authentication failures.
-        settings.RedirectSmartCards = true; // The card (or Windows Hello virtual card) signs in inside the session.
+        // Only the smart-card profile needs a redirected card. Windows Hello is
+        // bound to the local Windows account; it is not a remote smart card.
+        settings.RedirectSmartCards = connection.Authentication == RdpAuthentication.SmartCard;
         settings.RedirectDrives = false;
         settings.RedirectPrinters = false;
         settings.RedirectClipboard = false;

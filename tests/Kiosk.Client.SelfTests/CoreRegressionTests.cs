@@ -16,7 +16,13 @@ internal sealed partial class KioskForm
             basic with { IdleScreens = [new ScreenContent { Url = null! }] },
             basic with { IdleScreens = [new ScreenContent { Path = "relative.exe" }] },
             basic with { IdleScreens = [new ScreenContent { Url = "https://example.com", Path = "C:\\app.exe" }] },
-            basic with { IdleScreens = [new ScreenContent { Url = "https://a.example" }, new ScreenContent { Url = "https://b.example" }] }
+            basic with { IdleScreens = [new ScreenContent { Url = "https://a.example" }, new ScreenContent { Url = "https://b.example" }] },
+            basic with { Commands = null! },
+            basic with { Commands = [null!] },
+            basic with { Commands = [new CommandEntry { Name = "relative", Path = "script.ps1" }] },
+            basic with { Commands = [new CommandEntry { Name = "unsafe", Path = "C:\\file.txt" }] },
+            basic with { Commands = [new CommandEntry { Name = "A", Path = "C:\\tool.exe" }, new CommandEntry { Name = "a", Path = "C:\\other.exe" }] },
+            basic with { AdminCards = [new AdminCard { Id = "uid:untrusted" }] }
         })
         {
             try { invalid.Validate(); throw new Exception("Invalid screen configuration was accepted."); }

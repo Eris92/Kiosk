@@ -1,13 +1,38 @@
 {
-  "Server": "rds.example.local",
-  "Port": 3389,
+  "ConfigVersion": 2,
+  "RdpConnections": [],
   "ReaderName": "",
-  "BrowserUrl": "https://www.google.com",
+  "BrowserUrl": "https://example.org",
   "Bookmarks": [
-    { "Name": "Google", "Url": "https://www.google.com" }
+    {
+      "Name": "Przykładowa strona",
+      "Url": "https://example.org"
+    }
   ],
-  "Applications": [],
-  "IdleSeconds": 300,
+  "EnableBrowser": true,
+  "BrowserOnlyBookmarks": false,
+  "BrowserAllowedDomains": [],
+  "Applications": [
+    {
+      "Name": "Notatnik",
+      "Path": "kiosk:notatnik",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    }
+  ],
+  "IdleScreens": [],
+  "IdleAfterSeconds": 5,
+  "LockAfterSeconds": 300,
+  "ChangeUserAfterSeconds": 600,
+  "UnlockMethod": "CardAndPin",
+  "SignInAsUser": false,
+  "SessionMode": "WindowsShell",
+  "DisconnectOnCardRemoval": true,
+  "AccentColor": "#3DDC84",
+  "AdminCards": [],
+  "AllowWindowsAdministrators": true,
+  "RequireCredentialPrompt": true,
+  "AutoConnectRdpName": "",
   "ConnectTimeoutSeconds": 60,
-  "TestMode": true
+  "TestMode": false
 }

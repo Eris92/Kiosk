@@ -147,6 +147,8 @@ internal sealed partial class KioskForm
         // Konfiguracja is for admins: a listed card, a Windows administrator, or anyone while the list is empty in test mode.
         var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
         var bobSession = new UserSession { Identity = bob };
+        if (IsAdmin(aliceSession, adminTest)) throw new InvalidOperationException("Public certificate identity granted administrator access without a key proof.");
+        aliceSession.AdminCertificateVerified = true;
         if (!IsAdmin(aliceSession, adminTest) || IsAdmin(bobSession, adminTest) ||
             !IsAdmin(bobSession, config with { TestMode = true, AdminCards = [] }) || IsAdmin(bobSession, config with { TestMode = false, AdminCards = [] }))
             throw new InvalidOperationException("Admin card check failed.");
@@ -212,7 +214,7 @@ internal sealed partial class KioskForm
             ConfigVersion = Config.CurrentVersion, EnableBrowser = false,
             LockAfterSeconds = 60, ChangeUserAfterSeconds = 30, AccentColor = "#3DDC84",
             BrowserOnlyBookmarks = true, BrowserAllowedDomains = ["login.microsoftonline.com"],
-            AdminCards = [new AdminCard { Name = "Admin", Id = "cert:ADMIN" }], AllowWindowsAdministrators = false
+            AdminCards = [new AdminCard { Name = "Admin", Id = "cert:" + new string('A', 40) }], AllowWindowsAdministrators = false
         };
         var configFile = Path.Combine(AppContext.BaseDirectory, "self-test-config.json");
         Configuration.Save(configFile, testConfig);
@@ -280,7 +282,7 @@ internal sealed partial class KioskForm
         StartWindowsSession();
         if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
             throw new InvalidOperationException("Windows shell session failed.");
-        _ = WindowsSession.IsDisconnected();
+        _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
     }

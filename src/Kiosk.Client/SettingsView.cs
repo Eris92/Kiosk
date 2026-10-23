@@ -219,7 +219,7 @@ internal sealed class SettingsView : UserControl
         foreach (var c in config.Commands) commands.Rows.Add(c.Name, c.Path, c.Arguments, c.AsUser, c.Confirm);
         commands.DefaultValuesNeeded += (_, e) => { e.Row.Cells["AsUser"].Value = true; e.Row.Cells["Confirm"].Value = false; };
         SetupGridTab(commandsTab, commands, "Polecenia pojawiają się w Menu w sekcji „Polecenia” i działają w tle (np. kopiowanie plików skryptem). " +
-            "„Jako zalogowana osoba” używa konta z „Zaloguj”, inaczej konta Kiosku. Wynik (kod zakończenia) pokazuje pulpit.");
+            "„Jako zalogowana osoba” w trybie Kiosk wymaga zalogowania do jej konta Windows; w trybie powłoki Windows używa bieżącej sesji. Wynik (kod zakończenia) pokazuje pulpit.");
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
         var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };

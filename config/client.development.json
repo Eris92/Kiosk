@@ -1,0 +1,38 @@
+{
+  "ConfigVersion": 2,
+  "RdpConnections": [],
+  "ReaderName": "",
+  "BrowserUrl": "https://example.org",
+  "Bookmarks": [
+    {
+      "Name": "Przykładowa strona",
+      "Url": "https://example.org"
+    }
+  ],
+  "EnableBrowser": true,
+  "BrowserOnlyBookmarks": false,
+  "BrowserAllowedDomains": [],
+  "Applications": [
+    {
+      "Name": "Notatnik",
+      "Path": "kiosk:notatnik",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    }
+  ],
+  "IdleScreens": [],
+  "IdleAfterSeconds": 5,
+  "LockAfterSeconds": 300,
+  "ChangeUserAfterSeconds": 600,
+  "UnlockMethod": "CardAndPin",
+  "SignInAsUser": false,
+  "SessionMode": "Kiosk",
+  "DisconnectOnCardRemoval": true,
+  "AccentColor": "#3DDC84",
+  "AdminCards": [],
+  "AllowWindowsAdministrators": true,
+  "RequireCredentialPrompt": true,
+  "AutoConnectRdpName": "",
+  "ConnectTimeoutSeconds": 60,
+  "TestMode": true
+}

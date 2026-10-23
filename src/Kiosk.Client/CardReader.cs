@@ -55,7 +55,10 @@ internal sealed class CardReader : IDisposable
         // much less often; reuse native buffers and the last evaluation in between.
         var now = Environment.TickCount64;
         int result;
-        if (states.Length == 0 || now - listUpdatedAt >= 1000 || (selected.Length > 0 && !states.Any(s => s.Reader == selected)))
+        // A configured reader may be unplugged. Re-enumerating it on every
+        // 250 ms poll adds native work without improving the card state check;
+        // discover topology changes on the one-second cadence instead.
+        if (states.Length == 0 || now - listUpdatedAt >= 1000)
         {
             uint size = 0;
             result = Native.SCardListReaders(context, null, null, ref size);

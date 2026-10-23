@@ -1,47 +1,44 @@
 name: Build Windows client
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: kiosk-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
-      - name: Validate PowerShell syntax and JSON
+          dotnet-version: '10.0.x'
+      - name: Validate scripts and run separate embedded UI self-tests
         shell: pwsh
-        run: |
-          Get-ChildItem scripts/*.ps1 | ForEach-Object {
-            $parseErrors = $null
-            $tokens = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
-            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-          }
-          Get-ChildItem config/*.json | ForEach-Object { Get-Content $_ -Raw | ConvertFrom-Json | Out-Null }
-      - name: Publish client
+        run: ./scripts/Test.ps1
+      - name: Build client, native credential provider and clean deployment candidate
         shell: pwsh
-        run: ./scripts/Build.ps1
-      - name: Windows embedded UI smoke test
+        run: ./scripts/New-Package.ps1
+      - name: Verify deployment candidate inventory, safe configuration and hashes
         shell: pwsh
-        run: |
-          $process = Start-Process ./out/client/Kiosk.Client.exe -ArgumentList '--self-test' -PassThru
-          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Smoke test timed out.' }
-          Get-Content ./out/client/self-test.txt
-          if ($process.ExitCode -ne 0) { throw 'Windows embedded UI smoke test failed.' }
-      - name: Package test files
-        shell: pwsh
-        run: |
-          Copy-Item scripts out/scripts -Recurse
-          Copy-Item config out/config -Recurse
-          Copy-Item README.md out/README.md
-      - uses: actions/upload-artifact@v4
+        run: ./scripts/Verify-Package.ps1 -PackagePath ./out/package
+      - name: Upload unsigned deployment candidate
+        uses: actions/upload-artifact@v4
         with:
-          name: Kiosk-win-x64
-          path: out/
+          name: Kiosk-win-x64-candidate
+          path: out/package/
+          if-no-files-found: error
           retention-days: 30
+      - name: Upload self-test diagnostics separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kiosk-self-test-results
+          path: out/self-test/self-test*.txt
+          if-no-files-found: ignore
+          retention-days: 14

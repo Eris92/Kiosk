@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 
 namespace Kiosk.Client;
 
@@ -48,6 +49,31 @@ internal static class SecuritySelfTests
             Reject<AuthenticationTagMismatchException>(() => aes.Decrypt(nonce, cipher, tag, output, CardVault.AccountData("admin", "domain")));
         }
         finally { CryptographicOperations.ZeroMemory(key); CryptographicOperations.ZeroMemory(output); }
+
+        // A copied public certificate cannot authorize a different private key.
+        var challenge = SHA256.HashData(RandomNumberGenerator.GetBytes(32));
+        using (var rsa = RSA.Create(2048))
+        using (var impostor = RSA.Create(2048))
+        using (var certificate = PublicCertificate(new CertificateRequest("CN=Kiosk test RSA", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)))
+        {
+            if (!CardPin.VerifySignature(certificate, challenge, rsa.SignHash(challenge, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)) ||
+                CardPin.VerifySignature(certificate, challenge, impostor.SignHash(challenge, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)))
+                throw new InvalidOperationException("RSA card certificate proof was not bound to its private key.");
+        }
+        using (var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256))
+        using (var impostor = ECDsa.Create(ECCurve.NamedCurves.nistP256))
+        using (var certificate = PublicCertificate(new CertificateRequest("CN=Kiosk test EC", ecdsa, HashAlgorithmName.SHA256)))
+        {
+            if (!CardPin.VerifySignature(certificate, challenge, ecdsa.SignHash(challenge)) ||
+                CardPin.VerifySignature(certificate, challenge, impostor.SignHash(challenge)))
+                throw new InvalidOperationException("EC card certificate proof was not bound to its private key.");
+        }
+    }
+
+    private static X509Certificate2 PublicCertificate(CertificateRequest request)
+    {
+        using var signed = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(5));
+        return X509CertificateLoader.LoadCertificate(signed.Export(X509ContentType.Cert));
     }
 
     private static void Reject<T>(Action action) where T : Exception

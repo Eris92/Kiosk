@@ -1,0 +1,183 @@
+#Requires -Version 5.1
+# Shared deployment helpers. Dot-sourcing this file changes no machine settings.
+function Assert-KioskAdministrator {
+    if (-not [Environment]::Is64BitProcess) { throw 'Run this script in 64-bit PowerShell.' }
+    $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
+}
+
+function Get-KioskClientSource {
+    $root = Split-Path -Parent $PSScriptRoot
+    if (Test-Path -LiteralPath (Join-Path $root 'src\Kiosk.Client\Kiosk.Client.csproj')) { return Join-Path $root 'out\client' }
+    return Join-Path $root 'client'
+}
+
+function Set-KioskDirectoryAcl([string]$Path, [switch]$UsersRead) {
+    $ancestor = [IO.Path]::GetFullPath($Path)
+    if ($ancestor.TrimEnd('\') -eq [IO.Path]::GetPathRoot($ancestor).TrimEnd('\')) { throw 'A filesystem root cannot be a Kiosk managed directory.' }
+    foreach ($protectedRoot in @($env:ProgramData, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:SystemRoot, $env:USERPROFILE) | Where-Object { $_ }) {
+        if ($ancestor.TrimEnd('\') -eq [IO.Path]::GetFullPath($protectedRoot).TrimEnd('\')) { throw 'Use a dedicated Kiosk directory, not a shared system/profile directory.' }
+    }
+    while ($ancestor) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Managed directory contains a junction or symbolic link: $ancestor" }
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    $rights = @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
+    if ($UsersRead) { $rights += '*S-1-5-32-545:(OI)(CI)RX' }
+    & icacls.exe $Path /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot reset directory ACL: $Path" }
+    & icacls.exe $Path /inheritance:r /grant:r @rights | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot protect directory: $Path" }
+}
+
+function Assert-KioskProgramPath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $programs = [IO.Path]::GetFullPath($env:ProgramFiles).TrimEnd('\')
+    if (-not $full.StartsWith($programs + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'InstallPath must be a dedicated directory below 64-bit Program Files.' }
+    $ancestor = $full
+    while ($ancestor.Length -ge $programs.Length) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Installation path contains a junction or symbolic link: $ancestor"
+        }
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    return $full
+}
+
+function Assert-KioskDataFilePath([string]$Path, [string]$Extension) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $directory = [IO.Path]::GetDirectoryName($full).TrimEnd('\')
+    $root = [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'Kiosk')).TrimEnd('\')
+    if (-not [string]::Equals($directory, $root, [StringComparison]::OrdinalIgnoreCase) -or
+        -not [string]::Equals([IO.Path]::GetExtension($full), $Extension, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Kiosk data file must be a $Extension file directly in $root."
+    }
+    return $full
+}
+
+function Set-KioskFileAcl([string]$Path, [switch]$UsersRead) {
+    $file = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Kiosk file does not exist: $file" }
+    if ((Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Kiosk file is a junction or symbolic link: $file" }
+    $rights = @('*S-1-5-18:F', '*S-1-5-32-544:F')
+    if ($UsersRead) { $rights += '*S-1-5-32-545:R' }
+    & icacls.exe $file /reset | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot reset file ACL: $file" }
+    & icacls.exe $file /inheritance:r /grant:r @rights | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot protect file: $file" }
+}
+
+function Invoke-KioskSc {
+    & sc.exe @args
+    if ($LASTEXITCODE -ne 0) { throw "Service command failed (exit $LASTEXITCODE)." }
+}
+
+function Get-KioskRegistryValue([string]$Path, [string]$Name) {
+    if (-not (Test-Path -LiteralPath $Path)) { return @{ Exists = $false; Kind = ''; Value = $null } }
+    $key = Get-Item -LiteralPath $Path
+    try {
+        if ($key.GetValueNames() -notcontains $Name) { return @{ Exists = $false; Kind = ''; Value = $null } }
+        return @{ Exists = $true; Kind = [string]$key.GetValueKind($Name); Value = $key.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+    } finally { $key.Close() }
+}
+
+function Open-KioskWritableRegistryKey([string]$Path) {
+    $parent = Get-Item -LiteralPath $Path
+    try { return $parent.OpenSubKey('', $true) }
+    finally { $parent.Close() }
+}
+
+function Open-KioskRegistryJournal([string]$Component) {
+    $dataRoot = Join-Path $env:ProgramData 'Kiosk'
+    Set-KioskDirectoryAcl $dataRoot -UsersRead
+    $directory = Join-Path $env:ProgramData 'Kiosk\DeploymentState'
+    Set-KioskDirectoryAcl $directory
+    $file = Join-Path $directory ($Component + '.clixml')
+    if (Test-Path -LiteralPath $file) {
+        Set-KioskFileAcl $file
+        $journal = Import-Clixml -LiteralPath $file
+    }
+    else { $journal = @{ Version = 1; Values = @() } }
+    return @{ File = $file; State = $journal; SecureFiles = $true }
+}
+
+function Save-KioskRegistryJournal($Journal) {
+    $temporary = $Journal.File + '.tmp-' + [Guid]::NewGuid().ToString('N')
+    $backup = $Journal.File + '.backup-' + [Guid]::NewGuid().ToString('N')
+    try {
+        $Journal.State | Export-Clixml -LiteralPath $temporary -Depth 12
+        if ($Journal.SecureFiles) { Set-KioskFileAcl $temporary }
+        if (Test-Path -LiteralPath $Journal.File) { [IO.File]::Replace($temporary, $Journal.File, $backup) }
+        else { Move-Item -LiteralPath $temporary -Destination $Journal.File }
+        if ($Journal.SecureFiles) { Set-KioskFileAcl $Journal.File }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
+    }
+}
+
+function Set-KioskRegistryValue($Journal, [string]$Path, [string]$Name, $Value, [string]$Kind = 'DWord', [switch]$CommaSet) {
+    $entry = @($Journal.State.Values | Where-Object { $_.Path -eq $Path -and $_.Name -eq $Name }) | Select-Object -First 1
+    if (-not $entry) {
+        $entry = @{ Path = $Path; Name = $Name; Original = (Get-KioskRegistryValue $Path $Name); Applied = $null }
+        $Journal.State.Values += $entry
+    }
+    # Persist both rollback data and the intended write before changing the registry.
+    $entry.Applied = @{ Exists = $true; Kind = $Kind; Value = $Value }
+    if ($CommaSet) { $entry.CommaSet = $true }
+    Save-KioskRegistryJournal $Journal
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
+    if ($Name -eq '') {
+        $key = Open-KioskWritableRegistryKey $Path
+        try { $key.SetValue('', $Value, [Microsoft.Win32.RegistryValueKind]::$Kind) }
+        finally { $key.Close() }
+    }
+    else { New-ItemProperty -LiteralPath $Path -Name $Name -Value $Value -PropertyType $Kind -Force | Out-Null }
+}
+
+function Restore-KioskRegistryJournal($Journal) {
+    $remaining = @()
+    $entries = @($Journal.State.Values)
+    [array]::Reverse($entries)
+    foreach ($entry in $entries) {
+        $current = Get-KioskRegistryValue $entry.Path $entry.Name
+        $expected = $entry.Applied
+        if ($entry.CommaSet) {
+            # Different Kiosk components and device management may add provider IDs later.
+            # Undo only this component's additions/removals, preserving every other ID.
+            $original = @(([string]$entry.Original.Value) -split ',' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
+            $applied = @(([string]$expected.Value) -split ',' | Where-Object { $_ } | ForEach-Object { $_.Trim() })
+            $added = @($applied | Where-Object { $original -notcontains $_ })
+            $removed = @($original | Where-Object { $applied -notcontains $_ })
+            $list = @(([string]$current.Value) -split ',' | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Where-Object { $added -notcontains $_ })
+            foreach ($id in $removed) { if ($list -notcontains $id) { $list += $id } }
+            $key = Open-KioskWritableRegistryKey $entry.Path
+            try {
+                if ($list.Count -gt 0 -or $entry.Original.Exists) { $key.SetValue($entry.Name, ($list -join ','), [Microsoft.Win32.RegistryValueKind]::String) }
+                else { $key.DeleteValue($entry.Name, $false) }
+            } finally { $key.Close() }
+            continue
+        }
+        # Hashtable property order is not stable across processes, compare fields separately.
+        $matches = $current.Exists -eq $expected.Exists -and $current.Kind -eq $expected.Kind -and
+            (($current.Value | ConvertTo-Json -Compress -Depth 4) -eq ($expected.Value | ConvertTo-Json -Compress -Depth 4))
+        if (-not $matches) {
+            Write-Warning "Policy changed after Kiosk deployment; leaving it in place: $($entry.Path)\$($entry.Name)"
+            $remaining += $entry
+            continue
+        }
+        if ($entry.Original.Exists) {
+            if (-not (Test-Path -LiteralPath $entry.Path)) { New-Item -Path $entry.Path -Force | Out-Null }
+            $key = Open-KioskWritableRegistryKey $entry.Path
+            try { $key.SetValue($entry.Name, $entry.Original.Value, [Microsoft.Win32.RegistryValueKind]::$($entry.Original.Kind)) }
+            finally { $key.Close() }
+        } else {
+            $key = Open-KioskWritableRegistryKey $entry.Path
+            try { $key.DeleteValue($entry.Name, $false) }
+            finally { $key.Close() }
+        }
+    }
+    $Journal.State.Values = $remaining
+    Save-KioskRegistryJournal $Journal
+}

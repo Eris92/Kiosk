@@ -9,12 +9,11 @@ internal static class Program
     private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        if (args.Length == 3 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
-            return CardPin.Run(args[1], new IntPtr(owner));
+        if (args.Length == 4 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
+            return CardPin.Run(args[1], new IntPtr(owner), args[3]);
         if (args.Length == 1 && args[0] == CardService.Argument) return CardService.Run();
-        if (args.Length == 5 && args[0] == RdpUserHost.Argument && int.TryParse(args[2], out var rdpPort) &&
-            int.TryParse(args[3], out var timeout) && bool.TryParse(args[4], out var prompt))
-            return RdpUserHost.Run(args[1], rdpPort, timeout, prompt);
+        if (args.Length == 2 && args[0] == RdpUserHost.Argument)
+            return RdpUserHost.Run(args[1]);
 #if KIOSK_SELF_TEST
         if (SelfTestEntry.TryRun(args, out var testResult)) return testResult;
 #endif

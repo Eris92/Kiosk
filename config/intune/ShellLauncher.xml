@@ -1,29 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Intune: Devices > Configuration > Create > Windows 10 and later > Templates > Custom, OMA-URI
-    ./Vendor/MSFT/AssignedAccess/ShellLauncher   (String / XML file: this file)
-  Requires Windows Enterprise / Education. Deploy the Kiosk as a Win32 app to C:\Program Files\Kiosk
-  and the configuration to C:\ProgramData\Kiosk\client.json with "SessionMode": "WindowsShell".
-  Everyone gets the Kiosk as their shell; members of the local Administrators group keep Explorer.
-  TEMPLATE: check it on one test device before assigning it to a group.
+  TEMPLATE ONLY: replace the account and deployment paths before assigning this profile.
+  Intune Custom OMA-URI: ./Vendor/MSFT/AssignedAccess/ShellLauncher (String / XML).
+  Requires Windows Enterprise/Education/IoT Enterprise and Kiosk installed by a separate Win32 app.
+  Deploy production client.json to C:\ProgramData\Kiosk\client.json (SessionMode=WindowsShell, TestMode=false).
+  Explorer remains the default. Assign the Kiosk profile to explicit existing standard-user accounts below;
+  duplicate Config for each account. XML Account entries are individual accounts, not a local group shortcut.
+  For a group/default-shell assignment use the WESL-based Install-KioskShell.ps1 instead.
 -->
 <ShellLauncherConfiguration xmlns="http://schemas.microsoft.com/ShellLauncher/2018/Configuration"
                             xmlns:V2="http://schemas.microsoft.com/ShellLauncher/2019/Configuration">
   <Profiles>
     <DefaultProfile>
-      <Shell Shell="C:\Program Files\Kiosk\Kiosk.Client.exe &quot;C:\ProgramData\Kiosk\client.json&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="false">
+      <Shell Shell="%SystemRoot%\explorer.exe" V2:AppType="Desktop">
         <DefaultAction Action="RestartShell"/>
       </Shell>
     </DefaultProfile>
-    <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}">
-      <Shell Shell="%SystemRoot%\explorer.exe" V2:AppType="Desktop">
+    <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}" Name="Kiosk">
+      <Shell Shell="&quot;C:\Program Files\Kiosk\Kiosk.Client.exe&quot; &quot;C:\ProgramData\Kiosk\client.json&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="false">
         <DefaultAction Action="RestartShell"/>
       </Shell>
     </Profile>
   </Profiles>
   <Configs>
     <Config>
-      <Account Name="BUILTIN\Administrators"/>
+      <Account Name="AzureAD\replace-user@example.com"/>
       <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}"/>
     </Config>
   </Configs>

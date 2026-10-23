@@ -36,6 +36,7 @@ internal sealed class IdleScreen : Form
             const long noActivate = 0x08000000;
             long style = AppNative.GetWindowLongPtr(Handle, -20).ToInt64();
             AppNative.SetWindowLongPtr(Handle, -20, new IntPtr(value ? style & ~noActivate : style | noActivate));
+            app?.RefreshOverlayInteraction();
         }
     }
     internal DateTime ShownAt { get; private set; }

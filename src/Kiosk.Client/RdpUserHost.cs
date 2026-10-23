@@ -1,20 +1,52 @@
 using System.ComponentModel;
+using System.Text.Json;
 
 namespace Kiosk.Client;
 
 /// <summary>
-/// The remote desktop of a signed-in person: this program started again as that person ("Zaloguj"), showing only the
-/// RDP control with Remote Credential Guard. Their own Kerberos sign-in reaches the server and no password leaves
-/// this PC (Credential Guard here would refuse to pass one anyway). The Kiosk embeds this window like any program.
-/// No .rdp file is used, so Windows shows no "unknown remote connection" warning and does not read Default.rdp.
+/// The remote desktop of a signed-in person: this program starts again as that person ("Zaloguj") and shows only
+/// the configured RDP control. WindowsCurrentUser enables Remote Credential Guard; SmartCard redirects the card;
+/// EntraId uses the RDS Entra authentication property. The Kiosk embeds this window like any program.
+/// No .rdp file is used; server TLS/NLA validation and any credential prompt still apply.
 /// </summary>
 internal static class RdpUserHost
 {
     internal const string Argument = "--rdp-host";
+    internal static string WindowName(RdpConnection connection) => "Pulpit zdalny — " + connection.Name;
 
-    internal static int Run(string server, int port, int timeout, bool prompt)
+    internal sealed record LaunchRequest(RdpConnection Connection, int Timeout, bool Prompt);
+
+    internal static string ArgumentsFor(RdpConnection connection, int timeout, bool prompt)
     {
-        if (string.IsNullOrWhiteSpace(server) || server.Any(char.IsWhiteSpace) || port is < 1 or > 65535 || timeout is < 10 or > 300) return 1;
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new LaunchRequest(connection, timeout, prompt));
+        return Argument + " " + Convert.ToBase64String(payload).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    internal static LaunchRequest? Parse(string encoded)
+    {
+        if (encoded.Length is < 1 or > 8192 || encoded.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_')))
+            return null;
+        try
+        {
+            var base64 = encoded.Replace('-', '+').Replace('_', '/');
+            var payload = Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
+            var request = JsonSerializer.Deserialize<LaunchRequest>(payload);
+            var connection = request?.Connection;
+            return connection is { Server.Length: > 0 and <= 255, Name: not null, UserName: not null } &&
+                   !connection.Server.Any(char.IsWhiteSpace) && connection.Port is >= 1 and <= 65535 &&
+                   Enum.IsDefined(connection.Authentication) && request!.Timeout is >= 10 and <= 300
+                ? request : null;
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException or OverflowException) { return null; }
+    }
+
+    internal static int Run(string encoded)
+    {
+        var request = Parse(encoded);
+        if (request == null) return 1;
+        var connection = request.Connection;
+        var server = connection.Server;
+        var timeout = request.Timeout;
         using var form = new Form
         {
             Text = "Pulpit zdalny – " + server, FormBorderStyle = FormBorderStyle.None, WindowState = FormWindowState.Maximized,
@@ -32,8 +64,7 @@ internal static class RdpUserHost
             try
             {
                 host.CreateControl();
-                var connection = new RdpConnection { Name = server, Server = server, Port = port, Authentication = RdpAuthentication.WindowsCurrentUser };
-                RdpConfiguration.Apply(host, connection, form.ClientSize, prompt);
+                RdpConfiguration.Apply(host, connection, form.ClientSize, request.Prompt);
                 connectingSince = DateTime.UtcNow;
                 dynamic client = host.Client;
                 client.Connect();

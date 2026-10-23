@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -18,6 +19,10 @@ internal sealed class BrowserView : UserControl
     }
 
     private const string ProfileName = "kiosk";
+    internal const string ProfileMarkerName = ".kiosk-browser-profile";
+    internal const string ProfileMarkerText = "KioskBrowserProfile-v1";
+    private static readonly ConcurrentDictionary<string, byte> liveProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private static int profileCleanupRunning;
     private static readonly HashSet<string> AllowedMenuItems = new(StringComparer.Ordinal)
     {
         "copyLinkLocation", "copy", "cut", "paste", "pasteAndMatchStyle", "selectAll", "undo", "redo", "back", "forward", "reload"
@@ -29,6 +34,7 @@ internal sealed class BrowserView : UserControl
     private bool disposed;
     private string homeUrl = "about:blank";
     private readonly string userDataFolder;
+    private FileStream? profileMarker;
     /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
     /// account for SSO and keeps a normal profile in their own AppData instead of a throw-away InPrivate one.</summary>
     private readonly bool windowsAccount;
@@ -60,9 +66,23 @@ internal sealed class BrowserView : UserControl
     {
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
-        userDataFolder = windowsAccount
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
-            : Path.Combine(Path.GetTempPath(), "KioskBrowser", Guid.NewGuid().ToString("N"));
+        if (windowsAccount)
+            userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser");
+        else
+        {
+            var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
+            Directory.CreateDirectory(root);
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Katalog profili przeglądarki jest przekierowaniem.");
+            userDataFolder = Path.Combine(root, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(userDataFolder);
+            profileMarker = new FileStream(Path.Combine(userDataFolder, ProfileMarkerName), FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            var marker = System.Text.Encoding.UTF8.GetBytes(ProfileMarkerText);
+            profileMarker.Write(marker);
+            profileMarker.Flush();
+            liveProfiles.TryAdd(userDataFolder, 0);
+            QueueAbandonedProfileCleanup(root);
+        }
         this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
@@ -368,6 +388,40 @@ internal sealed class BrowserView : UserControl
         Audit.Write("browser_tab_error", exception.Message);
     }
 
+    private static void QueueAbandonedProfileCleanup(string root)
+    {
+        if (Interlocked.CompareExchange(ref profileCleanupRunning, 1, 0) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try { CleanupAbandonedProfiles(root); }
+            finally { Interlocked.Exchange(ref profileCleanupRunning, 0); }
+        });
+    }
+
+    internal static void CleanupAbandonedProfiles(string root)
+    {
+        try
+        {
+            foreach (var folder in Directory.EnumerateDirectories(root))
+            {
+                if (!Guid.TryParseExact(Path.GetFileName(folder), "N", out _) || liveProfiles.ContainsKey(folder)) continue;
+                try
+                {
+                    // Only folders created by this browser code are eligible. An active view keeps
+                    // the marker exclusively open, including when another Kiosk process is running.
+                    if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0 ||
+                        File.ReadAllText(Path.Combine(folder, ProfileMarkerName)) != ProfileMarkerText) continue;
+                    Directory.Delete(folder, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Audit.Write("browser_profile_cleanup_error", ex.Message);
+        }
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing && disposed) return;
@@ -377,6 +431,8 @@ internal sealed class BrowserView : UserControl
         // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
         var folder = userDataFolder;
         var pendingInitialization = initialization;
+        var marker = profileMarker;
+        profileMarker = null;
         _ = Task.Run(async () =>
         {
             // Environment creation may not have created the directory yet when the view was closed.
@@ -386,12 +442,18 @@ internal sealed class BrowserView : UserControl
                 try { await pendingInitialization; }
                 catch (Exception) { }
             }
-            for (int attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
+            marker?.Dispose();
+            try
             {
-                try { Directory.Delete(folder, true); }
-                catch (IOException) { await Task.Delay(1000); }
-                catch (UnauthorizedAccessException) { await Task.Delay(1000); }
+                for (int attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
+                {
+                    try { Directory.Delete(folder, true); }
+                    catch (IOException) { await Task.Delay(1000); }
+                    catch (UnauthorizedAccessException) { await Task.Delay(1000); }
+                }
+                if (Directory.Exists(folder)) Audit.Write("browser_profile_cleanup_deferred", Path.GetFileName(folder));
             }
+            finally { liveProfiles.TryRemove(folder, out _); }
         });
     }
 }
