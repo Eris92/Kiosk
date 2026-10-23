@@ -56,6 +56,49 @@ function Get-KioskClientSource {
     return Join-Path $root 'client'
 }
 
+function Get-KioskPayloadFiles([string]$Root, [switch]$SkipLocalFiles) {
+    $full = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw "Client payload directory does not exist: $full" }
+    if ((Get-Item -LiteralPath $full -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Client payload directory is a link: $full" }
+    $prefix = $full + '\'
+    $files = New-Object 'System.Collections.Generic.List[object]'
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($full)
+    while ($pending.Count -gt 0) {
+        foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
+            $relative = $entry.FullName.Substring($prefix.Length)
+            $top = $relative.Split([IO.Path]::DirectorySeparatorChar)[0]
+            if ($SkipLocalFiles -and ($top -eq 'client.json' -or $top -like 'self-test*')) { continue }
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Client payload contains a link: $($entry.FullName)" }
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+            else { $files.Add([pscustomobject]@{ Relative = $relative.Replace('\','/'); FullName = $entry.FullName }) }
+        }
+    }
+    return $files.ToArray()
+}
+
+function Copy-KioskPayloadVerified([string]$Source, [string]$Target) {
+    $expected = @(Get-KioskPayloadFiles $Source -SkipLocalFiles)
+    if ($expected.Count -eq 0) { throw 'Client payload has no files.' }
+    $hashes = @{}
+    foreach ($file in $expected) {
+        if ($hashes.ContainsKey($file.Relative)) { throw "Duplicate client payload path: $($file.Relative)" }
+        $hashes[$file.Relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+    }
+    Get-ChildItem -LiteralPath $Source -Force | Where-Object { $_.Name -ne 'client.json' -and $_.Name -notlike 'self-test*' } |
+        Copy-Item -Destination $Target -Recurse -Force
+    $actual = @(Get-KioskPayloadFiles $Target)
+    if ($actual.Count -ne $expected.Count) { throw 'Client payload copy has missing or unexpected files.' }
+    $seen = @{}
+    foreach ($file in $actual) {
+        if ($seen.ContainsKey($file.Relative) -or -not $hashes.ContainsKey($file.Relative) -or
+            (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $hashes[$file.Relative]) {
+            throw "Client payload copy verification failed: $($file.Relative)"
+        }
+        $seen[$file.Relative] = $true
+    }
+}
+
 function Set-KioskDirectoryAcl([string]$Path, [switch]$UsersRead) {
     $ancestor = [IO.Path]::GetFullPath($Path)
     if ($ancestor.TrimEnd('\') -eq [IO.Path]::GetPathRoot($ancestor).TrimEnd('\')) { throw 'A filesystem root cannot be a Kiosk managed directory.' }

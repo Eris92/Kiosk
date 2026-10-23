@@ -131,16 +131,16 @@ try {
 }
 $journal = Journal
 if ($journal.State.Method -and $journal.State.Method -ne $Method) { throw 'Uninstall the recorded shell method before changing installation methods.' }
-$journal.State.Method = $Method
-Save-KioskRegistryJournal $journal
 Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Force -Path $release | Out-Null
-Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -ne 'client.json' -and $_.Name -notlike 'self-test*' } | Copy-Item -Destination $release -Recurse -Force
+Copy-KioskPayloadVerified $source $release
 $directory = Split-Path -Parent $ConfigPath
 Set-KioskDirectoryAcl $directory -UsersRead
 if (Test-Path -LiteralPath $ConfigPath) { Set-KioskFileAcl $ConfigPath -UsersRead }
 Set-KioskConfigAtomically $ConfigPath $candidateJson
 Set-KioskFileAcl $ConfigPath -UsersRead
+$journal.State.Method = $Method
+Save-KioskRegistryJournal $journal
 if ($Method -eq 'ShellLauncher') {
     $feature = Get-WindowsOptionalFeature -Online -FeatureName Client-EmbeddedShellLauncher
     if ($feature.State -ne 'Enabled') {

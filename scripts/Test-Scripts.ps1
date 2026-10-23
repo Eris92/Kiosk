@@ -80,6 +80,34 @@ try {
         (Split-Path -Leaf $resolvedAtomic) -notmatch '^atomic-config-[a-f0-9]{32}$') { throw 'Unexpected atomic config test cleanup path.' }
     if (Test-Path -LiteralPath $resolvedAtomic) { Remove-Item -LiteralPath $resolvedAtomic -Recurse -Force }
 }
+$payloadRoot = Join-Path $outRoot ('copy-payload-' + [Guid]::NewGuid().ToString('N'))
+try {
+    $payloadSource = Join-Path $payloadRoot 'source'
+    $payloadTarget = Join-Path $payloadRoot 'target'
+    New-Item -ItemType Directory -Path (Join-Path $payloadSource 'lib'), $payloadTarget -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $payloadSource 'Kiosk.Client.exe'), 'exe')
+    [IO.File]::WriteAllText((Join-Path $payloadSource 'lib\support.dll'), 'library')
+    [IO.File]::WriteAllText((Join-Path $payloadSource 'client.json'), 'local config excluded')
+    [IO.File]::WriteAllText((Join-Path $payloadSource 'self-test.txt'), 'test output excluded')
+    Copy-KioskPayloadVerified $payloadSource $payloadTarget
+    if (@(Get-KioskPayloadFiles $payloadTarget).Count -ne 2 -or
+        [IO.File]::ReadAllText((Join-Path $payloadTarget 'lib\support.dll')) -ne 'library') {
+        throw 'Verified payload copy omitted or included an unexpected file.'
+    }
+    [IO.File]::WriteAllText((Join-Path $payloadTarget 'rogue.txt'), 'unlisted')
+    $rejected = $false
+    try { Copy-KioskPayloadVerified $payloadSource $payloadTarget }
+    catch {
+        if ($_.Exception.Message -ne 'Client payload copy has missing or unexpected files.') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'Payload verification accepted an unexpected destination file.' }
+} finally {
+    $resolvedPayload = [IO.Path]::GetFullPath($payloadRoot)
+    if (-not $resolvedPayload.StartsWith($outRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $resolvedPayload) -notmatch '^copy-payload-[a-f0-9]{32}$') { throw 'Unexpected payload test cleanup path.' }
+    if (Test-Path -LiteralPath $resolvedPayload) { Remove-Item -LiteralPath $resolvedPayload -Recurse -Force }
+}
 $fixture = Join-Path $outRoot ('verify-fixture-' + [Guid]::NewGuid().ToString('N'))
 $verify = Join-Path $PSScriptRoot 'Verify-Package.ps1'
 try {

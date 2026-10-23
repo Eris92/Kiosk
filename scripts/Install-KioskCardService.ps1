@@ -39,9 +39,7 @@ $binary = '"{0}" --card-service' -f (Join-Path $target 'Kiosk.Client.exe')
 if (-not $PSCmdlet.ShouldProcess($name, "copy payload to $target, register and start service")) { return }
 Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Force -Path $target | Out-Null
-Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -ne 'client.json' -and $_.Name -notlike 'self-test*' } |
-    Copy-Item -Destination $target -Recurse -Force
-if ((Get-FileHash -LiteralPath (Join-Path $target 'Kiosk.Client.exe') -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $sourceExe -Algorithm SHA256).Hash) { throw 'Service payload copy verification failed.' }
+Copy-KioskPayloadVerified $source $target
 $wasRunning = $existing -and $existing.State -eq 'Running'
 try {
     if ($existing) {
