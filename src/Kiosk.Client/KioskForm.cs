@@ -63,6 +63,7 @@ internal sealed partial class KioskForm : Form
     private readonly DesktopView desktop = new();
     private readonly Taskbar taskbar = new();
     private readonly StartMenu menu = new();
+    private ContextMenuStrip? taskMenu;
     private readonly Dictionary<string, UserSession> sessions = new(StringComparer.Ordinal);
     private UserSession? current;
     private SettingsView? settingsView;
@@ -232,6 +233,7 @@ internal sealed partial class KioskForm : Form
     private void Park(UserSession session, string reason)
     {
         menu.HideMenu();
+        HideTaskMenu();
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
         if (!session.Locked) session.InactiveSince = DateTime.UtcNow;
         session.Locked = true;
@@ -247,6 +249,7 @@ internal sealed partial class KioskForm : Form
         if (ShellMode) { DisconnectWindows(reason); return; }
         if (current is not { Locked: false } session) return;
         menu.HideMenu();
+        HideTaskMenu();
         session.Locked = true;
         session.AdminCertificateVerified = false;
         session.InactiveSince = DateTime.UtcNow - TimeSpan.FromMilliseconds(idleMilliseconds);
@@ -454,7 +457,7 @@ internal sealed partial class KioskForm : Form
         session.Lifetime.Cancel();
         foreach (var job in session.CommandJobs.ToArray()) job.Dispose();
         session.CommandJobs.Clear();
-        if (session == current) { menu.HideMenu(); ShowView(desktop); current = null; }
+        if (session == current) { menu.HideMenu(); HideTaskMenu(); ShowView(desktop); current = null; }
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
         session.Logon = null;
@@ -542,21 +545,27 @@ internal sealed partial class KioskForm : Form
 
     private void ShowTaskMenu(string key, Control button, Point point)
     {
-        if (!CanUseApps || current!.Windows.FirstOrDefault(w => w.Key == key) is not { } window) return;
+        if (current is not { Locked: false } session ||
+            session.Windows.FirstOrDefault(w => w.Key == key) is not { } window || !CheckCard()) return;
+        HideTaskMenu();
         var screens = OrderedScreens;
         var menuStrip = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
         var closeItem = new ToolStripMenuItem("Zamknij okno");
-        closeItem.Click += (_, _) => { if (ConfirmClose(key)) CloseWindow(key, "window_closed"); };
+        closeItem.Click += (_, _) =>
+        {
+            if (IsTaskMenuWindow(session, window) && CheckCard() && ConfirmClose(key))
+                CloseWindow(key, "window_closed", session);
+        };
         if (screens.Length > 1)
         {
             var numbers = new ToolStripMenuItem("Pokaż numery ekranów");
-            numbers.Click += (_, _) => ShowScreenNumbers();
+            numbers.Click += (_, _) => { if (IsTaskMenuWindow(session, window) && CheckCard()) ShowScreenNumbers(); };
             menuStrip.Items.Add(numbers);
         }
         if (key.StartsWith("app:") || key == BrowserKey || key.StartsWith("browser:"))
         {
             var another = new ToolStripMenuItem("Otwórz kolejne okno");
-            another.Click += (_, _) => _ = OpenAnotherAsync(key);
+            another.Click += (_, _) => { if (IsTaskMenuWindow(session, window) && CheckCard()) _ = OpenAnotherAsync(key); };
             menuStrip.Items.Add(another);
             menuStrip.Items.Add(new ToolStripSeparator());
         }
@@ -566,14 +575,32 @@ internal sealed partial class KioskForm : Form
         {
             int target = n;
             var item = new ToolStripMenuItem(n == 1 ? "Pokaż na ekranie głównym" : "Pokaż na ekranie " + n) { Checked = n == placed };
-            item.Click += (_, _) => PlaceWindow(current!, key, target, remember: true);
+            item.Click += (_, _) =>
+            {
+                if (IsTaskMenuWindow(session, window) && CheckCard()) PlaceWindow(session, key, target, remember: true);
+            };
             menuStrip.Items.Add(item);
         }
         if (screens.Length < 2) menuStrip.Items.Add(new ToolStripMenuItem("Podłączony jest jeden ekran") { Enabled = false });
         menuStrip.Items.Add(new ToolStripSeparator());
         menuStrip.Items.Add(closeItem);
-        menuStrip.Closed += (_, _) => BeginInvoke(menuStrip.Dispose);
+        menuStrip.Closed += (_, _) =>
+        {
+            if (taskMenu == menuStrip) taskMenu = null;
+            BeginInvoke(menuStrip.Dispose);
+        };
+        taskMenu = menuStrip;
         menuStrip.Show(button, point);
+    }
+
+    private bool IsTaskMenuWindow(UserSession session, Window window) =>
+        current == session && !session.Locked && !session.Closed &&
+        session.Windows.Any(open => ReferenceEquals(open, window));
+
+    private void HideTaskMenu()
+    {
+        taskMenu?.Close();
+        taskMenu = null;
     }
 
     /// <summary>Puts a window on screen n (1 = the main Kiosk screen); a window already there goes back to the main screen.</summary>
@@ -879,6 +906,7 @@ internal sealed partial class KioskForm : Form
     private void DisconnectWindows(string reason)
     {
         menu.HideMenu();
+        HideTaskMenu();
         shellUnlockNotified = false;
         Audit.Write(reason, current?.Identity.Name ?? "");
         try { WindowsSession.LockOrDisconnect(); shellLockRequestedAt = DateTime.UtcNow; }
@@ -1170,6 +1198,7 @@ internal sealed partial class KioskForm : Form
 
     private void CloseWindowCore(UserSession session, Window window)
     {
+        HideTaskMenu();
         session.Windows.Remove(window);
         if (window.Key.StartsWith("rdp:") && session.Rdp.Remove(window.Key[4..], out var rdp))
         {

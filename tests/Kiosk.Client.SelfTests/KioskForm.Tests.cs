@@ -93,6 +93,10 @@ internal sealed partial class KioskForm
         if (aliceSession?.Identity != alice || aliceSession.Locked) throw new InvalidOperationException("Card did not open a session.");
         ShowNotes();
         var noteView = aliceSession.Notes!;
+        var aliceNotesWindow = aliceSession.Windows.Single(w => w.Key == NotesKey);
+        if (!IsTaskMenuWindow(aliceSession, aliceNotesWindow) ||
+            IsTaskMenuWindow(aliceSession, new Window(NotesKey, aliceNotesWindow.Title, noteView)))
+            throw new InvalidOperationException("Task menu did not bind to its owner's window.");
         const string sample = "Notatka testowa: zażółć gęślą jaźń\r\nDruga linia";
         noteView.Editor.Text = sample;
         var path = Path.Combine(AppContext.BaseDirectory, "self-test-note.txt");
@@ -163,6 +167,8 @@ internal sealed partial class KioskForm
         Lock("self_test_lock", 0);
         if (!aliceSession.Locked || !desktop.Visible || browserView.Visible || taskbar.TaskCount != 0 || taskbar.MenuButton.Enabled)
             throw new InvalidOperationException("Lock did not hide the session.");
+        if (IsTaskMenuWindow(aliceSession, aliceNotesWindow))
+            throw new InvalidOperationException("Task menu retained access to a locked session.");
         await VerifyAndUnlockAsync();
         if (aliceSession.Locked || !browserView.Visible || taskbar.TaskCount != 2) throw new InvalidOperationException("Resume did not restore the session.");
 
@@ -170,9 +176,13 @@ internal sealed partial class KioskForm
         CardRemoved();
         if (current != null || browserView.IsDisposed || noteView.IsDisposed || browserView.Visible || !desktop.Visible)
             throw new InvalidOperationException("Card removal did not park the session.");
+        if (IsTaskMenuWindow(aliceSession, aliceNotesWindow))
+            throw new InvalidOperationException("Task menu retained access after card removal.");
         CardInserted(bob);
         if (current?.Identity != bob || current.Windows.Count != 0 || taskbar.TaskCount != 0 || sessions.Count != 2 || noteView.Visible)
             throw new InvalidOperationException("Second card did not get its own session.");
+        if (IsTaskMenuWindow(aliceSession, aliceNotesWindow))
+            throw new InvalidOperationException("Task menu could act in another card's session.");
         CardRemoved();
         CardInserted(alice);
         if (current != aliceSession || aliceSession.Locked || !browserView.Visible || noteView.Editor.Text != sample || taskbar.TaskCount != 2)
