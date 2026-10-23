@@ -9,9 +9,11 @@ internal sealed class CardReader : IDisposable
     private Native.ReaderState[] states = [];
     private uint[] evaluatedStates = [];
     private long listUpdatedAt;
+    private long retryAfter;
     private string? evaluatedSelection;
     private string? cachedSnapshot;
     private bool evaluated;
+    private bool selectedReaderMissing;
     private string status = "";
     internal string Status
     {
@@ -46,14 +48,17 @@ internal sealed class CardReader : IDisposable
     }
     internal string? Snapshot(string selected)
     {
+        var now = Environment.TickCount64;
+        // A failed PC/SC service/reader probe has no card to monitor. Retry its
+        // setup on the topology cadence, rather than on every UI timer tick.
+        if (now < retryAfter) return null;
         if (context == IntPtr.Zero)
         {
             var error = Native.SCardEstablishContext(0, IntPtr.Zero, IntPtr.Zero, out context);
-            if (error != 0) { context = IntPtr.Zero; Status = "Smart Card service unavailable: " + error.ToString("X8"); return null; }
+            if (error != 0) { context = IntPtr.Zero; retryAfter = now + 1000; Status = "Smart Card service unavailable: " + error.ToString("X8"); return null; }
         }
         // Presence/removal is still checked on every call. Reader topology changes
         // much less often; reuse native buffers and the last evaluation in between.
-        var now = Environment.TickCount64;
         int result;
         // A configured reader may be unplugged. Re-enumerating it on every
         // 250 ms poll adds native work without improving the card state check;
@@ -62,10 +67,10 @@ internal sealed class CardReader : IDisposable
         {
             uint size = 0;
             result = Native.SCardListReaders(context, null, null, ref size);
-            if (result != 0) { Reset(); Status = "No reader available: " + result.ToString("X8"); return null; }
+            if (result != 0) { Reset(); retryAfter = now + 1000; Status = "No reader available: " + result.ToString("X8"); return null; }
             var names = new char[size];
             result = Native.SCardListReaders(context, null, names, ref size);
-            if (result != 0) { Reset(); Status = "Reader enumeration failed"; return null; }
+            if (result != 0) { Reset(); retryAfter = now + 1000; Status = "Reader enumeration failed"; return null; }
             var readers = new string(names).Split('\0', StringSplitOptions.RemoveEmptyEntries);
             if (!readers.SequenceEqual(states.Select(s => s.Reader)))
             {
@@ -75,10 +80,13 @@ internal sealed class CardReader : IDisposable
             }
             listUpdatedAt = now;
         }
-        if (states.Length == 0) { Status = "No reader available"; return null; }
+        if (states.Length == 0) { retryAfter = now + 1000; Status = "No reader available"; return null; }
+        // If the configured reader is absent, card changes on other readers
+        // cannot affect this selection; wait for the next topology refresh.
+        if (evaluated && selectedReaderMissing && evaluatedSelection == selected && now - listUpdatedAt < 1000) return null;
         result = Native.SCardGetStatusChange(context, 0, states, (uint)states.Length);
         const int timeout = unchecked((int)0x8010000A);
-        if (result != 0 && result != timeout) { Reset(); Status = "Reader status failed: " + result.ToString("X8"); return null; }
+        if (result != 0 && result != timeout) { Reset(); retryAfter = now + 1000; Status = "Reader status failed: " + result.ToString("X8"); return null; }
         bool changed = !evaluated || evaluatedSelection != selected;
         for (int i = 0; i < states.Length; i++)
         {
@@ -98,6 +106,7 @@ internal sealed class CardReader : IDisposable
         // ReaderName scopes presence/removal monitoring. Other readers may be virtual
         // (Windows Hello, UICC) and must not block the selected physical reader.
         var monitored = MonitoredReaders(states, selected);
+        selectedReaderMissing = monitored.Length == 0;
         var present = monitored.Where(s => IsUsableCard(s.EventState)).ToArray();
         var diagnostics = string.Join("\n", states.Select(Describe));
         if (monitored.Length == 0)
@@ -122,6 +131,8 @@ internal sealed class CardReader : IDisposable
     {
         if (context != IntPtr.Zero) Native.SCardReleaseContext(context);
         context = IntPtr.Zero; states = []; evaluatedStates = []; evaluated = false;
+        retryAfter = 0; evaluatedSelection = null;
+        selectedReaderMissing = false;
         cachedSnapshot = null; ActiveReader = ActiveAtr = "";
     }
     public void Dispose() => Reset();

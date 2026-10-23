@@ -32,14 +32,14 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 
 Mikropomiar `--benchmark` na tym samym stanowisku (po rozgrzaniu, trzy przebiegi, 5000 niezmienionych odświeżeń paska i 1000 odczytów nieistniejącego czytnika):
 
-| Ścieżka | Wcześniejszy build `out/audit-benchmark` | Obecny build `out/self-test` |
-| --- | --- | --- |
-| Pasek/menu | 28–32 ms, 9 160 040 B | 0,9–1,1 ms, 40 B |
-| Odczyt czytnika | 1238–1275 ms, 120 080 B | 1235–1417 ms, 120 080 B |
+| Ścieżka | Wcześniejszy build `out/audit-benchmark` | Po optymalizacji paska | Po pominięciu nieobecnego czytnika |
+| --- | --- | --- | --- |
+| Pasek/menu | 28–32 ms, 9 160 040 B | 0,9–1,1 ms, 40 B | 0,87–0,89 ms, 40 B |
+| Odczyt czytnika | 1238–1275 ms, 120 080 B | 1235–1417 ms, 120 080 B | 0,025–0,026 ms, 80 B |
 
-To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się również wersją .NET. Zmiana paska zmniejszyła koszt powtarzanego odświeżania. W tych pomiarach czytnik nie wykazał wiarygodnej poprawy czasu, choć topologia jest obecnie sprawdzana rzadziej przy aktywnej liście czytników.
+To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się również wersją .NET. Zmiana paska zmniejszyła koszt powtarzanego odświeżania. Ostatni pomiar czytnika to seria 1000 natychmiastowych pytań o wskazany, nieistniejący czytnik; po pierwszej odpowiedzi kolejne nie odpytują PC/SC, dopóki nie nadejdzie sekundowy termin odświeżenia topologii. Przy działającym, wskazanym czytniku obecność karty nadal jest sprawdzana co 250 ms. Nowy czytnik lub powracająca usługa mogą zostać zauważone do około 1 s później.
 
-Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. Pobrany artefakt z udanego CI dla rewizji a5b5efd przeszedł ponowną kontrolę pełnego składu po zaostrzeniu reguł. Próba ponownej kompilacji natywnej DLL na tej stacji kończy się brakiem Visual Studio Build Tools; pełny pakiet musi ponownie przejść CI Windows. Paczka pozostaje niepodpisanym kandydatem.
+Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. Pobrany artefakt z udanego CI dla rewizji 2eae10b przeszedł ponowną kontrolę pełnego składu po zaostrzeniu reguł; CI na `main` zbudowało natywną DLL i paczkę. Próba kompilacji tej DLL na stacji deweloperskiej kończy się brakiem Visual Studio Build Tools. Paczka pozostaje niepodpisanym kandydatem.
 
 ## Bramka akceptacyjna przed produkcją
 
