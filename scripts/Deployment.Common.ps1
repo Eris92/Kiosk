@@ -6,6 +6,32 @@ function Assert-KioskAdministrator {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
 }
 
+function Assert-KioskCardServiceReady {
+    # Two requests also verify that the single-instance pipe is reopened after a client disconnects.
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'KioskCard', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
+        try {
+            $pipe.Connect(5000)
+            $writer = [IO.StreamWriter]::new($pipe, [Text.UTF8Encoding]::new($false), 1024, $true)
+            $reader = [IO.StreamReader]::new($pipe, [Text.UTF8Encoding]::new($false), $false, 1024, $true)
+            try {
+                $writer.AutoFlush = $true
+                # An unknown operation checks the listener without asking for a card, PIN or credential.
+                $writer.WriteLine('{"Op":"health","Reader":"probe"}')
+                $read = $reader.ReadLineAsync()
+                if (-not $read.Wait([TimeSpan]::FromSeconds(5))) { throw 'The card service did not answer the readiness probe.' }
+                $response = $read.Result | ConvertFrom-Json
+                if ($null -eq $response -or $response.Code -ne -2) { throw 'The card service returned an unexpected readiness response.' }
+            } finally {
+                $reader.Dispose()
+                $writer.Dispose()
+            }
+        } finally {
+            $pipe.Dispose()
+        }
+    }
+}
+
 function Get-KioskClientSource {
     $root = Split-Path -Parent $PSScriptRoot
     if (Test-Path -LiteralPath (Join-Path $root 'src\Kiosk.Client\Kiosk.Client.csproj')) { return Join-Path $root 'out\client' }

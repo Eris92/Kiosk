@@ -53,6 +53,7 @@ try {
     Invoke-KioskSc failure $name reset= 86400 actions= restart/5000/restart/15000/none/0 | Out-Null
     Start-Service -Name $name
     (Get-Service -Name $name).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    Assert-KioskCardServiceReady
 } catch {
     $failure = $_
     $failedService = Get-Service -Name $name -ErrorAction SilentlyContinue
