@@ -110,12 +110,12 @@ internal sealed class SettingsView : UserControl
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddField(fields, "Czytnik karty (pusty = dowolny)", reader);
         AddField(fields, "Strona startowa przeglądarki", home);
-        AddField(fields, "Blokada po bezczynności (s, karta w czytniku)", lockAfter);
-        AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
+        var lockAfterLabel = AddField(fields, "Blokada po bezczynności (s, karta w czytniku)", lockAfter);
+        var retentionLabel = AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
         AddField(fields, "Tryb sesji", sessionMode);
-        AddField(fields, "Logowanie i odblokowanie", unlock);
+        var unlockLabel = AddField(fields, "Logowanie i odblokowanie", unlock);
         AddField(fields, "Kolor przewodni", accent);
-        AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
+        var autoConnectLabel = AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
         AddField(fields, "Limit czasu łączenia RDP (sekundy)", connectTimeout);
         var pinRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
@@ -126,14 +126,11 @@ internal sealed class SettingsView : UserControl
         var removalRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         fields.Controls.Add(disconnectOnRemoval, 1, removalRow);
-        session.Controls.Add(new Label
+        var sessionHelp = new Label
         {
-            Dock = DockStyle.Bottom, Height = 90, ForeColor = Color.FromArgb(80, 92, 110),
-            Text = "Każda karta ma własną sesję (to nie jest blokada Windows). Wyjęcie karty chowa sesję, inna karta od razu otwiera swoją, " +
-                   "a powrót karty przywraca jej okna. Po czasie przechowywania nieużywana sesja jest zamykana. " +
-                   "Na komputerze dla wielu osób wybierz „Karta + PIN karty”: Windows Hello potwierdza konto Windows, nie osobę z karty.\n" +
-                   "Windows i dostawca karty decydują o oknie PIN / Hello i mogą pamiętać uwierzytelnienie. Prośba o poświadczenia nie gwarantuje ponownego PIN-u."
-        });
+            Dock = DockStyle.Bottom, Height = 90, ForeColor = Color.FromArgb(80, 92, 110)
+        };
+        session.Controls.Add(sessionHelp);
         session.Controls.Add(fields);
         reader.Text = config.ReaderName;
         home.Text = config.BrowserUrl;
@@ -145,6 +142,26 @@ internal sealed class SettingsView : UserControl
         unlock.SelectedIndex = (int)config.UnlockMethod;
         sessionMode.SelectedIndex = (int)config.SessionMode;
         disconnectOnRemoval.Checked = config.DisconnectOnCardRemoval;
+        void RefreshSessionMode()
+        {
+            bool shell = sessionMode.SelectedIndex == (int)SessionMode.WindowsShell;
+            unlock.Visible = !shell;
+            signInAsUser.Visible = !shell;
+            disconnectOnRemoval.Visible = shell;
+            lockAfterLabel.Text = shell ? "Blokada Windows po bezczynności (s)" : "Blokada po bezczynności (s, karta w czytniku)";
+            retentionLabel.Text = shell ? "Wyloguj po blokadzie/rozłączeniu (s, 0 = nigdy)" : "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)";
+            unlockLabel.Text = shell ? "Odblokowanie kontroluje Windows" : "Logowanie i odblokowanie";
+            autoConnectLabel.Text = shell ? "Połącz RDP po zalogowaniu do Windows" : "Połącz automatycznie po włożeniu karty";
+            sessionHelp.Text = shell
+                ? "Każda osoba loguje się do własnego konta Windows. Kiosk i lokalne aplikacje działają pod jej tokenem. " +
+                  "Metodę logowania, PIN i biometrię ustala Windows oraz polityka organizacji; ustawienie odblokowania kartą dotyczy tylko trybu Kiosk. " +
+                  "RDP wymaga osobno wspieranej metody i potwierdzenia tożsamości na serwerze."
+                : "Każda karta ma własną sesję w jednym koncie Windows. Wyjęcie karty chowa okna; powrót karty je przywraca. " +
+                  "Na komputerze dla wielu osób wybierz „Karta + PIN karty”, bo Hello potwierdza konto Windows, nie osobę z karty. " +
+                  "Okno poświadczeń RDP nie gwarantuje ponownego żądania PIN-u.";
+        }
+        sessionMode.SelectedIndexChanged += (_, _) => RefreshSessionMode();
+        RefreshSessionMode();
         SetupAccent(config.AccentColor);
         RefreshAutoConnect(config.AutoConnectRdpName);
         tabs.Selected += (_, _) => RefreshAutoConnect(autoConnect.SelectedItem as string);
@@ -300,12 +317,14 @@ internal sealed class SettingsView : UserControl
         RowTemplate = { Height = 30 }
     };
 
-    private static void AddField(TableLayoutPanel panel, string text, Control control)
+    private static Label AddField(TableLayoutPanel panel, string text, Control control)
     {
         var row = panel.RowCount++;
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-        panel.Controls.Add(new Label { Text = text, AutoSize = true, Padding = new Padding(4, 8, 4, 4) }, 0, row);
+        var label = new Label { Text = text, AutoSize = true, Padding = new Padding(4, 8, 4, 4) };
+        panel.Controls.Add(label, 0, row);
         panel.Controls.Add(control, 1, row);
+        return label;
     }
 
     private static void SetupGridTab(TabPage page, DataGridView grid, string help)
@@ -370,7 +389,7 @@ internal sealed class SettingsView : UserControl
             ChangeUserAfterSeconds = (int)changeUserAfter.Value,
             ConnectTimeoutSeconds = (int)connectTimeout.Value,
             RequireCredentialPrompt = requirePin.Checked,
-            SignInAsUser = signInAsUser.Checked,
+            SignInAsUser = sessionMode.SelectedIndex == (int)SessionMode.Kiosk && signInAsUser.Checked,
             UnlockMethod = (UnlockMethod)Math.Max(0, unlock.SelectedIndex),
             SessionMode = (SessionMode)Math.Max(0, sessionMode.SelectedIndex),
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,

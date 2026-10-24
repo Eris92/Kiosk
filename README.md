@@ -32,9 +32,9 @@ Jeżeli potrzebny jest osobny skonfigurowany katalog testowy:
 | `RdpConnections` | Lista unikalnych nazw, hostów, portów i metod logowania: `SmartCard`, `WindowsCurrentUser`, `EntraId`. Host to sama nazwa DNS lub adres IP, bez `https://`, ścieżki ani `:port`; port wpisuje się osobno. Profil Entra wymaga pełnej nazwy DNS. |
 | `RequireCredentialPrompt` | Żądanie systemowego okna poświadczeń RDP. Wyłączenie pozwala Windows użyć dostępnych poświadczeń; nie wyłącza NLA ani wymagań serwera/PIN karty. |
 | `AutoConnectRdpName` | Nazwa istniejącego profilu otwieranego po odblokowaniu; pusty tekst wyłącza automatyczne łączenie. |
-| `UnlockMethod` | `Card` = sama obecność rozpoznanej karty; `CardAndPin` = sprawdzenie PIN-u karty; `CardAndWindowsHello` = potwierdzenie przez Hello bieżącej sesji Windows. |
+| `UnlockMethod` | Tylko w trybie `Kiosk`: `Card` = sama obecność rozpoznanej karty; `CardAndPin` = sprawdzenie PIN-u karty; `CardAndWindowsHello` = potwierdzenie przez Hello bieżącej sesji Windows. W `WindowsShell` odblokowanie i PIN kontroluje Windows. |
 | `LockAfterSeconds` | Czas bezczynności do blokady; 10–86400 sekund. |
-| `ChangeUserAfterSeconds` | Czas zachowania odłożonej sesji; 0 zachowuje ją do ręcznego zakończenia. Po upływie limitu lokalne aplikacje są zamykane. |
+| `ChangeUserAfterSeconds` | Czas zachowania odłożonej sesji w trybie `Kiosk` albo zablokowanej/rozłączonej sesji `WindowsShell`; 0 zachowuje ją do ręcznego zakończenia. Po upływie limitu Kiosk zamyka sesję karty, a w `WindowsShell` wylogowuje konto Windows; uruchomione aplikacje są zamykane. |
 | `ReaderName` | Dokładna nazwa fizycznego czytnika; pusty tekst wymaga jednoznacznego wykrycia jednej karty. |
 | `Bookmarks`, `BrowserUrl` | Nazwane adresy HTTP/HTTPS i strona startowa przeglądarki. |
 | `BrowserOnlyBookmarks`, `BrowserAllowedDomains` | Ograniczenie nawigacji do domen zakładek i dodatkowych dozwolonych domen; logowanie SSO może wymagać dopisania domen dostawcy tożsamości. |
