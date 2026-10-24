@@ -67,6 +67,8 @@ elevated. Saving reloads the running Kiosk.
 - The browser blocks downloads of programs and scripts, and has no download panel. It has no print, save
   or open-file dialogs (Ctrl+P / Ctrl+S / Ctrl+O). With "tylko strony z listy" it opens only the configured
   sites.
+- The browser cancels HTTP authentication challenges before a password can be entered. A manual Windows
+  username and password prompt is available only for HTTPS sites and closes when its page closes.
 - Pliki opens documents, never programs or scripts.
 - The Kiosk Card service accepts requests only from the installed Kiosk in Program Files. Clients trust
   only the real service (session 0).

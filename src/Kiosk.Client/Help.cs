@@ -517,7 +517,7 @@ internal sealed class HelpSignIn : Panel
     private readonly Label userCaption = new() { Text = "Użytkownik", AutoSize = false, Font = new Font("Segoe UI", 11), TextAlign = ContentAlignment.MiddleLeft };
     private readonly Label passwordCaption = new() { Text = "Hasło", AutoSize = false, Font = new Font("Segoe UI", 11), TextAlign = ContentAlignment.MiddleLeft };
     private readonly Button ok = new() { Text = "Zaloguj" }, cancel = new() { Text = "Anuluj" };
-    private readonly TaskCompletionSource<(string User, string Password)?> answer = new();
+    private readonly TaskCompletionSource<(string User, string Password)?> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private HelpSignIn(string host, string userName)
     {
@@ -580,6 +580,18 @@ internal sealed class HelpSignIn : Panel
     }
 
     private void OnParentResize(object? sender, EventArgs e) => Arrange();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            countdown.Stop();
+            password.Clear();
+            if (Parent is { } parent) parent.Resize -= OnParentResize;
+            answer.TrySetResult(null);
+        }
+        base.Dispose(disposing);
+    }
 
     /// <summary>The login and password typed, or null when cancelled.</summary>
     internal static Task<(string User, string Password)?> AskAsync(Control parent, string host, string userName, int idleSeconds)

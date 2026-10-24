@@ -106,6 +106,8 @@ internal sealed partial class KioskForm : Form
     internal KioskForm(Config config, string? configPath = null, CentralConfig.Loaded? loaded = null)
     {
         this.config = config;
+        // SelfService with Windows sign-in has no card or application windows to poll at 250 ms.
+        if (SelfServiceWindowsSession) timer.Interval = 1000;
         this.configPath = configPath;
         localConfig = loaded?.Local;
         Updater.Channel = config.UpdateChannel;
@@ -2431,6 +2433,17 @@ internal sealed partial class KioskForm : Form
 
     internal async Task EmbeddedSmokeTestAsync()
     {
+        if (BrowserView.SecureCredentialOrigin("https://help.example:8443/private") != "https://help.example:8443" ||
+            BrowserView.SecureCredentialOrigin("http://help.example/") != null ||
+            BrowserView.SecureCredentialOrigin("https://user:password@help.example/") != null)
+            throw new InvalidOperationException("Unsafe browser credential origin was accepted.");
+        using (var promptParent = new Panel { Size = new Size(640, 480) })
+        {
+            var prompt = HelpSignIn.AskAsync(promptParent, "example.invalid", "test\\user", 60);
+            promptParent.Dispose();
+            if (await prompt.WaitAsync(TimeSpan.FromSeconds(2)) != null)
+                throw new InvalidOperationException("Closing a page did not cancel its password prompt.");
+        }
         var alice = new CardIdentity("cert:A", "Alicja Test");
         var bob = new CardIdentity("cert:B", "Bartek Test");
         identifyCard = () => current?.Identity;
@@ -2467,6 +2480,29 @@ internal sealed partial class KioskForm : Form
         var text = await browserView.Web.ExecuteScriptAsync("document.body.innerText");
         if (!text.Contains("Kiosku") || !browserView.Web.CoreWebView2.Profile.IsInPrivateModeEnabled)
             throw new InvalidOperationException("Embedded page or InPrivate profile failed.");
+        // A real HTTP Basic challenge must be cancelled before WebView2 can show a password prompt.
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            var challenge = Task.Run(async () =>
+            {
+                using var client = await listener.AcceptTcpClientAsync();
+                using var stream = client.GetStream();
+                var request = new byte[4096];
+                await stream.ReadAtLeastAsync(request, 1);
+                var response = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"kiosk-test\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(response);
+            });
+            var blockedAuth = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            browserView.Web.CoreWebView2.BasicAuthenticationRequested += (_, e) => blockedAuth.TrySetResult(e.Cancel);
+            browserView.Web.CoreWebView2.Navigate("http://127.0.0.1:" + port + "/");
+            if (!await blockedAuth.Task.WaitAsync(TimeSpan.FromSeconds(10)))
+                throw new InvalidOperationException("An HTTP page could ask for a password.");
+            await challenge.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { listener.Stop(); }
         // Tabs: a second tab shares the same InPrivate profile (one sign-in), closing it returns to the first.
         var firstPage = browserView.Web;
         await browserView.OpenTabAsync().WaitAsync(TimeSpan.FromSeconds(20));

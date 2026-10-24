@@ -386,28 +386,56 @@ internal sealed class BrowserView : UserControl
             finally { e.Handled = true; }
         };
         core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
-        if (windowsAccount)
+        core.BasicAuthenticationRequested += (_, e) =>
         {
-            // The Windows account's own sign-in did not get the person in (for example no domain ticket for an
-            // on-premises site): ask for login and password like a normal Edge does, instead of a bare 401 page.
-            core.BasicAuthenticationRequested += (_, e) =>
+            // Never hand a password to an HTTP page or proxy. WebView2 otherwise opens its own password dialog.
+            var origin = SecureCredentialOrigin(e.Uri);
+            if (origin == null)
             {
-                var deferral = e.GetDeferral();
-                string host = Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ? uri.Host : e.Uri;
-                Audit.Write("browser_sign_in_asked", host);
-                BeginInvoke(async () =>
+                e.Cancel = true;
+                Audit.Write("browser_sign_in_blocked", Uri.TryCreate(e.Uri, UriKind.Absolute, out var blocked) ? blocked.Scheme : "invalid_uri");
+                return;
+            }
+            if (!windowsAccount) return; // Keep WebView2's HTTPS prompt for legacy card sessions.
+
+            // The Windows account's own sign-in did not get the person in: ask on this page.
+            // WebView2 recommends posting the UI work after this event to avoid reentrancy.
+            var deferral = e.GetDeferral();
+            void Complete()
+            {
+                try { deferral.Complete(); }
+                catch (Exception ex) { Audit.Write("browser_sign_in_deferral_failed", origin + ": " + ex.GetType().Name); }
+            }
+            var context = SynchronizationContext.Current;
+            if (context == null) { e.Cancel = true; Complete(); return; }
+            try
+            {
+                context.Post(async _ =>
                 {
                     try
                     {
-                        // Over this page, in the same window.
-                        var typed = await HelpSignIn.AskAsync(this, host, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
-                        if (typed is { } credentials) { e.Response.UserName = credentials.User; e.Response.Password = credentials.Password; }
-                        else e.Cancel = true;
+                        if (IsDisposed) { e.Cancel = true; return; }
+                        Audit.Write("browser_sign_in_asked", origin);
+                        // Disposing the page completes this prompt as cancelled.
+                        var typed = await HelpSignIn.AskAsync(this, origin, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
+                        if (IsDisposed || typed is not { } credentials) e.Cancel = true;
+                        else { e.Response.UserName = credentials.User; e.Response.Password = credentials.Password; }
                     }
-                    finally { deferral.Complete(); }
-                });
-            };
-        }
+                    catch (Exception ex)
+                    {
+                        e.Cancel = true;
+                        Audit.Write("browser_sign_in_failed", origin + ": " + ex.GetType().Name);
+                    }
+                    finally { Complete(); }
+                }, null);
+            }
+            catch (Exception ex)
+            {
+                e.Cancel = true;
+                Audit.Write("browser_sign_in_failed", origin + ": " + ex.GetType().Name);
+                Complete();
+            }
+        };
         if (singlePage)
         {
             await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);
@@ -447,6 +475,10 @@ internal sealed class BrowserView : UserControl
             core.Navigate(policy.Allows(url) ? url : homeUrl);
         return tab;
     }
+
+    internal static string? SecureCredentialOrigin(string? address) =>
+        Uri.TryCreate(address, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0
+            ? uri.GetLeftPart(UriPartial.Authority) : null;
 
     private void SelectTab(Tab tab)
     {
