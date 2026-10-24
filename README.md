@@ -59,7 +59,7 @@ Przeglądarka w sesji wspólnego konta Kiosk używa osobnego, tymczasowego profi
 
 ## RDP i wymagania środowiska
 
-Skonfiguruj rzeczywiste hosty FQDN i konta. Dla `SmartCard` potrzebne są certyfikaty logowania, mapowanie kont AD, zaufany łańcuch i osiągalne punkty CRL/OCSP, odpowiedni middleware oraz host RDS z NLA i zaufanym certyfikatem TLS. Karta FIDO2 bez certyfikatu PIV nie jest automatycznie kartą certyfikatową RDP. Metoda `EntraId` wymaga pełnej nazwy DNS oraz poprawnego dołączenia, polityk i zgodności urządzeń. Remote Credential Guard wymaga obsługi i odpowiednich zasad środowiska; samo ustawienie trybu w Kiosku nie konfiguruje tych zależności.
+Skonfiguruj rzeczywiste hosty FQDN i konta. Dla `SmartCard` potrzebne są certyfikaty logowania, mapowanie kont AD, zaufany łańcuch i osiągalne punkty CRL/OCSP, odpowiedni middleware oraz host RDS z NLA i zaufanym certyfikatem TLS. Karta FIDO2 bez certyfikatu PIV nie jest automatycznie kartą certyfikatową RDP. Metoda `EntraId` wymaga pełnej nazwy DNS oraz poprawnego dołączenia, polityk i zgodności urządzeń. [Remote Credential Guard](https://learn.microsoft.com/en-us/windows/security/identity-protection/remote-credential-guard) wymaga Kerberos i hosta dołączonego do Active Directory; nie działa przez RD Gateway ani brokera. Samo ustawienie tego trybu w Kiosku nie konfiguruje zależności środowiskowych. [Logowanie do RDP przez Windows Hello for Business](https://learn.microsoft.com/en-us/windows/security/identity-protection/hello-for-business/hello-feature-remote-desktop) wymaga odpowiedniego certyfikatu i infrastruktury PKI albo innej wspieranej metody uwierzytelnienia. PIN lokalnego Hello nie wystarcza do takiego logowania.
 
 ```powershell
 .\scripts\Test-Prerequisites.ps1 -ConfigPath .\client.local.json
