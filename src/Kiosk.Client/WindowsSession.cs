@@ -50,8 +50,11 @@ internal static class WindowsSession
     internal static bool RegisterNotifications(IntPtr window) => WTSRegisterSessionNotification(window, 0);
     internal static void UnregisterNotifications(IntPtr window) => WTSUnRegisterSessionNotification(window);
 
-    internal static bool RetentionExpired(DateTime? unavailableSince, DateTime nowUtc, int seconds) =>
-        unavailableSince.HasValue && seconds > 0 && nowUtc - unavailableSince.Value >= TimeSpan.FromSeconds(seconds);
+    // .NET 10 on Windows includes sleep/hibernation in TickCount64, so a locked
+    // session cannot outlive its retention limit after a clock correction or sleep.
+    internal static bool RetentionExpired(long? unavailableSinceMilliseconds, long nowMilliseconds, int seconds) =>
+        unavailableSinceMilliseconds.HasValue && seconds > 0 &&
+        nowMilliseconds - unavailableSinceMilliseconds.Value >= seconds * 1000L;
 
     // Some RDS hosts only expose connection state through WTSQuerySessionInformation.
     // Their own unlock notification is sufficient when the queried state is Unknown.

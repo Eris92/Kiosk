@@ -206,7 +206,7 @@ internal sealed partial class KioskForm
             throw new InvalidOperationException("Returning card did not restore its session.");
 
         // Parked sessions expire after the retention time.
-        sessions[bob.Id].InactiveSince = DateTime.UtcNow.AddHours(-1);
+        sessions[bob.Id].InactiveSinceMilliseconds = Environment.TickCount64 - 3_600_000;
         ExpireSessions();
         if (sessions.ContainsKey(bob.Id) || sessions.Count != 1) throw new InvalidOperationException("Parked session did not expire.");
 
@@ -309,14 +309,14 @@ internal sealed partial class KioskForm
         StartWindowsSession();
         if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
             throw new InvalidOperationException("Windows shell session failed.");
-        disconnectedSince = DateTime.UtcNow.AddSeconds(-1);
-        shellLockRequestedAt = DateTime.UtcNow;
+        disconnectedSinceMilliseconds = Environment.TickCount64 - 1000;
+        shellLockRequestedAtMilliseconds = Environment.TickCount64;
         var remoteConnect = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.RemoteConnect), IntPtr.Zero);
         WndProc(ref remoteConnect);
-        if (shellLockRequestedAt == null || shellUnlockNotified) throw new InvalidOperationException("RDP transport reconnection was treated as Windows unlock.");
+        if (shellLockRequestedAtMilliseconds == null || shellUnlockNotified) throw new InvalidOperationException("RDP transport reconnection was treated as Windows unlock.");
         var unlock = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionUnlock), IntPtr.Zero);
         WndProc(ref unlock);
-        if (shellLockRequestedAt != null || !shellUnlockNotified || disconnectedSince == null)
+        if (shellLockRequestedAtMilliseconds != null || !shellUnlockNotified || disconnectedSinceMilliseconds == null)
             throw new InvalidOperationException("Windows unlock discarded the retention timer or failed to mark the session resumable.");
         var lockAgain = Message.Create(Handle, WindowsSession.SessionChangeMessage, new IntPtr(WindowsSession.SessionLock), IntPtr.Zero);
         WndProc(ref lockAgain);
@@ -327,7 +327,7 @@ internal sealed partial class KioskForm
         WndProc(ref unlockAgain);
         if (shellLockNotified || !shellUnlockNotified)
             throw new InvalidOperationException("Windows unlock did not clear the lock notification.");
-        disconnectedSince = null;
+        disconnectedSinceMilliseconds = null;
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;

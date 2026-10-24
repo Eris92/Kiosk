@@ -33,7 +33,7 @@ internal sealed partial class KioskForm : Form
         internal bool Locked { get; set; } = true;
         internal bool Verified { get; set; }
         internal bool AutoConnected { get; set; }
-        internal DateTime InactiveSince { get; set; } = DateTime.UtcNow;
+        internal long InactiveSinceMilliseconds { get; set; } = Environment.TickCount64;
         internal string? Notice { get; set; }
         internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0 || CommandJobs.Count > 0;
         /// <summary>True only for the authenticated Windows shell identity, never a claimed certificate UPN.</summary>
@@ -73,13 +73,13 @@ internal sealed partial class KioskForm : Form
     private bool requireRemoval, inTick, closeConfirmed, verifying;
     private CancellationTokenSource? pinCheck;
     private string? shellCardKey;
-    private DateTime? disconnectedSince;
-    private DateTime? shellLockRequestedAt;
+    private long? disconnectedSinceMilliseconds;
+    private long? shellLockRequestedAtMilliseconds;
     private bool shellUnlockNotified;
     private bool shellLockNotified;
     private readonly SignOutRetry shellSignOut = new();
     private IntPtr shellNotificationHandle;
-    private DateTime nextShellNotificationAttempt;
+    private long nextShellNotificationAttemptMilliseconds;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
     private string? notice;
     private ChromeState? lastChrome;
@@ -232,7 +232,7 @@ internal sealed partial class KioskForm : Form
         menu.HideMenu();
         HideTaskMenu();
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
-        if (!session.Locked) session.InactiveSince = DateTime.UtcNow;
+        if (!session.Locked) session.InactiveSinceMilliseconds = Environment.TickCount64;
         session.Locked = true;
         session.AdminCertificateVerified = false;
         if (current == session) current = null;
@@ -249,7 +249,7 @@ internal sealed partial class KioskForm : Form
         HideTaskMenu();
         session.Locked = true;
         session.AdminCertificateVerified = false;
-        session.InactiveSince = DateTime.UtcNow - TimeSpan.FromMilliseconds(idleMilliseconds);
+        session.InactiveSinceMilliseconds = Environment.TickCount64 - idleMilliseconds;
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
         RefreshChrome();
@@ -428,11 +428,11 @@ internal sealed partial class KioskForm : Form
     private void ExpireSessions()
     {
         if (config.ChangeUserAfterSeconds <= 0) return;
-        var limit = TimeSpan.FromSeconds(config.ChangeUserAfterSeconds);
+        var now = Environment.TickCount64;
         foreach (var session in sessions.Values.ToArray())
         {
             if (!session.Locked || verifying && session == current) continue;
-            if (DateTime.UtcNow - session.InactiveSince < limit) continue;
+            if (!WindowsSession.RetentionExpired(session.InactiveSinceMilliseconds, now, config.ChangeUserAfterSeconds)) continue;
             bool wasCurrent = session == current;
             CloseSession(session, "session_expired");
             if (wasCurrent) requireRemoval = true; // Its card is still inserted: reinserting starts afresh.
@@ -835,14 +835,14 @@ internal sealed partial class KioskForm : Form
             var change = message.WParam.ToInt32();
             if (change is WindowsSession.SessionLock or WindowsSession.ConsoleDisconnect or WindowsSession.RemoteDisconnect)
             {
-                disconnectedSince ??= DateTime.UtcNow;
-                shellLockRequestedAt = null;
+                disconnectedSinceMilliseconds ??= Environment.TickCount64;
+                shellLockRequestedAtMilliseconds = null;
                 shellUnlockNotified = false;
                 if (change == WindowsSession.SessionLock) shellLockNotified = true;
             }
             else if (change == WindowsSession.SessionUnlock)
             {
-                shellLockRequestedAt = null;
+                shellLockRequestedAtMilliseconds = null;
                 shellCardKey = null;
                 shellUnlockNotified = true;
                 shellLockNotified = false;
@@ -863,40 +863,40 @@ internal sealed partial class KioskForm : Form
         if (shellNotificationHandle != IntPtr.Zero || !IsHandleCreated) return;
         var handle = Handle;
         if (WindowsSession.RegisterNotifications(handle)) shellNotificationHandle = handle;
-        else nextShellNotificationAttempt = DateTime.UtcNow.AddSeconds(5);
+        else nextShellNotificationAttemptMilliseconds = Environment.TickCount64 + 5000;
     }
 
     private void ShellTick()
     {
         if (shellSignOut.Reason is { } pendingReason) { SignOutWindows(pendingReason); return; }
-        var now = DateTime.UtcNow;
-        if (shellNotificationHandle == IntPtr.Zero && now >= nextShellNotificationAttempt) TryRegisterShellNotifications();
+        var now = Environment.TickCount64;
+        if (shellNotificationHandle == IntPtr.Zero && now >= nextShellNotificationAttemptMilliseconds) TryRegisterShellNotifications();
         var state = WindowsSession.State();
         if (state is WindowsSession.Availability.Locked or WindowsSession.Availability.Disconnected)
         {
-            disconnectedSince ??= now;
-            shellLockRequestedAt = null;
+            disconnectedSinceMilliseconds ??= now;
+            shellLockRequestedAtMilliseconds = null;
         }
-        if (WindowsSession.RetentionExpired(disconnectedSince, now, config.ChangeUserAfterSeconds))
+        if (WindowsSession.RetentionExpired(disconnectedSinceMilliseconds, now, config.ChangeUserAfterSeconds))
         {
             SignOutWindows("session_expired");
             return;
         }
-        else if (disconnectedSince != null && shellLockRequestedAt == null &&
+        else if (disconnectedSinceMilliseconds != null && shellLockRequestedAtMilliseconds == null &&
                  WindowsSession.CanResume(state, shellUnlockNotified, shellLockNotified))
         {
-            disconnectedSince = null;
+            disconnectedSinceMilliseconds = null;
             shellCardKey = null;
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
-        if (disconnectedSince == null) shellUnlockNotified = false;
-        if (disconnectedSince != null)
+        if (disconnectedSinceMilliseconds == null) shellUnlockNotified = false;
+        if (disconnectedSinceMilliseconds != null)
             return;
-        if (shellLockRequestedAt is { } requested)
+        if (shellLockRequestedAtMilliseconds is { } requested)
         {
             // LockWorkStation is asynchronous. If Windows has not confirmed the
             // lock, fail closed by signing out rather than leaving work exposed.
-            if (now - requested >= TimeSpan.FromSeconds(5)) SignOutWindows("windows_lock_unconfirmed");
+            if (now - requested >= 5000) SignOutWindows("windows_lock_unconfirmed");
             return;
         }
         if (config.DisconnectOnCardRemoval)
@@ -916,7 +916,7 @@ internal sealed partial class KioskForm : Form
         HideTaskMenu();
         shellUnlockNotified = false;
         Audit.Write(reason, current?.Identity.Name ?? "");
-        try { WindowsSession.LockOrDisconnect(); shellLockRequestedAt = DateTime.UtcNow; }
+        try { WindowsSession.LockOrDisconnect(); shellLockRequestedAtMilliseconds = Environment.TickCount64; }
         catch (Exception ex)
         {
             notice = "Nie udało się zablokować sesji Windows: " + ex.Message;
@@ -1364,7 +1364,7 @@ internal sealed partial class KioskForm : Form
     private IReadOnlyCollection<string> CurrentBrowserCertificates(UserSession session)
     {
         if (session.Closed || session.Locked || current != session || shellSignOut.Reason != null ||
-            ShellMode && (disconnectedSince != null || shellLockRequestedAt != null)) return [];
+            ShellMode && (disconnectedSinceMilliseconds != null || shellLockRequestedAtMilliseconds != null)) return [];
         try
         {
             // A local Windows account has no UPN to compare with a certificate.
