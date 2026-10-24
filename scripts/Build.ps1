@@ -43,6 +43,16 @@ try {
     else { $arguments += @('-p:DebugType=None', '-p:DebugSymbols=false') }
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed; the previous build was retained.' }
+    $configTool = Join-Path $repository 'src\Kiosk.ConfigTool\KioskKonfiguracje.csproj'
+    & dotnet publish $configTool -c Release -r win-x64 --self-contained false -o $staging --nologo
+    if ($LASTEXITCODE -ne 0) { throw 'Building the configuration manager failed; the previous build was retained.' }
+    $newsEditor = Join-Path $repository 'src\Kiosk.NewsEditor\KioskKomunikaty.csproj'
+    & dotnet publish $newsEditor -c Release -r win-x64 --self-contained false -o (Join-Path $staging 'news-example') --nologo
+    if ($LASTEXITCODE -ne 0) { throw 'Building the news editor failed; the previous build was retained.' }
+    $fido = Join-Path $repository 'src\Kiosk.FidoBroker\FidoRun.csproj'
+    & dotnet build $fido -c Release -o (Join-Path $staging 'fido') --nologo
+    if ($LASTEXITCODE -ne 0) { throw 'Building the card sign-in broker failed; the previous build was retained.' }
+    Get-ChildItem -LiteralPath (Join-Path $staging 'fido') -Filter '*.pdb' -File | Remove-Item -Force
     Copy-Item -LiteralPath $configSource -Destination (Join-Path $staging 'client.json')
     if (-not (Test-Path -LiteralPath (Join-Path $staging 'Kiosk.Client.exe') -PathType Leaf)) { throw 'Publish did not produce Kiosk.Client.exe.' }
     Assert-KioskClientConfig (Join-Path $staging 'Kiosk.Client.exe') (Join-Path $staging 'client.json')

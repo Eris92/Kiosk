@@ -4,9 +4,7 @@ out/
 *.user
 client.local.json
 apps.local.json
-client.local.json.*
-apps.local.json.*
-*.bak
-*.pfx
-*.p12
-*.key
+__pycache__/
+package/
+.vs/
+*.suo

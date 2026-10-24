@@ -8,19 +8,22 @@ namespace Kiosk.Client;
 /// "Zaloguj" as the person's own Windows / Entra ID account, like runas: Windows' credential dialog asks for
 /// the login and password, Windows checks them, and Kiosk then starts that person's programs (Edge, apps) as
 /// them, with their profile, bookmarks and SSO. The password is kept only in this process's memory, encrypted
-/// with CryptProtectMemory, until the Kiosk session is closed. Optional CardVault enrollment stores an
-/// encrypted copy protected by the card's FIDO2 hmac-secret.
+/// with CryptProtectMemory, until the Kiosk session is closed; it is never written anywhere.
 /// </summary>
-internal sealed class UserLogon : IDisposable
+internal sealed class UserLogon : IDisposable, IProgramStarter
 {
     private readonly string user;
     private readonly string? domain;
     private byte[]? secret; // UTF-16 password, CryptProtectMemory(SAME_PROCESS), padded to 16 bytes.
     private readonly int length;
-    private readonly object secretLock = new();
+    /// <summary>Signed in with the card alone (no password here): programs start through the sign-in program.</summary>
+    private FidoSignIn? card;
+    internal bool WithCard => card != null;
 
     /// <summary>The account as Windows shows it, e.g. AzureAD\JanKowalski.</summary>
     internal string DisplayName { get; }
+    /// <summary>The login typed in the dialog (UPN or DOMAIN\user), for RDP.</summary>
+    internal string Login => domain == null ? user : domain + "\\" + user;
 
     private UserLogon(string user, string? domain, char[] password, int length, string displayName)
     {
@@ -28,103 +31,49 @@ internal sealed class UserLogon : IDisposable
         this.domain = domain;
         DisplayName = displayName;
         this.length = length;
-        secret = new byte[Math.Max(16, (length * 2 + 15) / 16 * 16)];
+        secret = new byte[(length * 2 + 15) / 16 * 16];
         Encoding.Unicode.GetBytes(password, 0, length, secret, 0);
-        if (!CryptProtectMemory(secret, secret.Length, 0))
+        if (!CryptProtectMemory(secret, secret.Length, 0)) throw new Win32Exception();
+    }
+
+    /// <summary>Card + PIN: the Windows sign-in with the card itself; the person's token stays in the sign-in program.</summary>
+    internal static UserLogon FromCard(FidoSignIn signIn)
+    {
+        // "AzureAD\JanKowalski" from Windows; the card names the account (jan@firma.pl), which remote desktops use.
+        var name = signIn.WindowsName;
+        int slash = name.IndexOf('\\');
+        string? domain = slash > 0 ? name[..slash] : null;
+        var account = signIn.Account.Contains('@') ? signIn.Account : slash > 0 ? name[(slash + 1)..] : name;
+        var logon = new UserLogon(account, domain, name)
         {
-            int error = Marshal.GetLastWin32Error();
-            Array.Clear(secret);
-            secret = null;
-            throw new Win32Exception(error);
-        }
+            card = signIn, Sid = signIn.Sid, IsAdministrator = signIn.IsAdministrator,
+            FriendlyName = People.FriendlyName("", account, name)
+        };
+        return logon;
+    }
+
+    private UserLogon(string user, string? domain, string displayName)
+    {
+        this.user = user;
+        this.domain = domain;
+        DisplayName = displayName;
     }
 
     internal string User => user;
     internal string Sid { get; private set; } = "";
-    internal bool IsAdministrator { get; private set; }
+    /// <summary>The person's name for the desktop, e.g. "Jan Kowalski" (not FIRMA\jkowalski).</summary>
+    internal string FriendlyName { get; private set; } = "";
+    /// <summary>The person's Windows profile folder (from ProfileList), or null before their first sign-in on this PC.</summary>
+    internal string? ProfileDirectory =>
+        Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\" + Sid, "ProfileImagePath", null) as string;
     internal string? Domain => domain;
-
-    /// <summary>Windows checks the account (Entra ID or domain) exactly as at sign-in. <paramref name="password"/> is
-    /// NUL-terminated; <paramref name="length"/> excludes the terminator. Null and the Win32 error when rejected.</summary>
-    internal static UserLogon? TryLogon(string login, string? domain, char[] password, int length, out int code)
-    {
-        if (length < 0 || length >= password.Length || password[length] != '\0' || Array.IndexOf(password, '\0', 0, length) >= 0)
-            throw new ArgumentException("The password must be NUL-terminated at its declared length.", nameof(password));
-        bool ok = LogonUser(login, domain, password, 2, 0, out var token); // LOGON32_LOGON_INTERACTIVE
-        code = ok ? 0 : Marshal.GetLastWin32Error();
-        // Entra ID accounts may use the AzureAD\user@tenant form on this PC.
-        if (!ok && domain == null && login.Contains('@'))
-        {
-            token.Dispose();
-            ok = LogonUser(login, "AzureAD", password, 2, 0, out token);
-            if (ok) { domain = "AzureAD"; code = 0; }
-            else code = Marshal.GetLastWin32Error();
-        }
-        using (token)
-        {
-            if (!ok) { Audit.Write("signin_failed", "error " + code); return null; } // Never the login or password.
-            using var identity = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
-            return new UserLogon(login, domain, password, length, identity.Name)
-            {
-                Sid = identity.User?.Value ?? "",
-                // Only the token returned by successful Windows authentication establishes administrator membership.
-                IsAdministrator = identity.Groups?.Contains(new System.Security.Principal.SecurityIdentifier(
-                    System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null)) == true
-            };
-        }
-    }
-
-    /// <summary>Shows the Windows credential dialog and checks the account; null when cancelled.</summary>
-    internal static UserLogon? Prompt(IntPtr owner, string message)
-    {
-        var info = new CredUiInfo { Size = Marshal.SizeOf<CredUiInfo>(), Parent = owner, Caption = "Zaloguj do Kiosku", Message = message };
-        uint package = 0;
-        bool save = false;
-        string? error = null;
-        while (true)
-        {
-            if (error != null) info.Message = error + "\n" + message;
-            int result = CredUIPromptForWindowsCredentials(ref info, error == null ? 0 : 1326, ref package, IntPtr.Zero, 0,
-                out var buffer, out var size, ref save, 0x1); // CREDUIWIN_GENERIC: login + password
-            if (result == 1223) return null; // ERROR_CANCELLED
-            if (result != 0) throw new Win32Exception(result);
-            var name = new StringBuilder(514);
-            var dom = new StringBuilder(338);
-            var password = new char[257];
-            int nameLength = name.Capacity, domLength = dom.Capacity, passwordLength = password.Length;
-            try
-            {
-                if (!CredUnPackAuthenticationBuffer(1, buffer, size, name, ref nameLength, dom, ref domLength, password, ref passwordLength))
-                    throw new Win32Exception(); // 1 = CRED_PACK_PROTECTED_CREDENTIALS: a usable (unprotected) password
-                var login = name.ToString();
-                string? domainPart = dom.Length > 0 ? dom.ToString() : null;
-                int slash = login.IndexOf('\\');
-                if (domainPart == null && slash > 0) { domainPart = login[..slash]; login = login[(slash + 1)..]; }
-                int typedLength = Array.IndexOf(password, '\0');
-                if (typedLength < 0) typedLength = Math.Min(passwordLength, password.Length - 1);
-                var typed = new char[typedLength + 1]; // NUL-terminated for LogonUser
-                Array.Copy(password, typed, typedLength);
-                try
-                {
-                    var logon = TryLogon(login, domainPart, typed, typedLength, out int code);
-                    if (logon != null) return logon;
-                    error = "Nieprawidłowy login lub hasło (" + new Win32Exception(code).Message + ", kod " + code + ").";
-                    continue;
-                }
-                finally { Array.Clear(typed); }
-            }
-            finally
-            {
-                Array.Clear(password);
-                RtlZeroMemory(buffer, size);
-                CoTaskMemFree(buffer);
-            }
-        }
-    }
+    /// <summary>The account is in this PC's local Administrators group (also through a group, also UAC-filtered).</summary>
+    internal bool IsAdministrator { get; private set; }
 
     /// <summary>Starts a program as this person (with their profile), suspended, like runas.</summary>
-    internal (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
+    public (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
     {
+        if (card != null) return card.Start(application, commandLine, directory, show);
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = show };
         var password = Reveal();
         try
@@ -138,15 +87,47 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(password); }
     }
 
+    private Microsoft.Win32.SafeHandles.SafeAccessTokenHandle? token;
+
+    /// <summary>Runs <paramref name="work"/> as this person (Pliki: their folders, with their rights).</summary>
+    internal object? RunAs(Func<object?> work)
+    {
+        if (card != null) throw new NotSupportedException("Pliki osoby zalogowanej kartą otwierają się w osobnym oknie.");
+        if (token == null || token.IsInvalid)
+        {
+            var password = Reveal();
+            try { if (!LogonUser(user, domain, password, 2, 0, out token)) throw new Win32Exception(); }   // LOGON32_LOGON_INTERACTIVE
+            finally { Array.Clear(password); }
+        }
+        return System.Security.Principal.WindowsIdentity.RunImpersonated(token, work);
+    }
+
+    /// <summary>
+    /// First use on this PC: Windows creates the person's profile (C:\Users\…) when a program first starts as them.
+    /// Do it once with a hidden "cmd /c exit" and wait, so Edge and the apps start in a finished profile instead of
+    /// racing its creation. Returns false when Windows still has no profile for them.
+    /// </summary>
+    internal bool EnsureProfile()
+    {
+        if (ProfileDirectory != null) return true;
+        var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var (process, thread) = Start(cmd, "\"" + cmd + "\" /c exit", Environment.SystemDirectory, show: 0);
+        try
+        {
+            ResumeThread(thread);
+            WaitForSingleObject(process, 120000);
+        }
+        finally { CloseHandle(thread); CloseHandle(process); }
+        Audit.Write(ProfileDirectory != null ? "profile_created" : "profile_missing", DisplayName);
+        return ProfileDirectory != null;
+    }
+
     /// <summary>The password for the RDP control; the caller clears it as soon as it is handed over.</summary>
     internal char[] Reveal()
     {
-        byte[] copy;
-        lock (secretLock)
-        {
-            if (secret == null) throw new ObjectDisposedException(nameof(UserLogon));
-            copy = (byte[])secret.Clone();
-        }
+        if (card != null) throw new InvalidOperationException("Logowanie kartą nie używa hasła.");
+        if (secret == null) throw new ObjectDisposedException(nameof(UserLogon));
+        var copy = (byte[])secret.Clone();
         try
         {
             if (!CryptUnprotectMemory(copy, copy.Length, 0)) throw new Win32Exception();
@@ -157,18 +138,36 @@ internal sealed class UserLogon : IDisposable
         finally { Array.Clear(copy); }
     }
 
-    public void Dispose() { lock (secretLock) { if (secret != null) { Array.Clear(secret); secret = null; } } }
+    public void Dispose()
+    {
+        if (secret != null) { Array.Clear(secret); secret = null; }
+        token?.Dispose(); token = null;
+        // Signs the person out: their programs close with it. In the background: the answer can take seconds.
+        if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
+    }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CredUiInfo { public int Size; public IntPtr Parent; public string Message; public string Caption; public IntPtr Banner; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
 
-    [DllImport("credui.dll", CharSet = CharSet.Unicode)]
-    private static extern int CredUIPromptForWindowsCredentials(ref CredUiInfo info, int error, ref uint package, IntPtr inBuffer, uint inSize,
-        out IntPtr outBuffer, out uint outSize, ref bool save, int flags);
-    [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CredUnPackAuthenticationBuffer(int flags, IntPtr buffer, uint size, StringBuilder user, ref int userLength,
-        StringBuilder domain, ref int domainLength, [Out] char[] password, ref int passwordLength);
+    [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    /// <summary>The name in Active Directory / Entra ID ("Jan Kowalski"), asked as that person; empty when unknown.</summary>
+    private static string DirectoryName(System.Security.Principal.WindowsIdentity identity)
+    {
+        try
+        {
+            return System.Security.Principal.WindowsIdentity.RunImpersonated(identity.AccessToken, () =>
+            {
+                var buffer = new StringBuilder(256);
+                uint size = (uint)buffer.Capacity;
+                return GetUserNameEx(3, buffer, ref size) ? buffer.ToString() : ""; // NameDisplay
+            });
+        }
+        catch (Exception) { return ""; }
+    }
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool LogonUser(string user, string? domain, char[] password, int type, int provider, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -176,6 +175,4 @@ internal sealed class UserLogon : IDisposable
         StringBuilder commandLine, int creationFlags, IntPtr environment, string? directory, ref AppNative.StartupInfo startup, out ProcessInformation process);
     [DllImport("crypt32.dll", SetLastError = true)] private static extern bool CryptProtectMemory(byte[] data, int size, int flags);
     [DllImport("crypt32.dll", SetLastError = true)] private static extern bool CryptUnprotectMemory(byte[] data, int size, int flags);
-    [DllImport("kernel32.dll")] private static extern void RtlZeroMemory(IntPtr destination, uint length);
-    [DllImport("ole32.dll")] private static extern void CoTaskMemFree(IntPtr pointer);
 }

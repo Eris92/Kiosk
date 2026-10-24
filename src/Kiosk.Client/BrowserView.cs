@@ -1,6 +1,3 @@
-using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Security.Cryptography.X509Certificates;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -8,8 +5,8 @@ namespace Kiosk.Client;
 
 /// <summary>
 /// Embedded Edge (WebView2) with tabs and a dark toolbar that matches the Kiosk shell.
-/// Tabs share a profile. Shared-account card sessions use separate temporary InPrivate profiles;
-/// WindowsShell uses the signed-in Windows user's persistent profile for SSO.
+/// All tabs of one person share one InPrivate profile (one sign-in covers every tab);
+/// each person's browser has its own profile, removed when their session closes.
 /// </summary>
 internal sealed class BrowserView : UserControl
 {
@@ -20,27 +17,56 @@ internal sealed class BrowserView : UserControl
         internal bool Blocked { get; set; }
     }
 
-    private const string ProfileName = "kiosk";
-    internal const string ProfileMarkerName = ".kiosk-browser-profile";
-    internal const string ProfileMarkerText = "KioskBrowserProfile-v1";
-    private static readonly ConcurrentDictionary<string, byte> liveProfiles = new(StringComparer.OrdinalIgnoreCase);
-    private static int profileCleanupRunning;
+    /// <summary>"kiosk" in a person's own folder; a page of its own (InPrivate) in the Kiosk's shared browser otherwise.</summary>
+    private readonly string profileName;
+    /// <summary>
+    /// InPrivate pages (guests, Szybka pomoc, screens) share one browser per Kiosk process, each in its own InPrivate
+    /// profile: a page opens without starting a whole Edge each time, and still keeps nothing from another page.
+    /// </summary>
+    private static Task<CoreWebView2Environment>? sharedEnvironment;
+    private bool shared;
     private static readonly HashSet<string> AllowedMenuItems = new(StringComparer.Ordinal)
     {
         "copyLinkLocation", "copy", "cut", "paste", "pasteAndMatchStyle", "selectAll", "undo", "redo", "back", "forward", "reload"
     };
+    /// <summary>Files that would start something when opened: never downloaded.</summary>
+    private static readonly HashSet<string> BlockedDownloads = new(StringComparer.Ordinal)
+    {
+        ".exe", ".msi", ".msix", ".appx", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".hta", ".scr", ".pif", ".lnk", ".url", ".reg", ".cpl", ".msc", ".jar", ".application", ".appref-ms", ".iso", ".img", ".vhd", ".vhdx"
+    };
     private readonly List<Tab> tabs = new();
     private Tab? active;
     private CoreWebView2Environment? environment;
-    private uint browserProcessId;
-    private Task? initialization;
-    private bool disposed;
     private string homeUrl = "about:blank";
     private readonly string userDataFolder;
-    private FileStream? profileMarker;
     /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
     /// account for SSO and keeps a normal profile in their own AppData instead of a throw-away InPrivate one.</summary>
     private readonly bool windowsAccount;
+    /// <summary>One page, no tabs (Szybka pomoc): links for a new window open in the same page.</summary>
+    private readonly bool singlePage;
+    /// <summary>Punkt samoobsługowy: the card's sign-in folder, shared by every help window while the card lies on the
+    /// reader (one FIDO2 sign-in for all); the card session deletes it, not this view.</summary>
+    private readonly bool sharedFolder;
+    /// <summary>Someone used the page (click, touch, key, scroll); only for <see cref="singlePage"/>.</summary>
+    internal event Action? Activity;
+    /// <summary>Sites that get the Windows account's own sign-in (Negotiate) when <see cref="windowsAccount"/> is set.</summary>
+    internal static string[] IntegratedAuthHosts { get; set; } = [];
+    /// <summary>How long a site's login window waits for someone to type before it cancels.</summary>
+    internal static int SignInSeconds { get; set; } = 90;
+    private const string ActivityScript = """
+        (() => {
+          let last = 0;
+          const seen = () => { const now = Date.now(); if (now - last > 400) { last = now; try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { } } };
+          for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'input', 'scroll'])
+            addEventListener(type, seen, { capture: true, passive: true });
+          // A training film playing on the page counts as use: the page does not close in the middle of it.
+          setInterval(() => {
+            if ([...document.querySelectorAll('video')].some(v => !v.paused && !v.ended && v.readyState > 2))
+              try { chrome.webview.postMessage('kiosk-activity'); } catch (e) { }
+          }, 5000);
+        })();
+        """;
 
     private readonly TextBox address = new()
     {
@@ -59,40 +85,24 @@ internal sealed class BrowserView : UserControl
         ForeColor = KioskTheme.Muted, Padding = new Padding(10, 5, 10, 0)
     };
     private readonly SitePolicy policy;
-    private readonly Func<IReadOnlyCollection<string>> cardCertificates;
-    private readonly string? expectedCertificateUpn;
+    private readonly HashSet<string> cardCertificates;
 
     /// <summary>The page in the active tab.</summary>
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
-#if KIOSK_SELF_TEST
-    internal string ProfileFolder => userDataFolder;
-#endif
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null,
-        Func<IReadOnlyCollection<string>>? cardCertificates = null, bool windowsAccount = false, string? expectedCertificateUpn = null)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false, string? profileFolder = null)
     {
+        this.singlePage = singlePage;
+        sharedFolder = profileFolder != null;
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
-        this.cardCertificates = cardCertificates ?? (() => []);
-        this.expectedCertificateUpn = expectedCertificateUpn;
-        if (windowsAccount)
-            userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser");
-        else
-        {
-            var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
-            Directory.CreateDirectory(root);
-            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Katalog profili przeglądarki jest przekierowaniem.");
-            userDataFolder = Path.Combine(root, Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(userDataFolder);
-            profileMarker = new FileStream(Path.Combine(userDataFolder, ProfileMarkerName), FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            var marker = System.Text.Encoding.UTF8.GetBytes(ProfileMarkerText);
-            profileMarker.Write(marker);
-            profileMarker.Flush();
-            liveProfiles.TryAdd(userDataFolder, 0);
-            QueueAbandonedProfileCleanup(root);
-        }
+        shared = profileFolder == null && !windowsAccount;
+        userDataFolder = profileFolder ?? (windowsAccount
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
+            : SharedFolder);
+        profileName = shared ? "page-" + Guid.NewGuid().ToString("N") : "kiosk";
+        this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
@@ -126,7 +136,7 @@ internal sealed class BrowserView : UserControl
         forward.Click += (_, _) => { if (active?.Web.CanGoForward == true) active.Web.GoForward(); };
         reload.Click += (_, _) => { if (active?.Web.CoreWebView2 != null) active.Web.Reload(); };
         go.Click += (_, _) => NavigateAddress();
-        newTab.Click += async (_, _) => await OpenTabFromUiAsync(homeUrl);
+        newTab.Click += async (_, _) => await AddTabAsync(homeUrl);
         address.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateAddress(); } };
         foreach (var bookmark in bookmarks ?? [])
         {
@@ -140,16 +150,45 @@ internal sealed class BrowserView : UserControl
         if (!this.policy.Restricted) favorites.Padding = new Padding(6, 0, 6, 6);
         Controls.Add(pages); Controls.Add(message);
         if (!this.policy.Restricted) Controls.Add(favorites);
-        Controls.Add(toolbar); Controls.Add(tabStrip);
+        Controls.Add(toolbar);
+        if (!singlePage) Controls.Add(tabStrip);
     }
 
-    private int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    private new int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+
+    private Label? pageTitle;
+    private Button? pageClose;
+
+    /// <summary>
+    /// One bar for a single page (Szybka pomoc, the card person's page): ← → ⟳, the page's name and a large
+    /// close button in the accent colour, instead of a second bar above the browser's own.
+    /// </summary>
+    internal void SetPageBar(string title, Button close)
+    {
+        pageTitle = new Label { Text = title, AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI Semibold", 12), ForeColor = KioskTheme.Text, BackColor = KioskTheme.Taskbar };
+        pageClose = close;
+        addressBox.Visible = go.Visible = false;   // A single page never has an address bar, whatever sites it may open.
+        close.Font = new Font("Segoe UI", 12, FontStyle.Bold);
+        toolbar.Controls.Add(pageTitle);
+        toolbar.Controls.Add(close);
+        if (IsHandleCreated) { toolbar.Height = Scale(64); ArrangeToolbar(); }
+    }
+
+    /// <summary>Only the page: no bar above it (the element beside a page, part of that page's frame).</summary>
+    /// <summary>Menu → "Obok": only the document, also without the message line, so it is as tall as the page beside it.</summary>
+    internal void HideBars() { toolbar.Visible = false; favorites.Visible = false; message.Visible = false; }
+
+    /// <summary>The page leaves <paramref name="width"/> px free at its right, between its bar and the line under it (the element beside it).</summary>
+    internal void SetRightInset(int width) { if (pages.Padding.Right != width) pages.Padding = new Padding(0, 0, Math.Max(0, width), 0); }
+    /// <summary>The page's area on the screen (between the bar and the line under it).</summary>
+    internal Rectangle PagesOnScreen => pages.RectangleToScreen(pages.ClientRectangle);
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         tabStrip.Height = Scale(44);
-        toolbar.Height = Scale(50);
+        toolbar.Height = Scale(pageClose != null ? 64 : 50);
+        message.Height = Scale(30);   // 26 px fixed cut the text in half on a 240 DPI screen.
         favorites.Height = Scale(40);
         ArrangeTabs();
         ArrangeToolbar();
@@ -157,11 +196,20 @@ internal sealed class BrowserView : UserControl
 
     private void ArrangeToolbar()
     {
-        int height = Scale(36), top = (toolbar.Height - height) / 2, gap = Scale(6), x = Scale(10);
+        int height = Scale(pageClose != null ? 44 : 36), top = (toolbar.Height - height) / 2, gap = Scale(6), x = Scale(10);
         foreach (var button in new[] { back, forward, reload })
         {
-            button.SetBounds(x, top, Scale(44), height);
-            x += Scale(44) + gap;
+            button.SetBounds(x, top, Scale(pageClose != null ? 52 : 44), height);
+            x += Scale(pageClose != null ? 52 : 44) + gap;
+        }
+        if (pageClose != null && pageTitle != null)
+        {
+            int closeWidth = Math.Max(Scale(220), TextRenderer.MeasureText(pageClose.Text, pageClose.Font).Width + Scale(40));
+            int closeHeight = Scale(48);
+            pageClose.SetBounds(toolbar.Width - Scale(10) - closeWidth, (toolbar.Height - closeHeight) / 2, closeWidth, closeHeight);
+            pageTitle.SetBounds(x + Scale(12), 0, Math.Max(0, pageClose.Left - x - Scale(24)), toolbar.Height);
+            favorites.Visible = false;
+            return;
         }
         if (policy.Restricted)
         {
@@ -189,29 +237,46 @@ internal sealed class BrowserView : UserControl
         newTab.SetBounds(x + gap, top, Scale(40), height);
     }
 
-    internal Task InitializeAsync(string url)
+    internal async Task InitializeAsync(string url)
     {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        // A second caller must await the same environment/tab startup, not create another browser process.
-        return initialization ??= InitializeCoreAsync(url);
-    }
-
-    private async Task InitializeCoreAsync(string url)
-    {
-        homeUrl = url == "about:blank" || policy.Allows(url) ? url : "about:blank";
+        homeUrl = url;
         // Per-session profile folder, separate from the user's installed browser; tabs share it.
         // Single sign-on with the Windows account (Entra ID PRT) only when that account is the person's own.
         var environmentOptions = new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = windowsAccount };
-        environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
-        if (disposed) return;
-        await AddTabAsync(homeUrl);
-        if (!disposed) message.Text = "";
+        // Company sites with Windows sign-in (Kerberos / NTLM, e.g. RCP on IIS): the person's own account signs in by
+        // itself, like in their Edge, instead of a 401.
+        // Edge's own policy (AuthServerAllowlist) is not read by WebView2, so it is passed on too.
+        if (windowsAccount)
+        {
+            var servers = IntegratedAuthHosts.Select(h => "*" + h).Concat(EdgePolicy("AuthServerAllowlist")).Distinct().ToArray();
+            var delegated = EdgePolicy("AuthNegotiateDelegateAllowlist");
+            var arguments = new List<string>();
+            if (servers.Length > 0) arguments.Add("--auth-server-allowlist=\"" + string.Join(",", servers) + "\"");
+            if (delegated.Length > 0) arguments.Add("--auth-negotiate-delegate-allowlist=\"" + string.Join(",", delegated) + "\"");
+            if (arguments.Count > 0) environmentOptions.AdditionalBrowserArguments = string.Join(" ", arguments);
+        }
+        environment = shared ? await SharedEnvironmentAsync() : await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
+        if (IsDisposed) return;
+        await AddTabAsync(url);
+        message.Text = "";
+    }
+
+    /// <summary>A list from Edge's machine policy (HKLM\SOFTWARE\Policies\Microsoft\Edge), only plain host patterns.</summary>
+    private static string[] EdgePolicy(string name)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Edge");
+            return (key?.GetValue(name) as string ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(h => h.All(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '*')).ToArray();
+        }
+        catch (Exception) { return []; }
     }
 
     /// <summary>Opens a tab. <paramref name="request"/> is a page asking for a new window (target=_blank, window.open).</summary>
     private async Task<Tab?> AddTabAsync(string? url, CoreWebView2NewWindowRequestedEventArgs? request = null)
     {
-        if (environment == null || disposed) return null;
+        if (environment == null || IsDisposed) return null;
         var web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KioskTheme.Background, Visible = false };
         var tab = new Tab { Web = web, Button = new TabButton("Nowa karta") };
         tab.Button.Selected += () => SelectTab(tab);
@@ -223,121 +288,150 @@ internal sealed class BrowserView : UserControl
         SelectTab(tab);
 
         var options = environment.CreateCoreWebView2ControllerOptions();
-        options.ProfileName = ProfileName;
-        options.IsInPrivateModeEnabled = !windowsAccount;
-        try
+        options.ProfileName = profileName;
+        options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
+        await web.EnsureCoreWebView2Async(environment, options);
+        if (web.IsDisposed) return null;
+        var core = web.CoreWebView2;
+        // The card's web sign-in (security key) only without a Windows account: with it the page signs in by itself (SSO).
+        PageScripts.Attach(core, kiosk: singlePage && !windowsAccount, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
+        core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
+        core.Settings.AreDevToolsEnabled = false;
+        // A crashed or hung page shows itself again instead of staying blank until someone closes it.
+        core.ProcessFailed += (_, e) =>
         {
-            await web.EnsureCoreWebView2Async(environment, options);
-            if (disposed || web.IsDisposed || !tabs.Contains(tab)) return null;
-            var core = web.CoreWebView2;
-            browserProcessId = core.BrowserProcessId;
-            core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
-            core.Settings.AreDevToolsEnabled = false;
-            // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.
-            core.Settings.AreDefaultContextMenusEnabled = true;
-            core.ContextMenuRequested += (_, e) =>
+            Audit.Write("browser_process_failed", e.ProcessFailedKind + " " + e.Reason);
+            if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive or CoreWebView2ProcessFailedKind.FrameRenderProcessExited)
+                try { core.Reload(); } catch (Exception ex) { Audit.Write("browser_reload_failed", ex.Message); }
+            else if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+                message.Text = "Przeglądarka została zamknięta przez system. Zamknij to okno i otwórz je ponownie.";
+        };
+        // No way out of the Kiosk through the browser: Ctrl+P / Ctrl+S / Ctrl+O open Windows' file dialogs, which can
+        // browse and start programs. Reload stays on the toolbar; copy, paste and typing work as before.
+        core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+        core.Settings.HiddenPdfToolbarItems = CoreWebView2PdfToolbarItems.Save | CoreWebView2PdfToolbarItems.SaveAs |
+            (singlePage ? CoreWebView2PdfToolbarItems.Print : CoreWebView2PdfToolbarItems.None);
+        // Downloads: never Edge's flyout (its "Otwórz" and "Pokaż w folderze" start programs and Explorer); programs and
+        // scripts are not downloaded at all, and a guest page downloads nothing.
+        core.DownloadStarting += (_, e) =>
+        {
+            e.Handled = true;
+            var extension = Path.GetExtension(e.ResultFilePath).ToLowerInvariant();
+            if (singlePage || BlockedDownloads.Contains(extension))
             {
-                var items = e.MenuItems;
-                for (int i = items.Count - 1; i >= 0; i--)
-                    if (!AllowedMenuItems.Contains(items[i].Name)) items.RemoveAt(i);
-                var target = e.ContextMenuTarget;
-                if (target.HasLinkUri && IsWebAddress(target.LinkUri) && environment != null)
-                {
-                    var link = target.LinkUri;
-                    var open = environment.CreateContextMenuItem("Otwórz w nowej karcie", null, CoreWebView2ContextMenuItemKind.Command);
-                    open.CustomItemSelected += async (_, _) => await OpenTabFromUiAsync(link);
-                    items.Insert(0, open);
-                }
-                if (items.Count == 0) e.Handled = true; // Nothing left to show.
-            };
-            core.Settings.IsPasswordAutosaveEnabled = false;
-            core.Settings.IsGeneralAutofillEnabled = false;
-            core.NewWindowRequested += async (_, e) =>
+                e.Cancel = true;
+                Audit.Write("download_blocked", extension);
+            }
+        };
+        // A trimmed right-click menu: open a link in a new tab, copy / paste, navigation. No save, print or inspect.
+        core.Settings.AreDefaultContextMenusEnabled = true;
+        core.ContextMenuRequested += (_, e) =>
+        {
+            var items = e.MenuItems;
+            for (int i = items.Count - 1; i >= 0; i--)
+                if (!AllowedMenuItems.Contains(items[i].Name)) items.RemoveAt(i);
+            var target = e.ContextMenuTarget;
+            if (!singlePage && target.HasLinkUri && IsWebAddress(target.LinkUri) && environment != null)   // A single page has no tabs to show it in.
             {
-                // Links "in a new window" become a tab; window.opener keeps working (sign-in pop-ups).
-                e.Handled = true; // A failed or cancelled startup must never fall back to an external browser.
-                if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
+                var link = target.LinkUri;
+                var open = environment.CreateContextMenuItem("Otwórz w nowej karcie", null, CoreWebView2ContextMenuItemKind.Command);
+                open.CustomItemSelected += async (_, _) => await AddTabAsync(link);
+                items.Insert(0, open);
+            }
+            if (items.Count == 0) e.Handled = true; // Nothing left to show.
+        };
+        core.Settings.IsPasswordAutosaveEnabled = false;
+        core.Settings.IsGeneralAutofillEnabled = false;
+        core.NewWindowRequested += async (_, e) =>
+        {
+            // Links "in a new window" become a tab; window.opener keeps working (sign-in pop-ups).
+            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
+            if (singlePage) { e.Handled = true; if (IsWebAddress(e.Uri)) core.Navigate(e.Uri); return; }
+            var deferral = e.GetDeferral();
+            try
+            {
+                var opened = await AddTabAsync(null, e);
+                if (opened?.Web.CoreWebView2 != null) e.NewWindow = opened.Web.CoreWebView2;
+                e.Handled = true;
+            }
+            finally { deferral.Complete(); }
+        };
+        core.WindowCloseRequested += (_, _) => CloseTab(tab);
+        // Sites that sign in with a certificate (Entra ID certificate-based auth, ADFS, internal portals) get the
+        // certificate from this person's card, so the browser is signed in as the card's user, not as the Windows
+        // account the Kiosk runs under. Windows asks for the card PIN. Certificates of other cards are never offered.
+        core.ClientCertificateRequested += (_, e) =>
+        {
+            var fromCard = e.MutuallyTrustedCertificates.Where(c => { using var x = c.ToX509Certificate2(); return cardCertificates.Contains(x.Thumbprint); }).ToList();
+            if (fromCard.Count > 0) e.SelectedCertificate = fromCard[0];
+            // Otherwise continue without a certificate: never offer one that is not on this person's card.
+            e.Handled = true;
+        };
+        core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
+        if (windowsAccount)
+        {
+            // The Windows account's own sign-in did not get the person in (for example no domain ticket for an
+            // on-premises site): ask for login and password like a normal Edge does, instead of a bare 401 page.
+            core.BasicAuthenticationRequested += (_, e) =>
+            {
                 var deferral = e.GetDeferral();
-                try
+                string host = Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) ? uri.Host : e.Uri;
+                Audit.Write("browser_sign_in_asked", host);
+                BeginInvoke(async () =>
                 {
-                    var opened = await AddTabAsync(null, e);
-                    if (!disposed && !web.IsDisposed && opened?.Web.CoreWebView2 != null) e.NewWindow = opened.Web.CoreWebView2;
-                    e.Handled = true;
-                }
-                catch (Exception ex) { ReportError(ex); }
-                finally
-                {
-                    // The requesting tab can close while its new tab is initializing.
-                    try { deferral.Complete(); }
-                    catch (Exception ex) { ReportError(ex); }
-                }
-            };
-            core.WindowCloseRequested += (_, _) => CloseTab(tab);
-            // Ask the session for the currently inserted card only when a site
-            // requests a certificate. A removed or changed card cannot use a
-            // thumbprint captured when this browser window was opened.
-            core.ClientCertificateRequested += (_, e) =>
-            {
-                try
-                {
-                    var allowed = cardCertificates();
-                    foreach (var candidate in e.MutuallyTrustedCertificates)
+                    try
                     {
-                        using var certificate = candidate.ToX509Certificate2();
-                        if (!AllowsClientCertificate(certificate, allowed, expectedCertificateUpn)) continue;
-                        e.SelectedCertificate = candidate;
-                        break;
+                        // Over this page, in the same window.
+                        var typed = await HelpSignIn.AskAsync(this, host, Environment.UserDomainName + "\\" + Environment.UserName, SignInSeconds);
+                        if (typed is { } credentials) { e.Response.UserName = credentials.User; e.Response.Password = credentials.Password; }
+                        else e.Cancel = true;
                     }
-                }
-                catch (Exception ex) { Audit.Write("browser_certificate_error", ex.Message); }
-                finally
-                {
-                    // No eligible card means no certificate, never an unfiltered
-                    // system picker that could offer another user's credential.
-                    e.Handled = true;
-                }
+                    finally { deferral.Complete(); }
+                });
             };
-            core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
-            core.NavigationStarting += (_, e) =>
-            {
-                // NavigateToString uses an internal data document (also used by the smoke test).
-                if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)) e.Cancel = true;
-                else if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
-                {
-                    e.Cancel = true;
-                    tab.Blocked = true;
-                    if (tab == active) message.Text = "Ta strona nie jest dozwolona w Kiosku: " + new Uri(e.Uri).Host + ". Korzystaj ze stron z zakładek.";
-                    Audit.Write("browser_blocked", new Uri(e.Uri).Host);
-                }
-                else if (tab == active) message.Text = "Wczytywanie…";
-            };
-            core.SourceChanged += (_, _) => { if (tab == active) address.Text = core.Source; };
-            core.DocumentTitleChanged += (_, _) =>
-            {
-                tab.Button.Text = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "Nowa karta" : core.DocumentTitle;
-            };
-            core.HistoryChanged += (_, _) => { if (tab == active) UpdateNavigation(); };
-            core.NavigationCompleted += (_, e) =>
-            {
-                if (tab.Blocked) { tab.Blocked = false; return; } // Keep the "not allowed" message.
-                if (tab == active) message.Text = e.IsSuccess ? "" : "Nie udało się wczytać strony: " + e.WebErrorStatus;
-            };
-            UpdateNavigation();
-            if (request == null && url != null && url != "about:blank" && policy.Allows(url))
-                core.Navigate(url);
-            return tab;
         }
-        catch (Exception) when (disposed || web.IsDisposed || !tabs.Contains(tab)) { return null; }
-        catch
+        if (singlePage)
         {
-            RemoveTab(tab, reopen: false);
-            throw;
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(ActivityScript);
+            core.WebMessageReceived += (_, e) => { if (e.TryGetWebMessageAsString() == "kiosk-activity") Activity?.Invoke(); };
+            // A film with sound in a frame of another site (e.g. an e-learning player) is not seen by the script: the browser says it plays.
+            var playing = new System.Windows.Forms.Timer { Interval = 5000 };
+            playing.Tick += (_, _) => { try { if (core.IsDocumentPlayingAudio) Activity?.Invoke(); } catch (Exception) { } };
+            playing.Start();
+            Disposed += (_, _) => playing.Dispose();
         }
+        core.NavigationStarting += (_, e) =>
+        {
+            // NavigateToString uses an internal data document (also used by the smoke test).
+            if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase) && !policy.Allows(e.Uri)) e.Cancel = true;
+            else if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
+            {
+                e.Cancel = true;
+                tab.Blocked = true;
+                if (tab == active) message.Text = "Ta strona nie jest dozwolona w Kiosku: " + new Uri(e.Uri).Host + ". Korzystaj ze stron z zakładek.";
+                Audit.Write("browser_blocked", new Uri(e.Uri).Host);
+            }
+            else if (tab == active) message.Text = "Wczytywanie…";
+        };
+        core.SourceChanged += (_, _) => { if (tab == active) address.Text = core.Source; };
+        core.DocumentTitleChanged += (_, _) =>
+        {
+            tab.Button.Text = string.IsNullOrWhiteSpace(core.DocumentTitle) ? "Nowa karta" : core.DocumentTitle;
+        };
+        core.HistoryChanged += (_, _) => { if (tab == active) UpdateNavigation(); };
+        core.NavigationCompleted += (_, e) =>
+        {
+            if (tab.Blocked) { tab.Blocked = false; return; } // Keep the "not allowed" message.
+            if (tab == active) message.Text = e.IsSuccess ? "" : "Nie udało się wczytać strony: " + e.WebErrorStatus;
+        };
+        UpdateNavigation();
+        if (request == null && url != null && url != "about:blank")
+            core.Navigate(policy.Allows(url) ? url : homeUrl);
+        return tab;
     }
 
     private void SelectTab(Tab tab)
     {
-        if (disposed) return;
         active = tab;
         foreach (var other in tabs)
         {
@@ -352,22 +446,13 @@ internal sealed class BrowserView : UserControl
 
     private void CloseTab(Tab tab)
     {
-        if (!disposed) RemoveTab(tab, reopen: true);
-    }
-
-    private void RemoveTab(Tab tab, bool reopen)
-    {
         int index = tabs.IndexOf(tab);
         if (index < 0) return;
         tabs.RemoveAt(index);
         tabStrip.Controls.Remove(tab.Button);
         pages.Controls.Remove(tab.Web);
         tab.Button.Dispose(); tab.Web.Dispose();
-        if (tabs.Count == 0)
-        {
-            active = null;
-            if (reopen && !disposed) _ = OpenTabFromUiAsync(homeUrl); // The browser always keeps one tab.
-        }
+        if (tabs.Count == 0) { active = null; _ = AddTabAsync(homeUrl); } // The browser always keeps one tab.
         else if (active == tab) SelectTab(tabs[Math.Min(index, tabs.Count - 1)]);
         ArrangeTabs();
     }
@@ -380,6 +465,8 @@ internal sealed class BrowserView : UserControl
 
     /// <summary>Opens a new tab with the start page (also used by the self-test).</summary>
     internal Task OpenTabAsync() => AddTabAsync(homeUrl);
+    /// <summary>A page of a company message, in a new tab (allowed even outside the bookmarks).</summary>
+    internal Task OpenTrustedTabAsync(string url) { policy.Trust(url); return AddTabAsync(url); }
     internal void CloseActiveTab() { if (active != null) CloseTab(active); }
 
     private static bool IsWebAddress(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
@@ -394,160 +481,49 @@ internal sealed class BrowserView : UserControl
         else message.Text = "Podaj adres http:// lub https://.";
     }
 
-    private async Task OpenTabFromUiAsync(string url)
+    private static string SharedFolder => Path.Combine(Path.GetTempPath(), "KioskBrowser", Environment.ProcessId.ToString());
+
+    /// <summary>The shared InPrivate browser; started again after its processes ended (crash, update of Edge).</summary>
+    private static Task<CoreWebView2Environment> SharedEnvironmentAsync()
     {
-        try { await AddTabAsync(url); }
-        catch (Exception ex) { ReportError(ex); }
+        if (sharedEnvironment is { IsFaulted: false, IsCanceled: false } ready) return ready;
+        RemoveOldFolders();
+        sharedEnvironment = CreateShared();
+        return sharedEnvironment;
+
+        static async Task<CoreWebView2Environment> CreateShared()
+        {
+            var created = await CoreWebView2Environment.CreateAsync(null, SharedFolder, new CoreWebView2EnvironmentOptions());
+            created.BrowserProcessExited += (_, _) => sharedEnvironment = null;
+            return created;
+        }
     }
 
-    private void ReportError(Exception exception)
+    /// <summary>Folders of earlier Kiosk processes (InPrivate pages keep nothing there, but Edge's own files stay behind).</summary>
+    private static void RemoveOldFolders()
     {
-        if (disposed) return;
-        message.Text = "Nie udało się otworzyć karty: " + exception.Message;
-        Audit.Write("browser_tab_error", exception.Message);
-    }
-
-    private static bool AllowsClientCertificate(X509Certificate2 certificate, IReadOnlyCollection<string> allowed, string? expectedUpn) =>
-        allowed.Contains(certificate.Thumbprint, StringComparer.OrdinalIgnoreCase) &&
-        (expectedUpn == null || expectedUpn.Length > 0 &&
-            string.Equals(certificate.GetNameInfo(X509NameType.UpnName, false), expectedUpn, StringComparison.OrdinalIgnoreCase));
-
-#if KIOSK_SELF_TEST
-    internal bool AllowsClientCertificateForTest(X509Certificate2 certificate) =>
-        AllowsClientCertificate(certificate, cardCertificates(), expectedCertificateUpn);
-#endif
-
-    private static void QueueAbandonedProfileCleanup(string root)
-    {
-        if (Interlocked.CompareExchange(ref profileCleanupRunning, 1, 0) != 0) return;
+        var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
         _ = Task.Run(() =>
         {
-            try { CleanupAbandonedProfiles(root); }
-            finally { Interlocked.Exchange(ref profileCleanupRunning, 0); }
-        });
-    }
-
-    internal static void CleanupAbandonedProfiles(string root)
-    {
-        try
-        {
-            foreach (var folder in Directory.EnumerateDirectories(root))
-            {
-                if (!Guid.TryParseExact(Path.GetFileName(folder), "N", out _) || liveProfiles.ContainsKey(folder)) continue;
-                try
-                {
-                    DeleteOwnedProfile(folder);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Audit.Write("browser_profile_cleanup_error", ex.Message);
-        }
-    }
-
-    private static bool DeleteOwnedProfile(string folder)
-    {
-        // The marker is the ownership proof and the cross-process lock. Keep it until
-        // every browser file has gone: recursive deletion can fail halfway through
-        // while WebView2 still holds a file, and a later pass must recognize the folder.
-        if (!Guid.TryParseExact(Path.GetFileName(folder), "N", out _) ||
-            (File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) return false;
-        var markerPath = Path.Combine(folder, ProfileMarkerName);
-        if (!File.Exists(markerPath)) return false;
-        if ((File.GetAttributes(markerPath) & FileAttributes.ReparsePoint) != 0) return false;
-        using (var marker = new FileStream(markerPath, FileMode.Open, FileAccess.Read, FileShare.None))
-        {
-            using var reader = new StreamReader(marker, System.Text.Encoding.UTF8, true, 1024, leaveOpen: true);
-            if (reader.ReadToEnd() != ProfileMarkerText) return false;
-            DeleteProfileContents(folder, markerPath);
-        }
-        File.Delete(markerPath);
-        Directory.Delete(folder);
-        return true;
-    }
-
-    private static void DeleteProfileContents(string directory, string markerPath)
-    {
-        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
-        {
-            if (string.Equals(path, markerPath, StringComparison.OrdinalIgnoreCase)) continue;
-            var attributes = File.GetAttributes(path);
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Katalog profilu przeglądarki zawiera przekierowanie.");
-            if ((attributes & FileAttributes.Directory) != 0)
-            {
-                DeleteProfileContents(path, markerPath);
-                Directory.Delete(path);
-            }
-            else File.Delete(path);
-        }
-    }
-
-    private static bool BrowserProcessRunning(uint processId)
-    {
-        if (processId > int.MaxValue) return true;
-        try
-        {
-            using var process = Process.GetProcessById((int)processId);
-            return !process.HasExited;
-        }
-        catch (ArgumentException) { return false; }
-        catch (InvalidOperationException) { return false; }
-        catch (System.ComponentModel.Win32Exception) { return true; }
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing && disposed) return;
-        if (disposing) disposed = true; // Stop async continuations before disposing their WebView controls.
-        var knownBrowserProcessId = browserProcessId;
-        Task? browserExited = null;
-        if (disposing && !windowsAccount && environment != null)
-        {
-            var exited = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            environment.BrowserProcessExited += (_, e) => { if (knownBrowserProcessId == 0 || e.BrowserProcessId == knownBrowserProcessId) exited.TrySetResult(true); };
-            browserExited = exited.Task;
-        }
-        base.Dispose(disposing);
-        if (!disposing || windowsAccount) return; // A Windows user's own profile stays, like a normal browser.
-        // The person's cookies and sign-ins go with their session. The browser process may hold the folder briefly.
-        var folder = userDataFolder;
-        var pendingInitialization = initialization;
-        var marker = profileMarker;
-        profileMarker = null;
-        _ = Task.Run(async () =>
-        {
-            // Environment creation may not have created the directory yet when the view was closed.
-            // Wait for it before cleanup, including when startup itself failed.
-            if (pendingInitialization != null)
-            {
-                try { await pendingInitialization; }
-                catch (Exception) { }
-            }
             try
             {
-                // Keep the marker locked until WebView2 releases its folder. If the
-                // notification is missed, the OS process state supplies the fallback.
-                if (browserExited != null && knownBrowserProcessId != 0)
+                foreach (var folder in Directory.GetDirectories(root))
                 {
-                    while (!browserExited.IsCompleted && BrowserProcessRunning(knownBrowserProcessId))
-                        await Task.WhenAny(browserExited, Task.Delay(5000));
+                    var name = Path.GetFileName(folder);
+                    if (int.TryParse(name, out var pid) && Running(pid)) continue;
+                    try { Directory.Delete(folder, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 }
-                else if (browserExited != null) await Task.WhenAny(browserExited, Task.Delay(5000));
-                if (browserExited == null && pendingInitialization != null) await Task.Delay(5000);
-                marker?.Dispose();
-                for (int attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
-                {
-                    try { if (!DeleteOwnedProfile(folder)) break; }
-                    catch (IOException) { await Task.Delay(1000); }
-                    catch (UnauthorizedAccessException) { await Task.Delay(1000); }
-                }
-                if (Directory.Exists(folder)) Audit.Write("browser_profile_cleanup_deferred", Path.GetFileName(folder));
             }
-            finally { marker?.Dispose(); liveProfiles.TryRemove(folder, out _); }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
         });
+
+        static bool Running(int pid)
+        {
+            try { using var process = System.Diagnostics.Process.GetProcessById(pid); return process.ProcessName.Equals("Kiosk.Client", StringComparison.OrdinalIgnoreCase); }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+        }
     }
 }
 
@@ -555,6 +531,9 @@ internal sealed class BrowserView : UserControl
 internal sealed class SitePolicy
 {
     private readonly string[]? hosts;
+    // Pages of company messages (Konfiguracja → Komunikaty): allowed even with "only bookmarks", their folder too.
+    private readonly HashSet<string> trustedHosts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> trustedFolders = new(StringComparer.OrdinalIgnoreCase);
 
     internal SitePolicy(bool onlyBookmarks, IEnumerable<Bookmark> bookmarks, IEnumerable<string> extraDomains)
     {
@@ -569,11 +548,23 @@ internal sealed class SitePolicy
 
     internal bool Restricted => hosts != null;
 
+    /// <summary>An address the administrator put in a company message: its site, or for a file its folder.</summary>
+    internal void Trust(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        // By the folder on disk: the browser may spell the same file's address differently (spaces, Polish letters).
+        if (uri.IsFile) trustedFolders.Add(Path.GetDirectoryName(uri.LocalPath)!.TrimEnd('\\') + "\\");
+        else if (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) trustedHosts.Add(uri.Host.TrimEnd('.'));
+    }
+
     internal bool Allows(string url)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        if (uri.IsFile) return trustedFolders.Any(f => uri.LocalPath.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
         if (hosts == null) return true;
         var host = uri.Host.TrimEnd('.').ToLowerInvariant();
+        if (trustedHosts.Contains(host)) return true;
         return hosts.Any(h => host == h || host.EndsWith("." + h, StringComparison.Ordinal));
     }
 }

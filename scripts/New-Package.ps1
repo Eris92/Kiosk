@@ -58,7 +58,10 @@ try {
     Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination (Join-Path $stage 'README.md')
     $scripts = Join-Path $stage 'scripts'
     New-Item -ItemType Directory -Path $scripts | Out-Null
-    foreach ($name in @('Deployment.Common.ps1','Install-KioskShell.ps1','Install-KioskCardService.ps1','Install-KioskCredentialProvider.ps1','Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')) {
+    foreach ($name in @('Deployment.Common.ps1','Install-KioskShell.ps1','Install-KioskCardService.ps1',
+        'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1','KioskRuntime.ps1',
+        'Set-KioskConfigSource.ps1','Set-KioskKeyboardLock.ps1','Set-KioskSharedAccount.ps1',
+        'Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $scripts
     }
     if ($certificate) {

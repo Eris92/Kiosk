@@ -114,7 +114,7 @@ $edition = (Get-CimInstance Win32_OperatingSystem).Caption
 if ($Method -eq 'Auto') { $Method = if ($edition -match 'Enterprise|Education|IoT') { 'ShellLauncher' } else { 'DefaultProfile' } }
 $configSource = if (Test-Path -LiteralPath $ConfigPath) { $ConfigPath } else { $SourceConfig }
 $json = Get-Content -LiteralPath $configSource -Raw -Encoding UTF8 | ConvertFrom-Json
-$json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'WindowsShell' -Force
+if (-not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'SelfService' -Force }
 $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
 $candidateJson = $json | ConvertTo-Json -Depth 16
 $release = Join-Path $InstallPath ('ClientVersions\release-' + [Guid]::NewGuid().ToString('N'))

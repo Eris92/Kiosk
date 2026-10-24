@@ -1,0 +1,91 @@
+// Komunikaty Kiosku: przewijają się na dole pulpitu (Konfiguracja → Komunikaty → folder z tym plikiem).
+// Title, Text, Image (plik w tym folderze), Button (napis przycisku),
+// Action: https://… | plik z tego folderu (np. zglos-problem.html) | app:Nazwa | rdp:Nazwa | cmd:Nazwa
+// From / Until: opcjonalnie, od kiedy / do kiedy pokazywać: "2026-10-20 16:00" (dzień i godzina) albo "2026-10-20" (cały dzień).
+// "Kind": "Pasek": pasek na górze pulpitu zamiast slajdu; Color (tło) i TextColor (tekst): nazwa (red, orange, green…) albo #RRGGBB.
+// "Enabled": true / false: włącza i wyłącza wpis bez usuwania (przygotuj kilka pasków i włączaj potrzebny).
+// Video: film MP4 z tego folderu (np. pierwsza-pomoc.mp4), pełna ścieżka albo https://…; slajd stoi, aż film się skończy
+//   (pozostałe zmieniają się co czas z Konfiguracji). "Sound": true – z dźwiękiem (domyślnie bez dźwięku).
+[
+  {
+    "Enabled": true,
+    "Kind": "Pasek",
+    "Title": "Nie działa system XXX",
+    "Text": "Trwa naprawa. Przepraszamy za utrudnienia.",
+    "Color": "red",
+    "TextColor": "white",
+    "Button": "Szczegóły",
+    "Action": "zglos-problem.html"
+  },
+  {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "Prace serwisowe",
+    "Text": "20 października 16:00–17:00 system XXX może działać wolniej.",
+    "From": "2026-10-20 15:30",
+    "Until": "2026-10-20 17:00",
+    "Color": "#E67E22",
+    "TextColor": "black"
+  },
+  {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "System XXX znów działa",
+    "Text": "Dziękujemy za cierpliwość.",
+    "Color": "#2E7D32",
+    "TextColor": "white"
+  },
+  {
+    "Enabled": false,
+    "Kind": "Pasek",
+    "Title": "Informacja",
+    "Text": "Nowa wersja Kiosku jest już dostępna.",
+    "Color": "#1565C0",
+    "TextColor": "white"
+  },
+  {
+    // Film: na banerze obok tytułu, na wygaszaczu na cały ekran. Następny komunikat dopiero po końcu filmu.
+    "Enabled": true,
+    "Title": "Pierwsza pomoc",
+    "Text": "Krótki instruktaż: co zrobić, gdy ktoś stracił przytomność. W razie potrzeby dzwoń 112.",
+    "Video": "pierwsza-pomoc.mp4"
+  },
+  {
+    "Enabled": true,
+    "Title": "Środki ochrony indywidualnej",
+    "Text": "Na halę i plac tylko w kasku, kamizelce odblaskowej i butach ochronnych.",
+    "Video": "bhp-ochrona.mp4"
+  },
+  {
+    "Enabled": true,
+    "Title": "Aktualizacja A",
+    "Text": "W piątek po 18:00 aktualizujemy system. Zapisz pracę przed wyjściem.",
+    "Image": "aktualizacja.png",
+    "Button": "Szczegóły",
+    "Action": "aktualizacja.html"
+  },
+  {
+    "Enabled": true,
+    "Title": "Zgłoś problem",
+    "Text": "Coś nie działa? Wyślij zgłoszenie do działu IT, odpowiemy jak najszybciej.",
+    "Image": "zglos-problem.png",
+    "Button": "Zgłoś problem",
+    "Action": "zglos-problem.html"
+  },
+  {
+    // Z datami: pokazuje się od 1 października 8:00 do końca 31 grudnia, potem znika sam.
+    "Enabled": true,
+    "Title": "Szkolenie z bezpieczeństwa",
+    "Text": "Do końca roku każdy przechodzi krótkie szkolenie online. Zajmie 15 minut.",
+    "Button": "Szczegóły",
+    "Action": "aktualizacja.html",
+    "From": "2026-10-01 08:00",
+    "Until": "2026-12-31"
+  },
+  {
+    "Enabled": true,
+    "Title": "Witamy w Kiosku",
+    "Text": "Przyłóż kartę, otwórz Menu na dole i wybierz aplikację lub pulpit zdalny.",
+    "Image": "witamy.png"
+  }
+]

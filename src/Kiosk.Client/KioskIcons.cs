@@ -7,7 +7,8 @@ namespace Kiosk.Client;
 internal static class KioskIcons
 {
     internal const string Menu = "", Browser = "", Remote = "", Notes = "", Settings = "",
-        Lock = "", Logout = "", Desktop = "", Command = "", Refresh = "", App = "", Screens = "";
+        Lock = "", Logout = "", Desktop = "", Command = "", Refresh = "", App = "", Screens = "",
+        Power = "\uE7E8", Restart = "\uE777", CloseApp = "\uE711", Files = "\uE8B7", SwitchUser = "\uE748";
 
     private static string ResolveFamily()
     {

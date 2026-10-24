@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Edytor komunikatów Kiosku: a separate small program, run as an ordinary user (no administrator), that edits
+       kiosk-news.json and its pictures and films on the server and shows the statistics there. Nothing shared with Kiosk.Client. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SelfContained>false</SelfContained>
+    <AssemblyName>KioskKomunikaty</AssemblyName>
+    <RootNamespace>Kiosk.NewsEditor</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <DebugType>embedded</DebugType>
+    <!-- Designer serialization of public control properties: the windows are built in code, never in the designer. -->
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="KioskKomunikaty.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

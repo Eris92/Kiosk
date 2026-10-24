@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -15,17 +14,12 @@ namespace Kiosk.Client;
 internal sealed class ApplicationView : Panel
 {
     private SafeFileHandle? job;
-    private readonly object ownershipScope;
     private readonly HashSet<IntPtr> placedDialogs = new();
-    private long? windowLostAtMilliseconds;
+    private DateTime windowLostAt = DateTime.MaxValue;
     private uint inputThread;
-    private readonly byte[] accounting = new byte[48];
-    private long dialogsCheckedAt;
-    private static List<IntPtr>? pollWindows;
-    private static bool inPollCycle;
     /// <summary>Windows embedded by any view: a program that hands its new window to an already running copy
     /// (Edge, Office) is recognised by that copy's process, and its new window is taken over (adopted).</summary>
-    private static readonly Dictionary<IntPtr, ApplicationView> hostedWindows = new();
+    private static readonly HashSet<IntPtr> hostedWindows = new();
     /// <summary>This view shows a window of another view's process: it has no Job of its own.</summary>
     private bool adopted;
     /// <summary>
@@ -34,8 +28,9 @@ internal sealed class ApplicationView : Panel
     /// owned by the Kiosk and kept exactly over this view (same look, working keyboard).
     /// </summary>
     private bool overlay;
+    /// <summary>Kept as an overlay whatever its kind (a WebView2 page of another process takes no keyboard as a child).</summary>
+    internal bool AlwaysOverlay { get; init; }
     private IntPtr overlayOwner;
-    private bool overlayDisabledByKiosk;
     private readonly System.Windows.Forms.Timer overlaySync = new() { Interval = 80 };
     private static bool overlaysHidden;
     private static event Action? OverlaysChanged;
@@ -52,26 +47,65 @@ internal sealed class ApplicationView : Panel
     }
 
     private void OnOverlaysChanged() => SyncOverlay(null, EventArgs.Empty);
+
+    private bool inputEnabled = true;
+    /// <summary>False on a view-only screen: a hosted window that is its own top-level window (Chromium) takes no input either.</summary>
+    internal bool InputEnabled
+    {
+        get => inputEnabled;
+        set { inputEnabled = value; if (overlay && HostedWindow != IntPtr.Zero) AppNative.EnableWindow(HostedWindow, value); }
+    }
+
+    private int sideInset, sentInset = -1;
+    /// <summary>
+    /// Menu → "Obok": how wide the Kiosk's element beside this page is. The page's window (another program) is told
+    /// whenever it changes, and again whenever its window is shown or moved, so a message lost while it was starting does not leave the element covered.
+    /// </summary>
+    internal int SideInset
+    {
+        get => sideInset;
+        // Set on every layout of the card: told again only when it changes (a shown or moved window is told anyway).
+        set { var width = Math.Max(0, value); if (width == sideInset && sentInset == width) return; sideInset = width; SendSideInset(force: true); }
+    }
+
+    private void SendSideInset(bool force)
+    {
+        if (HostedWindow == IntPtr.Zero || !force && sentInset == sideInset) return;
+        bool sent = AppNative.PostMessage(HostedWindow, HelpBrowserForm.SideInsetMessage, (IntPtr)sideInset, IntPtr.Zero);
+        if (sentInset != sideInset) Audit.Write("side_inset", sideInset + (sent ? "" : " failed"));
+        sentInset = sideInset;
+    }
     internal IntPtr HostedWindow { get; private set; }
     /// <summary>True once a window has been embedded; before that the launch is still in progress.</summary>
     internal bool Started { get; private set; }
+    /// <summary>
+    /// A program started as the person signed in with the card may not join the Kiosk's Job (Windows refuses: it is
+    /// already in the sign-in's own Job). Its window is then recognised as a new window of a process of that program.
+    /// </summary>
+    private string? untrackedProgram;
+    /// <summary>The untracked launch itself: closed with this view even before its window appeared.</summary>
+    private IntPtr untrackedProcess;
+    private uint untrackedPid;
+    private HashSet<IntPtr> untrackedBefore = [];
     /// <summary>The program file (for its icon on the taskbar).</summary>
     internal string ProgramPath { get; private set; } = "";
 
-    internal ApplicationView(object? ownershipScope = null)
-    {
-        this.ownershipScope = ownershipScope ?? this;
-        Dock = DockStyle.Fill; BackColor = KioskTheme.Background;
-    }
+    internal ApplicationView() { Dock = DockStyle.Fill; BackColor = KioskTheme.Background; }
 
-    /// <param name="logon">When set, the program runs as that person (runas), otherwise as the Kiosk account.</param>
-    internal async Task StartAsync(ApplicationEntry entry, UserLogon? logon = null)
+    /// <param name="logon">When set, the program runs as that person (runas) or with a shared account for the network,
+    /// otherwise as the Kiosk account.</param>
+    internal async Task StartAsync(ApplicationEntry entry, IProgramStarter? logon = null)
     {
-        if (!File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
-        ProgramPath = Path.GetFullPath(entry.Path);
+        // A program on a file server that only the shared account may read is not visible from here.
+        if (logon is not NetworkAccountStarter && !File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
+        ProgramPath = entry.Path;
         _ = Handle;
         var before = WindowsOfHostedProcesses();
-        job = AppNative.CreateKillOnCloseJob();
+        var windowsBefore = TopLevelWindows();
+        job = AppNative.CreateJobObject(IntPtr.Zero, null);
+        if (job.IsInvalid) throw new Win32Exception();
+        var limits = new AppNative.JobLimits { Basic = new AppNative.BasicLimits { Flags = 0x2000 } }; // KILL_ON_JOB_CLOSE
+        if (!AppNative.SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<AppNative.JobLimits>())) throw new Win32Exception();
         // SW_SHOWNOACTIVATE: the window starts normally shown (SW_HIDE or a minimised start makes some apps,
         // e.g. KeePass with "minimize to tray", hide themselves or stay blank). It is adopted within ~50 ms.
         var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = 4 };
@@ -81,50 +115,49 @@ internal sealed class ApplicationView : Panel
         AppNative.ProcessInfo process;
         if (logon != null)
         {
-            var started = logon.Start(entry.Path, commandLine, directory);
+            // Off the window's thread: the sign-in program or the service may take a while, the Kiosk stays responsive.
+            var path = entry.Path;
+            var started = await Task.Run(() => logon.Start(path, commandLine, directory));
+            if (IsDisposed) { AppNative.TerminateProcess(started.Process, 1); AppNative.CloseHandle(started.Thread); AppNative.CloseHandle(started.Process); job?.Dispose(); job = null; return; }
             process = new AppNative.ProcessInfo { Process = started.Process, Thread = started.Thread };
         }
         else if (!AppNative.CreateProcess(entry.Path, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,
             directory, ref startup, out process)) throw new Win32Exception();
         try
         {
-            if (!AppNative.AssignProcessToJobObject(job, process.Process)) throw new Win32Exception();
+            if (!AppNative.AssignProcessToJobObject(job, process.Process))
+            {
+                if (logon is not UserLogon) throw new Win32Exception();
+                Audit.Write("application_untracked", Path.GetFileName(entry.Path) + " " + Marshal.GetLastPInvokeError());
+                job.Dispose();
+                job = null;
+                untrackedProgram = Path.GetFileNameWithoutExtension(entry.Path);
+                untrackedBefore = windowsBefore;
+                untrackedProcess = process.Process;
+                untrackedPid = AppNative.GetProcessId(process.Process);
+                process.Process = IntPtr.Zero;   // Kept (closed in Dispose).
+            }
             if (AppNative.ResumeThread(process.Thread) == uint.MaxValue) throw new Win32Exception();
         }
-        catch { AppNative.TerminateProcess(process.Process, 1); throw; }
-        finally { AppNative.CloseHandle(process.Thread); AppNative.CloseHandle(process.Process); }
+        catch { AppNative.TerminateProcess(process.Process != IntPtr.Zero ? process.Process : untrackedProcess, 1); throw; }
+        finally { AppNative.CloseHandle(process.Thread); if (process.Process != IntPtr.Zero) AppNative.CloseHandle(process.Process); }
 
-        var launchTimer = Stopwatch.StartNew();
-        TimeSpan? handedOverAt = null;
-        while (!IsDisposed && launchTimer.Elapsed < TimeSpan.FromSeconds(30)) // Office and Electron apps can take a while.
+        var deadline = DateTime.UtcNow.AddSeconds(30); // Office and Electron apps can take a while.
+        DateTime? handedOver = null;
+        while (!IsDisposed && DateTime.UtcNow < deadline)
         {
             var window = FindMainWindow();
             if (window != IntPtr.Zero) { Embed(window); return; }
-            if (ActiveProcesses() == 0)
+            if (job != null && ActiveProcesses() == 0)
             {
                 // The program passed the request to a copy already running in another Kiosk view (e.g. a second Edge window).
-                handedOverAt ??= launchTimer.Elapsed;
+                handedOver ??= DateTime.UtcNow;
                 var handed = FindHandedOverWindow(before);
-                if (handed != IntPtr.Zero)
-                {
-                    var owner = hostedWindows.Values.First(v => ReferenceEquals(v.ownershipScope, ownershipScope) &&
-                        string.Equals(v.ProgramPath, ProgramPath, StringComparison.OrdinalIgnoreCase) && v.OwnsWindow(handed));
-                    var shared = owner.job ?? throw new InvalidOperationException("Sesja aplikacji została zamknięta.");
-                    if (!AppNative.DuplicateHandle(AppNative.GetCurrentProcess(), shared, AppNative.GetCurrentProcess(), out var sharedJob, 0, false, 2))
-                        throw new Win32Exception();
-                    job?.Dispose(); job = sharedJob; adopted = true; Embed(handed); return;
-                }
-                var handoverElapsed = launchTimer.Elapsed - handedOverAt.Value;
-                if (handoverElapsed < TimeSpan.FromSeconds(10))
-                {
-                    await Task.Delay(handoverElapsed < TimeSpan.FromSeconds(1) ? 100 : 250);
-                    continue;
-                }
+                if (handed != IntPtr.Zero) { job?.Dispose(); job = null; adopted = true; Embed(handed); return; }
+                if (DateTime.UtcNow - handedOver < TimeSpan.FromSeconds(10)) { await Task.Delay(100); continue; }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
             }
-            // Fast launches retain the 50 ms response; slow launches stop enumerating every desktop window 20 times/s.
-            await Task.Delay(launchTimer.Elapsed < TimeSpan.FromSeconds(1) ? 50 :
-                launchTimer.Elapsed < TimeSpan.FromSeconds(5) ? 100 : 250);
+            await Task.Delay(50);
         }
         if (!IsDisposed) throw new InvalidOperationException("Brak zgodnego okna aplikacji. Program może używać istniejącej instancji, wymagać administratora lub nie obsługiwać osadzania.");
     }
@@ -132,13 +165,9 @@ internal sealed class ApplicationView : Panel
     private void Embed(IntPtr window)
     {
         var className = new StringBuilder(64);
-        if (AppNative.GetClassName(window, className, className.Capacity) == 0)
-            throw new InvalidOperationException("Okno aplikacji zniknęło przed osadzeniem.");
-        if (className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
-        Marshal.SetLastPInvokeError(0);
-        var originalStyle = AppNative.GetWindowLongPtr(window, -16);
-        if (originalStyle == IntPtr.Zero && Marshal.GetLastPInvokeError() != 0) throw new Win32Exception();
-        var style = originalStyle.ToInt64();
+        AppNative.GetClassName(window, className, className.Capacity);
+        if (AlwaysOverlay || className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
+        var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
         // Remove popup, caption, sizing frame, min/max boxes and the minimised state; make it a child.
         style = (style & ~(0x80000000L | 0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L)) | 0x40000000L;
         Marshal.SetLastPInvokeError(0);
@@ -148,7 +177,7 @@ internal sealed class ApplicationView : Panel
         if (AppNative.GetParent(window) != Handle) throw new Win32Exception("Aplikacja nie pozwala osadzić swojego okna w Kiosku.");
         if (HostedWindow != IntPtr.Zero) hostedWindows.Remove(HostedWindow);
         HostedWindow = window;
-        hostedWindows[window] = this;
+        hostedWindows.Add(window);
         Started = true;
         // A child window of another process gets the keyboard only when both threads share input state
         // (otherwise clicks work but typing goes nowhere, e.g. Edge started as another user).
@@ -158,7 +187,7 @@ internal sealed class ApplicationView : Panel
             if (inputThread != 0) AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false);
             inputThread = AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), thread, true) ? thread : 0;
         }
-        windowLostAtMilliseconds = null;
+        windowLostAt = DateTime.MaxValue;
         AppNative.ShowWindow(window, 9); // SW_RESTORE: leave the minimised start state.
         AppNative.ShowWindow(window, 5); // SW_SHOW
         ResizeChild();
@@ -178,17 +207,18 @@ internal sealed class ApplicationView : Panel
         AppNative.SetWindowLongPtr(window, -20, new IntPtr((exStyle & ~0x40000L) | 0x80L)); // not APPWINDOW, TOOLWINDOW: no taskbar / Alt+Tab
         if (HostedWindow != IntPtr.Zero) hostedWindows.Remove(HostedWindow);
         HostedWindow = window;
-        hostedWindows[window] = this;
+        hostedWindows.Add(window);
         overlay = true;
         overlayOwner = IntPtr.Zero;
         Started = true;
-        windowLostAtMilliseconds = null;
+        windowLostAt = DateTime.MaxValue;
         AppNative.ShowWindow(window, 9); // SW_RESTORE
         overlaySync.Tick -= SyncOverlay;
         overlaySync.Tick += SyncOverlay;
         OverlaysChanged -= OnOverlaysChanged;
         OverlaysChanged += OnOverlaysChanged;
-        overlaySync.Enabled = Visible;
+        overlaySync.Start();
+        if (!inputEnabled) AppNative.EnableWindow(window, false);
         SyncOverlay(null, EventArgs.Empty);
     }
 
@@ -196,22 +226,6 @@ internal sealed class ApplicationView : Panel
     {
         if (!overlay || IsDisposed || HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow)) return;
         var form = FindForm();
-        // An owned top-level Chromium window does not inherit its owner's disabled state.
-        // Idle-screen content must remain view-only until an administrator enables editing.
-        bool disableInput = form is IdleScreen idle && !idle.Interactive;
-        if (disableInput)
-        {
-            if (AppNative.IsWindowEnabled(HostedWindow))
-            {
-                AppNative.EnableWindow(HostedWindow, false);
-                overlayDisabledByKiosk = true;
-            }
-        }
-        else if (overlayDisabledByKiosk)
-        {
-            AppNative.EnableWindow(HostedWindow, true);
-            overlayDisabledByKiosk = false;
-        }
         bool show = form != null && Visible && form.Visible && form.WindowState != FormWindowState.Minimized && ClientSize.Width > 0 &&
             !(overlaysHidden && form is KioskForm); // The Menu opens on the main Kiosk screen.
         if (!show)
@@ -225,36 +239,35 @@ internal sealed class ApplicationView : Panel
         AppNative.GetWindowRect(HostedWindow, out var r);
         bool wasVisible = AppNative.IsWindowVisible(HostedWindow);
         if (!wasVisible || r.Left != area.Left || r.Top != area.Top || r.Right - r.Left != area.Width || r.Bottom - r.Top != area.Height)
+        {
             AppNative.SetWindowPos(HostedWindow, IntPtr.Zero, area.Left, area.Top, area.Width, area.Height,
                 (uint)(0x0010 | 0x0004 | 0x0040 | 0x0020)); // NOACTIVATE | NOZORDER | SHOWWINDOW | FRAMECHANGED
+            if (sideInset > 0) SendSideInset(force: true);
+        }
     }
 
     /// <summary>
     /// Called by the shell a few times per second. Returns false once the application has closed
     /// (its window is gone and no replacement appeared), so the Kiosk window can be removed.
     /// </summary>
-    internal bool PollLifetime()
+    internal bool Refresh()
     {
         if (adopted) return !IsDisposed && AppNative.IsWindow(HostedWindow); // Lives in another view's process.
-        if (job == null || IsDisposed) return false;
+        if (job == null && untrackedProgram == null || IsDisposed) return false;
         if (HostedWindow == IntPtr.Zero || !AppNative.IsWindow(HostedWindow))
         {
-            hostedWindows.Remove(HostedWindow);
             HostedWindow = IntPtr.Zero;
-            var now = Environment.TickCount64;
-            windowLostAtMilliseconds ??= now;
+            if (windowLostAt == DateTime.MaxValue) windowLostAt = DateTime.UtcNow;
+            // The person's page has one window: "Zamknij" ends it at once, with its second element (never another page's window).
+            if (AlwaysOverlay) return false;
             var replacement = FindMainWindow();
             if (replacement != IntPtr.Zero) { try { Embed(replacement); } catch (Win32Exception) { } }
-            else if (ActiveProcesses() == 0 || now - windowLostAtMilliseconds.Value > 10_000) return false;
+            else if (untrackedProgram != null || job != null && ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
         }
         else if (!overlay && Visible && !AppNative.IsWindowVisible(HostedWindow))
             AppNative.ShowWindow(HostedWindow, 5); // An app hiding itself "to the tray" would be lost: the Kiosk has no tray.
         else if (!overlay) KeepFilled();
-        if (Visible && Environment.TickCount64 - dialogsCheckedAt >= 1000)
-        {
-            dialogsCheckedAt = Environment.TickCount64;
-            PlaceDialogs();
-        }
+        if (Visible) PlaceDialogs();
         return true;
     }
 
@@ -278,16 +291,10 @@ internal sealed class ApplicationView : Panel
     }
 
     /// <summary>Visible top-level windows of the processes behind the windows Kiosk already hosts.</summary>
-    private HashSet<IntPtr> WindowsOfHostedProcesses()
+    private static HashSet<IntPtr> WindowsOfHostedProcesses()
     {
         var pids = new HashSet<uint>();
-        foreach (var (w, view) in hostedWindows)
-            if (ReferenceEquals(view.ownershipScope, ownershipScope) &&
-                string.Equals(view.ProgramPath, ProgramPath, StringComparison.OrdinalIgnoreCase) && AppNative.IsWindow(w))
-            {
-                AppNative.GetWindowThreadProcessId(w, out var pid);
-                pids.Add(pid);
-            }
+        foreach (var w in hostedWindows) if (AppNative.IsWindow(w)) { AppNative.GetWindowThreadProcessId(w, out var pid); pids.Add(pid); }
         var found = new HashSet<IntPtr>();
         if (pids.Count == 0) return found;
         AppNative.EnumWindows((window, _) =>
@@ -300,13 +307,41 @@ internal sealed class ApplicationView : Panel
     }
 
     /// <summary>A new main window that appeared in a hosted program's process after this launch.</summary>
-    private IntPtr FindHandedOverWindow(HashSet<IntPtr> before) => WindowsOfHostedProcesses().FirstOrDefault(w =>
-        !before.Contains(w) && !hostedWindows.ContainsKey(w) && AppNative.IsWindowVisible(w) && AppNative.GetWindow(w, 4) == IntPtr.Zero &&
+    private static IntPtr FindHandedOverWindow(HashSet<IntPtr> before) => WindowsOfHostedProcesses().FirstOrDefault(w =>
+        !before.Contains(w) && !hostedWindows.Contains(w) && AppNative.IsWindowVisible(w) && AppNative.GetWindow(w, 4) == IntPtr.Zero &&
         AppNative.GetParent(w) == IntPtr.Zero && !IsDialog(w) && AppNative.GetWindowTextLength(w) > 0 &&
         AppNative.GetWindowRect(w, out var r) && r.Right - r.Left >= 200 && r.Bottom - r.Top >= 100);
 
+    private static HashSet<IntPtr> TopLevelWindows()
+    {
+        var found = new HashSet<IntPtr>();
+        AppNative.EnumWindows((window, _) => { found.Add(window); return true; }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>Visible, unowned top-level windows of the untracked program that appeared after its start.</summary>
+    private List<IntPtr> UntrackedWindows()
+    {
+        var found = new List<IntPtr>();
+        AppNative.EnumWindows((window, _) =>
+        {
+            if (untrackedBefore.Contains(window) || hostedWindows.Contains(window) || !AppNative.IsWindowVisible(window)) return true;
+            if (AppNative.GetWindow(window, 4) != IntPtr.Zero || (AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true;
+            AppNative.GetWindowThreadProcessId(window, out var pid);
+            if (pid == Environment.ProcessId) return true;   // The Kiosk's own windows, when the program is the Kiosk itself.
+            // The person's page (the Kiosk again, as the person) never hands over: only its own process counts, so a
+            // second page opened quickly never takes the first one's window (or the Konfiguracja window).
+            if (AlwaysOverlay && untrackedPid != 0 && pid != untrackedPid) return true;
+            try { using var process = System.Diagnostics.Process.GetProcessById((int)pid); if (process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase)) found.Add(window); }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
     /// <summary>The application's main window: visible, top-level, unowned, titled, not a tool window.</summary>
-    private IntPtr FindMainWindow() => JobWindows(includeOwned: false).FirstOrDefault(w => !IsDialog(w) &&
+    private IntPtr FindMainWindow() => (untrackedProgram != null ? UntrackedWindows() : JobWindows(includeOwned: false)).FirstOrDefault(w => !IsDialog(w) &&
         AppNative.GetWindowTextLength(w) > 0 && (AppNative.IsIconic(w) || // Started minimised: its rectangle is the icon.
             AppNative.GetWindowRect(w, out var r) && r.Right - r.Left >= 200 && r.Bottom - r.Top >= 100));
 
@@ -321,47 +356,25 @@ internal sealed class ApplicationView : Panel
     {
         var found = new List<IntPtr>();
         if (job == null) return found;
-        var membership = new Dictionary<uint, bool>();
-        foreach (var window in inPollCycle ? pollWindows ??= CaptureWindows() : CaptureWindows())
+        AppNative.EnumWindows((window, _) =>
         {
-            if (!AppNative.IsWindowVisible(window)) continue;
-            if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) continue;
-            if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) continue; // WS_EX_TOOLWINDOW
+            if (!AppNative.IsWindowVisible(window)) return true;
+            if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) return true;
+            if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true; // WS_EX_TOOLWINDOW
             AppNative.GetWindowThreadProcessId(window, out var pid);
-            if (!membership.TryGetValue(pid, out var owned))
-            {
-                using var process = AppNative.OpenProcess(0x1000, false, pid);
-                owned = !process.IsInvalid && AppNative.IsProcessInJob(process, job, out var belongs) && belongs;
-                membership[pid] = owned;
-            }
-            if (!owned) continue;
+            using var process = AppNative.OpenProcess(0x1000, false, pid);
+            if (process.IsInvalid || !AppNative.IsProcessInJob(process, job, out var owned) || !owned) return true;
             found.Add(window);
-        }
+            return true;
+        }, IntPtr.Zero);
         return found;
-    }
-
-    private static List<IntPtr> CaptureWindows()
-    {
-        var windows = new List<IntPtr>();
-        AppNative.EnumWindows((window, _) => { windows.Add(window); return true; }, IntPtr.Zero);
-        return windows;
-    }
-
-    internal static void BeginPollCycle() { pollWindows = null; inPollCycle = true; }
-    internal static void EndPollCycle() { pollWindows = null; inPollCycle = false; }
-
-    private bool OwnsWindow(IntPtr window)
-    {
-        if (job == null) return false;
-        AppNative.GetWindowThreadProcessId(window, out var pid);
-        using var process = AppNative.OpenProcess(0x1000, false, pid);
-        return !process.IsInvalid && AppNative.IsProcessInJob(process, job, out var owned) && owned;
     }
 
     private int ActiveProcesses()
     {
         if (job == null) return 0;
-        return AppNative.QueryInformationJobObject(job, 1, accounting, accounting.Length, out _) ? BitConverter.ToInt32(accounting, 40) : 1;
+        var buffer = new byte[48]; // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+        return AppNative.QueryInformationJobObject(job, 1, buffer, buffer.Length, out _) ? BitConverter.ToInt32(buffer, 40) : 1;
     }
 
     protected override void OnResize(EventArgs e) { base.OnResize(e); ResizeChild(); }
@@ -382,14 +395,44 @@ internal sealed class ApplicationView : Panel
         else AppNative.SetFocus(HostedWindow);
     }
 
-    internal void RefreshOverlayInteraction() => SyncOverlay(null, EventArgs.Empty);
+    private readonly List<IntPtr> parkedDialogs = [];
 
+    /// <summary>
+    /// Hidden with its view (the lock, a card taken away, another window chosen): the program's own dialogs (Zapisz jako,
+    /// "Zapisać zmiany?") are separate windows and would otherwise stay over the Kiosk for the next person.
+    /// </summary>
     protected override void OnVisibleChanged(EventArgs e)
     {
         base.OnVisibleChanged(e);
-        if (!overlay) return;
-        overlaySync.Enabled = Visible;
-        SyncOverlay(null, EventArgs.Empty);
+        if (!Visible)
+        {
+            foreach (var dialog in OwnDialogs()) { AppNative.ShowWindow(dialog, 0); parkedDialogs.Add(dialog); }   // SW_HIDE
+        }
+        else
+        {
+            foreach (var dialog in parkedDialogs) if (AppNative.IsWindow(dialog)) AppNative.ShowWindow(dialog, 5);   // SW_SHOW
+            parkedDialogs.Clear();
+        }
+        if (overlay)
+        {
+            SyncOverlay(null, EventArgs.Empty);
+            // A hidden view's window stays hidden: no need to follow it 12× a second meanwhile.
+            if (Visible) overlaySync.Start(); else overlaySync.Stop();
+        }
+    }
+
+    /// <summary>The program's visible windows other than its main one: its job's, or (no job) those owned by the main one.</summary>
+    private List<IntPtr> OwnDialogs()
+    {
+        if (HostedWindow == IntPtr.Zero) return [];
+        if (job != null) return JobWindows(includeOwned: true).Where(w => w != HostedWindow).ToList();
+        var found = new List<IntPtr>();
+        AppNative.EnumWindows((window, _) =>
+        {
+            if (window != HostedWindow && AppNative.IsWindowVisible(window) && AppNative.GetWindow(window, 4) == HostedWindow) found.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
     private void ResizeChild()
     {
@@ -420,8 +463,14 @@ internal sealed class ApplicationView : Panel
             if (overlay && AppNative.IsWindow(HostedWindow) && !adopted) AppNative.ShowWindow(HostedWindow, 0);
             hostedWindows.Remove(HostedWindow);
             // An adopted window belongs to another view's process: close just this window.
-            bool shared = adopted || hostedWindows.Values.Any(view => ReferenceEquals(view.ownershipScope, ownershipScope) && view.OwnsWindow(HostedWindow));
-            if (shared && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
+            if ((adopted || untrackedProgram != null) && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
+            // Closed before its window appeared (another page chosen at once): the launch ends too, no stray window later.
+            if (untrackedProcess != IntPtr.Zero)
+            {
+                if (!Started && AlwaysOverlay) AppNative.TerminateProcess(untrackedProcess, 1);
+                AppNative.CloseHandle(untrackedProcess);
+                untrackedProcess = IntPtr.Zero;
+            }
             job?.Dispose(); job = null; HostedWindow = IntPtr.Zero;
         }
         base.Dispose(disposing);
@@ -435,7 +484,7 @@ internal static class AppNative
     {
         var job = CreateJobObject(IntPtr.Zero, null);
         if (job.IsInvalid) { job.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
-        var limits = new JobLimits { Basic = new BasicLimits { Flags = 0x2000 } }; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        var limits = new JobLimits { Basic = new BasicLimits { Flags = 0x2000 } };
         if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<JobLimits>()))
         {
             var error = new Win32Exception(Marshal.GetLastWin32Error());
@@ -445,10 +494,6 @@ internal static class AppNative
         return job;
     }
 
-    [DllImport("kernel32.dll")] internal static extern IntPtr GetCurrentProcess();
-    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool DuplicateHandle(IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess,
-        out SafeFileHandle target, uint access, bool inherit, uint options);
     [DllImport("user32.dll")] internal static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
@@ -487,10 +532,12 @@ internal static class AppNative
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool AssignProcessToJobObject(SafeFileHandle job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll")] internal static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll")] internal static extern uint GetProcessId(IntPtr process);
     [DllImport("kernel32.dll")] internal static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern SafeFileHandle OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool IsProcessInJob(SafeFileHandle process, SafeFileHandle job, [MarshalAs(UnmanagedType.Bool)] out bool result);
     [DllImport("user32.dll")] internal static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
+    [DllImport("user32.dll")] internal static extern bool EnumThreadWindows(uint thread, WindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll")] internal static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetWindowTextLength(IntPtr window);
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
@@ -501,7 +548,6 @@ internal static class AppNative
     [DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] internal static extern bool MoveWindow(IntPtr window, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
-    [DllImport("user32.dll")] internal static extern bool IsWindowEnabled(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool EnableWindow(IntPtr window, bool enable);
     [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);

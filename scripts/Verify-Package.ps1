@@ -73,7 +73,9 @@ foreach ($file in $listed | Where-Object { $_ -like 'config\*' }) {
     if ($allowedConfig -notcontains $file) { throw "Unexpected configuration file in production package: $file" }
 }
 $allowedScripts = @('Deployment.Common.ps1','Install-KioskShell.ps1','Install-KioskCardService.ps1',
-    'Install-KioskCredentialProvider.ps1','Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')
+    'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1','KioskRuntime.ps1',
+    'Set-KioskConfigSource.ps1','Set-KioskKeyboardLock.ps1','Set-KioskSharedAccount.ps1',
+    'Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')
 foreach ($file in $listed | Where-Object { $_ -like 'scripts\*' }) {
     if ($file.Substring('scripts\'.Length) -notin $allowedScripts) { throw "Unexpected deployment script: $file" }
 }
@@ -82,7 +84,8 @@ foreach ($file in $listed | Where-Object { $_ -like 'credential-provider\*' }) {
 }
 foreach ($file in $listed | Where-Object { $_ -like 'client\*' }) {
     if ($file -match '\.(exe|com|scr|ps1|cmd|bat|vbs|js|jse|wsf|hta)$' -and
-        $file -notin @('client\Kiosk.Client.exe','client\createdump.exe')) {
+        $file -notin @('client\Kiosk.Client.exe','client\createdump.exe',
+            'client\KioskKonfiguracje.exe','client\news-example\KioskKomunikaty.exe','client\fido\FidoRun.exe')) {
         throw "Unexpected executable in client payload: $file"
     }
 }
@@ -90,8 +93,8 @@ $clientConfig = Get-Content -LiteralPath (Join-Path $root 'client\client.json') 
 $publicConfig = Get-Content -LiteralPath (Join-Path $root 'config\client.json') -Raw -Encoding UTF8
 if ($clientConfig.Trim() -ne $publicConfig.Trim()) { throw 'Package client config differs from its public default.' }
 $config = $clientConfig | ConvertFrom-Json
-if ($config.ConfigVersion -ne 2 -or $config.SessionMode -ne 'WindowsShell' -or $config.TestMode -isnot [bool] -or $config.TestMode) {
-    throw 'Production package requires ConfigVersion=2, SessionMode=WindowsShell and TestMode=false.'
+if ($config.ConfigVersion -ne 5 -or $config.SessionMode -ne 'SelfService' -or $config.TestMode -isnot [bool] -or $config.TestMode) {
+    throw 'Production package requires ConfigVersion=5, SessionMode=SelfService and TestMode=false.'
 }
 Write-Output "Package inventory and SHA256 verified: $root"
 if (-not $verifySignatures) { Write-Output 'Authenticode enforcement was not requested. Hashes verify consistency, not publisher authenticity.' }

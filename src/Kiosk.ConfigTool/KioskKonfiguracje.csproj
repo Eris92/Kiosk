@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Konfiguracje Kiosków: one small file to copy next to the configurations (e.g. \\serwer\Kiosk). It opens the
+       installed Kiosk's configuration manager (Kiosk.Client.exe with the configs switch) for its own folder, as whoever starts it. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <AssemblyName>KioskKonfiguracje</AssemblyName>
+    <RootNamespace>Kiosk.ConfigTool</RootNamespace>
+    <DebugType>embedded</DebugType>
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+</Project>

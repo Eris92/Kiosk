@@ -14,32 +14,23 @@ internal sealed class IdleScreen : Form
     private readonly System.Windows.Forms.Timer watch = new() { Interval = 5000 };
     private WebView2? web;
     private ApplicationView? app;
-    private Label? failure;
     private bool starting;
-    private bool restartingApp;
-    private bool disposed;
 
     internal Screen Target { get; }
     private readonly int number;
 
     /// <summary>Normally view only; true while Konfiguracja is open, so the page can be signed in (read-only account).</summary>
-    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool Interactive
     {
         get => Enabled;
         set
         {
-            if (Enabled == value || disposed) return;
-            Enabled = value;
-            if (!IsHandleCreated) return;
-            // Admins must be able to focus/type into the screen page while configuring its account.
-            const long noActivate = 0x08000000;
-            long style = AppNative.GetWindowLongPtr(Handle, -20).ToInt64();
-            AppNative.SetWindowLongPtr(Handle, -20, new IntPtr(value ? style & ~noActivate : style | noActivate));
-            app?.RefreshOverlayInteraction();
+            if (Enabled != value) Enabled = value;
+            // A Chromium program is its own window over this one: Enabled here does not reach it.
+            if (app != null) app.InputEnabled = value;
         }
     }
-    internal long ShownAtMilliseconds { get; private set; }
+    internal DateTime ShownAt { get; private set; }
 
     internal IdleScreen(Screen screen, ScreenContent content, int number)
     {
@@ -57,48 +48,72 @@ internal sealed class IdleScreen : Form
         VisibleChanged += (_, _) =>
         {
             if (!Visible) return;
-            ShownAtMilliseconds = Environment.TickCount64;
+            ShownAt = DateTime.UtcNow;
             Bounds = Target.Bounds;
         };
         // A program that closed by itself (or crashed) is started again.
         watch.Tick += async (_, _) =>
         {
-            if (!disposed && content.Url.Length == 0 && (app == null || app.Started && !app.PollLifetime()))
-                await RestartAppAsync();
+            if (app == null || !app.Started || app.Refresh() || IsDisposed) return;
+            // A program that cannot start again must not take the whole Kiosk (the Windows shell) down with it.
+            try { await RestartAppAsync(); }
+            catch (Exception ex) { Audit.Write("idle_screen_error", ex.Message); }
         };
+    }
+
+    private readonly List<AlertBar> bars = [];
+
+    /// <summary>Komunikaty → "Ekrany wygaszacza": the bars across the top of this screen too (empty = none).</summary>
+    internal void SetBars(IReadOnlyList<NewsItem> items)
+    {
+        if (items.SequenceEqual(bars.Select(b => b.Item).Reverse())) return;
+        foreach (var old in bars) { Controls.Remove(old); old.Dispose(); }
+        bars.Clear();
+        foreach (var item in items.Reverse())   // Added last = docked first: the first message ends up on top.
+        {
+            var bar = new AlertBar(item) { Dock = DockStyle.Top, Height = (int)Math.Round(44 * DeviceDpi / 96d) };
+            bars.Add(bar);
+            Controls.Add(bar);
+        }
+        foreach (var fill in Controls.Cast<Control>().Where(c => c.Dock == DockStyle.Fill).ToList()) fill.BringToFront();   // The page under the bars.
     }
 
     private async Task StartAsync()
     {
-        if (starting || disposed) return;
+        if (starting) return;
         starting = true;
         try
         {
-            if (content.Url.Length > 0)
+            if (NewsSlides.IsAddress(content.Url))
+            {
+                var slides = new NewsSlides(sound: number == 1) { Dock = DockStyle.Fill };
+                Controls.Add(slides);
+                slides.BringToFront();   // Below any message bars docked at the top.
+            }
+            else if (content.Url.Length > 0)
             {
                 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = KioskTheme.Background };
                 Controls.Add(web);
+                web.BringToFront();   // Below any message bars docked at the top.
                 // A lasting profile per screen: the read-only account signed in once stays signed in.
                 var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Screens", "Ekran" + number);
                 var environment = await CoreWebView2Environment.CreateAsync(null, folder);
-                if (disposed) return;
                 await web.EnsureCoreWebView2Async(environment);
-                if (disposed) return;
                 web.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                web.CoreWebView2.Settings.IsPasswordAutosaveEnabled = false;
-                web.CoreWebView2.Settings.IsGeneralAutofillEnabled = false;
+                web.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;   // No print / save dialogs.
+                web.CoreWebView2.DownloadStarting += (_, e) => { e.Handled = true; e.Cancel = true; };
                 web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true; // No pop-ups on a view-only screen.
-                web.CoreWebView2.LaunchingExternalUriScheme += (_, e) => e.Cancel = true;
+                PageScripts.Attach(web.CoreWebView2, kiosk: true);
                 web.CoreWebView2.Navigate(content.Url);
             }
             else await RestartAppAsync();
+            watch.Start();
         }
         catch (Exception ex)
         {
-            if (disposed) return;
-            if (web != null) { Controls.Remove(web); web.Dispose(); web = null; }
-            ShowError(ex);
+            Controls.Add(new Label { Text = "Nie udało się pokazać treści ekranu: " + ex.Message, Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, TextAlign = ContentAlignment.MiddleCenter });
+            Audit.Write("idle_screen_error", ex.Message);
         }
         finally { starting = false; }
     }
@@ -108,41 +123,12 @@ internal sealed class IdleScreen : Form
 
     private async Task RestartAppAsync()
     {
-        if (restartingApp || disposed) return;
-        restartingApp = true;
-        watch.Stop();
-        try
-        {
-            if (app != null) { Controls.Remove(app); app.Dispose(); }
-            app = new ApplicationView();
-            Controls.Add(app);
-            await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
-            if (disposed) return;
-            if (failure != null) failure.Visible = false;
-            watch.Interval = 5000;
-        }
-        catch (Exception ex)
-        {
-            if (disposed) return;
-            if (app != null) { Controls.Remove(app); app.Dispose(); app = null; }
-            ShowError(ex);
-            watch.Interval = 30000; // A broken executable must not be relaunched continuously.
-        }
-        finally
-        {
-            restartingApp = false;
-            if (!disposed) watch.Start();
-        }
-    }
-
-    private void ShowError(Exception exception)
-    {
-        failure ??= new Label { Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, BackColor = KioskTheme.Background, TextAlign = ContentAlignment.MiddleCenter };
-        if (failure.Parent == null) Controls.Add(failure);
-        failure.Text = "Nie udało się pokazać treści ekranu: " + exception.Message;
-        failure.Visible = true;
-        failure.BringToFront();
-        Audit.Write("idle_screen_error", exception.Message);
+        if (app != null) { Controls.Remove(app); app.Dispose(); }
+        app = new ApplicationView();
+        Controls.Add(app);
+        app.BringToFront();   // Below any message bars docked at the top.
+        app.InputEnabled = Enabled;
+        await app.StartAsync(new ApplicationEntry { Name = "Ekran", Path = content.Path, Arguments = content.Arguments });
     }
 
     /// <summary>Moving to a screen with another scale: Windows suggests a size; the window must still cover its screen.</summary>
@@ -154,17 +140,16 @@ internal sealed class IdleScreen : Form
         get
         {
             var p = base.CreateParams;
-            p.ExStyle |= 0x80; // WS_EX_TOOLWINDOW: not in Alt+Tab.
-            if (!Interactive) p.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE only while the screen is view only.
+            p.ExStyle |= 0x08000000 | 0x80; // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW: never takes focus, not in Alt+Tab
             return p;
         }
     }
 
-    protected override bool ShowWithoutActivation => !Interactive;
+    protected override bool ShowWithoutActivation => true;
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { disposed = true; watch.Dispose(); }
+        if (disposing) { watch.Dispose(); web?.Dispose(); app?.Dispose(); }
         base.Dispose(disposing);
     }
 }
