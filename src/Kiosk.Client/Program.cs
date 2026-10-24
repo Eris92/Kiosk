@@ -53,6 +53,8 @@ internal static class Program
         {
             if (selfTest)
             {
+                if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
+                    throw new InvalidOperationException("Card service health probe touched a reader or returned an unexpected response.");
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>

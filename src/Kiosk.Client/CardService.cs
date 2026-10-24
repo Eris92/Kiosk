@@ -78,7 +78,7 @@ internal static class CardService
 
     // ------------------------------------------------------------------ the work
 
-    private static Response Handle(Request request)
+    internal static Response Handle(Request request)
     {
         string step = "połączenie";
         try
@@ -95,6 +95,10 @@ internal static class CardService
             if (request.Op == "stat") return Stats.Append(request.Source);              // One statistics event (Konfiguracja → Statystyki).
             if (request.Op == "syncstats") return CentralConfig.SyncStatsForMachine();  // This PC's statistics to the server's Stats folder.
             if (request.Op == "testnetwork") return CentralConfig.TestNetworkForMachine(); // Konto Kiosku → Sprawdź: only the saved folders.
+            // Reject unsupported operations before opening a reader. The installer probes the listener
+            // without a card, and malformed requests must not touch one.
+            if (request.Op is not ("reset" or "info" or "haspin" or "setpin" or "changepin" or "verify"))
+                return new Response { Code = -2, Message = "Nieznane polecenie." };
             if (request.Op == "reset")
             {
                 // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.
