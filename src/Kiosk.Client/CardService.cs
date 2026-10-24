@@ -142,6 +142,7 @@ internal static class CardService
     private static readonly ManualResetEventSlim stopping = new();
     private static ServiceMain? main;            // kept alive for the native callback
     private static HandlerEx? handler;
+    private static NamedPipeServerStream? listeningPipe;
 
     /// <summary>Entry point when started by the Service Control Manager.</summary>
     internal static int Run()
@@ -155,42 +156,97 @@ internal static class CardService
     {
         handler = (control, eventType, eventData, _) =>
         {
-            if (control is 1 or 5) { SetStatus(3); stopping.Set(); } // STOP, SHUTDOWN -> STOP_PENDING
+            if (control is 1 or 5)
+            {
+                SetStatus(3); stopping.Set();
+                try { listeningPipe?.Dispose(); } catch (Exception) { }
+            }
             // SESSIONCHANGE / WTS_SESSION_LOGON: Szybka pomoc → Pierwsze logowanie waits for it.
             if (control == 0x0E && eventType == 5 && eventData != IntPtr.Zero) FirstSignIn.SignedIn(Marshal.ReadInt32(eventData, 4));
             return 0;
         };
         statusHandle = RegisterServiceCtrlHandlerEx(ServiceName, handler, IntPtr.Zero);
-        SetStatus(4); // RUNNING
-        var listener = new Thread(Listen) { IsBackground = true };
-        listener.Start();
+        if (statusHandle == IntPtr.Zero) return;
+        SetStatus(2); // START_PENDING until the first protected pipe is bound.
+        PipeSecurity security;
+        NamedPipeServerStream firstPipe;
+        try
+        {
+            security = PipePermissions();
+            firstPipe = CreatePipe(security, first: true);
+        }
+        catch (Exception ex)
+        {
+            Audit.Write("card_service_start_failed", ex.Message);
+            SetStatus(1, exitCode: 1);
+            return;
+        }
+        var listener = new Thread(() => Listen(firstPipe, security)) { IsBackground = true };
+        try { listener.Start(); }
+        catch (Exception ex)
+        {
+            firstPipe.Dispose();
+            Audit.Write("card_service_start_failed", ex.Message);
+            SetStatus(1, exitCode: 1);
+            return;
+        }
+        SetStatus(4); // RUNNING only after a client can connect.
         Watchdog.Start(stopping);
         stopping.Wait();
+        listener.Join(3000);
         SetStatus(1); // STOPPED
     }
 
-    private static void Listen()
+    private static PipeSecurity PipePermissions()
     {
         // SYSTEM and administrators: full; signed-in (interactive) users: may connect and send requests.
         var security = new PipeSecurity();
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.InteractiveSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        return security;
+    }
+
+    private static NamedPipeServerStream CreatePipe(PipeSecurity security, bool first) =>
+        NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
+            PipeTransmissionMode.Byte, first ? PipeOptions.FirstPipeInstance : PipeOptions.None, 4096, 4096, security);
+
+    private static void Listen(NamedPipeServerStream firstPipe, PipeSecurity security)
+    {
+        var next = firstPipe;
         while (!stopping.IsSet)
         {
-            NamedPipeServerStream? pipe = null;
+            var handedOff = false;
             try
             {
-                pipe = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-                    PipeTransmissionMode.Byte, PipeOptions.None, 4096, 4096, security);
+                var pipe = next;
+                listeningPipe = pipe;
                 pipe.WaitForConnection();
+                listeningPipe = null;
                 // Each client on its own thread: a slow request (a server share, an update) or a client that sends
                 // nothing never holds up the PIN, the sign-in or the watchdog's reports. The next instance waits at once.
-                var client = pipe;
-                pipe = null;
-                ThreadPool.QueueUserWorkItem(_ => Serve(client));
+                ThreadPool.QueueUserWorkItem(_ => Serve(pipe));
+                handedOff = true;
             }
-            catch (Exception) { pipe?.Dispose(); Thread.Sleep(200); } // One bad client must not stop the service.
+            catch (Exception ex)
+            {
+                listeningPipe = null;
+                if (!handedOff) next.Dispose();
+                if (stopping.IsSet) return;
+                Audit.Write("card_service_pipe_failed", ex.Message);
+                stopping.Wait(200);
+            }
+            if (stopping.IsSet) return;
+            while (true)
+            {
+                try { next = CreatePipe(security, first: false); break; }
+                catch (Exception ex)
+                {
+                    if (stopping.IsSet) return;
+                    Audit.Write("card_service_pipe_failed", ex.Message);
+                    stopping.Wait(200);
+                }
+            }
         }
     }
 
@@ -213,10 +269,16 @@ internal static class CardService
             try
             {
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                var line = reader.ReadLine();
+                var requestText = new StringBuilder();
+                int character;
+                while ((character = reader.Read()) != -1 && character != '\n')
+                {
+                    if (requestText.Length >= 65536) return;
+                    if (character != '\r') requestText.Append((char)character);
+                }
                 silent.Change(Timeout.Infinite, Timeout.Infinite);
-                if (line is { Length: > 65536 }) return;
-                var request = line == null ? null : JsonSerializer.Deserialize<Request>(line);
+                var request = character == -1 && requestText.Length == 0
+                    ? null : JsonSerializer.Deserialize<Request>(requestText.ToString());
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }
                     // The session comes from Windows (the pipe's client), not from the request.
                     : request.Op == "firstsignin" ? FirstSignIn.Arm(GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var session) ? session : -1)
@@ -274,9 +336,10 @@ internal static class CardService
         return administrator;
     }
 
-    private static void SetStatus(int state)
+    private static void SetStatus(int state, int exitCode = 0)
     {
-        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 | 0x80 : 0, WaitHint = 3000 };
+        var status = new ServiceStatus { Type = 0x10, State = state, ControlsAccepted = state == 4 ? 0x1 | 0x4 | 0x80 : 0,
+            Win32ExitCode = exitCode, WaitHint = 3000 };
         SetServiceStatus(statusHandle, ref status);
     }
 

@@ -349,7 +349,7 @@ internal sealed partial class KioskForm
         {
             var name = cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
             desktop.ShowSignIn(false);
-            desktop.UpdateStatus(name, notice ?? "Wybierz zadanie z Menu – strony otworzą się na Twoim koncie. " +
+            desktop.UpdateStatus(name, notice ?? "Wybierz zadanie z Szybkiej pomocy – strony otworzą się na Twoim koncie. " +
                 "Zabierz kartę z czytnika, aby się wylogować.", person: name);
         }
         else if (signInScreen != null && !(notice != null && DateTime.UtcNow < noticeUntil)) desktop.ShowSignIn(true);

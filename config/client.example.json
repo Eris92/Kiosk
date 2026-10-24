@@ -1,5 +1,5 @@
 {
-  "ConfigVersion": 2,
+  "ConfigVersion": 5,
   "RdpConnections": [
     {
       "Name": "RDS",
@@ -29,8 +29,20 @@
   "BrowserAllowedDomains": [],
   "Applications": [
     {
+      "Name": "Przeglądarka",
+      "Path": "kiosk:przegladarka",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    },
+    {
       "Name": "Notatnik",
       "Path": "kiosk:notatnik",
+      "Arguments": "",
+      "WorkingDirectory": ""
+    },
+    {
+      "Name": "Pliki",
+      "Path": "kiosk:pliki",
       "Arguments": "",
       "WorkingDirectory": ""
     }

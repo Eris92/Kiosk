@@ -1,28 +1,27 @@
 # Kiosk
 
-A Windows shell for shared PCs. People sign in with a FIDO2 card (or Windows Hello) and get a full-screen
-Kiosk instead of Explorer: remote desktops (RDP), programs, a browser limited to the sites an administrator
-allows, company messages, Szybka pomoc pages and a lock that never shows another person's work.
-Konfiguracja is visible only to Kiosk administrators.
+A Windows shell for shared PCs. Konfiguracja is visible only to Kiosk administrators.
+
+## Operating modes
+
+| Mode | Use |
+| --- | --- |
+| `SelfService` (default) | Walk-up help station with announcements and Szybka pomoc pages. A FIDO2 card and PIN sign the person in to Windows; pages then run in that Windows account for SSO. There is no RDP/application menu in this mode. |
+| `Kiosk` | Longer work sessions with an embedded browser, notes, files, configured applications and RDP profiles in one window. Each card has a separate session. |
+| `WindowsShell` | The same workstation UI as `Kiosk`, started as the signed-in Windows user in place of Explorer. Windows and Entra SSO depend on that user's Windows sign-in. |
+
+The initial deployment target is `SelfService`. It requires a Windows account that can sign in with the card/security key and an identity setup that issues the required site SSO credentials. On an unjoined local test PC, help pages can open, but automatic account SSO cannot be validated there. Password-based domain sign-in paired to a card for the workstation mode is a separate deployment path.
 
 ## Download
 
-Every push builds a GitHub release `build-N` with the package:
-https://github.com/Eris92/Kiosk/releases/latest/download/Kiosk-win-x64.zip
-
-Unzip it to e.g. `C:\Kiosk`. It keeps the repository layout: `out\client` (the program),
-`scripts`, `config`. Installed Kiosks update themselves to a newer `build-N`
-(Konfiguracja → Aktualizacja, Ctrl+Alt+U).
+CI builds and verifies an unsigned deployment candidate on `main` and `codex/**` branches. A signed release for automatic updates is published separately after validation. Build locally with `scripts\New-Package.ps1`; the candidate is placed in `out\package`.
 
 ## Requirements
 
 - Windows 10/11 x64, with a 64-bit PowerShell for the scripts. The scripts refuse a 32-bit PowerShell.
-- **.NET 10 Desktop Runtime x64.** The Kiosk does not carry its own .NET. The `Install-*.ps1` scripts and
-  the in-app update install it when it is missing. They use Microsoft's installer from the .NET release list,
-  checked against the SHA-512 in that list. winget is not used: it does not work in the kiosk shell.
+- The client package carries its own .NET 10 runtime. The separate configuration and news editor tools need .NET 10 Desktop Runtime x64.
 - Microsoft Edge WebView2 Runtime (part of current Windows).
-- A PC/SC card reader and FIDO2 cards. For card sign-in to Windows, Entra ID or domain accounts with
-  security key sign-in.
+- A PC/SC card reader and FIDO2 cards. For `SelfService` card sign-in, Windows must support security key sign-in to the person's Entra or domain account.
 - `.\scripts\Test-Prerequisites.ps1` checks the PC and changes nothing.
 
 ## Installation (as administrator)

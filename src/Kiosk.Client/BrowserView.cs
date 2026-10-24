@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -85,13 +86,16 @@ internal sealed class BrowserView : UserControl
         ForeColor = KioskTheme.Muted, Padding = new Padding(10, 5, 10, 0)
     };
     private readonly SitePolicy policy;
-    private readonly HashSet<string> cardCertificates;
+    private readonly Func<IReadOnlyCollection<string>> cardCertificates;
+    private readonly string? expectedCertificateUpn;
 
     /// <summary>The page in the active tab.</summary>
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
     internal int TabCount => tabs.Count;
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false, bool singlePage = false, string? profileFolder = null)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null,
+        Func<IReadOnlyCollection<string>>? cardCertificates = null, bool windowsAccount = false,
+        bool singlePage = false, string? profileFolder = null, string? expectedCertificateUpn = null)
     {
         this.singlePage = singlePage;
         sharedFolder = profileFolder != null;
@@ -102,7 +106,8 @@ internal sealed class BrowserView : UserControl
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
             : SharedFolder);
         profileName = shared ? "page-" + Guid.NewGuid().ToString("N") : "kiosk";
-        this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
+        this.cardCertificates = cardCertificates ?? (() => []);
+        this.expectedCertificateUpn = expectedCertificateUpn;
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
@@ -362,10 +367,23 @@ internal sealed class BrowserView : UserControl
         // account the Kiosk runs under. Windows asks for the card PIN. Certificates of other cards are never offered.
         core.ClientCertificateRequested += (_, e) =>
         {
-            var fromCard = e.MutuallyTrustedCertificates.Where(c => { using var x = c.ToX509Certificate2(); return cardCertificates.Contains(x.Thumbprint); }).ToList();
-            if (fromCard.Count > 0) e.SelectedCertificate = fromCard[0];
-            // Otherwise continue without a certificate: never offer one that is not on this person's card.
-            e.Handled = true;
+            try
+            {
+                var allowed = cardCertificates();
+                foreach (var candidate in e.MutuallyTrustedCertificates)
+                {
+                    using var certificate = candidate.ToX509Certificate2();
+                    if (!allowed.Contains(certificate.Thumbprint, StringComparer.OrdinalIgnoreCase)) continue;
+                    if (expectedCertificateUpn != null &&
+                        (expectedCertificateUpn.Length == 0 || !string.Equals(
+                            certificate.GetNameInfo(X509NameType.UpnName, false), expectedCertificateUpn,
+                            StringComparison.OrdinalIgnoreCase))) continue;
+                    e.SelectedCertificate = candidate;
+                    break;
+                }
+            }
+            catch (Exception ex) { Audit.Write("browser_certificate_error", ex.Message); }
+            finally { e.Handled = true; }
         };
         core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
         if (windowsAccount)
