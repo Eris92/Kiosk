@@ -57,6 +57,7 @@ internal static class SelfTestEntry
                     try
                     {
                         SecuritySelfTests.Run();
+                        await CardPinLifecycleTests.RunAsync();
                         RdpLaunchTests.Run();
                         WindowsSessionTests.Run();
                         form.SmokeTest();
@@ -66,7 +67,7 @@ internal static class SelfTestEntry
                         await BrowserLifecycleTests.RunAsync(form);
                         await form.ApplicationSmokeTestAsync();
                         await form.ApplicationOwnershipTestsAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, settings round-trip, owned application window, command process tree and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), cancelled PIN helper termination, browser, notes, settings round-trip, owned application window, command process tree and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

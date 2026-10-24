@@ -32,15 +32,33 @@ internal static class CardPin
     /// <summary>Starts the child check and waits for it; the PIN dialog is owned by <paramref name="owner"/>.</summary>
     internal static async Task<Result> VerifyAsync(string reader, IntPtr owner, CancellationToken cancel, string requiredThumbprint = "")
     {
+        cancel.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
         start.ArgumentList.Add(Argument);
         start.ArgumentList.Add(reader);
         start.ArgumentList.Add(owner.ToInt64().ToString());
         start.ArgumentList.Add(requiredThumbprint);
         using var process = Process.Start(start)!;
+        return await WaitForHelperAsync(process, cancel);
+    }
+
+    /// <summary>Owns the cancellation boundary for the short-lived PIN helper.</summary>
+    internal static async Task<Result> WaitForHelperAsync(Process process, CancellationToken cancel)
+    {
         var output = process.StandardOutput.ReadToEndAsync(cancel);
         try { await process.WaitForExitAsync(cancel); }
-        catch (OperationCanceledException) { try { process.Kill(); } catch (InvalidOperationException) { } throw; }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // WaitForExitAsync cancellation only cancels the wait. Ensure the PIN
+            // helper and its dialog are gone before the next card is accepted.
+            if (!process.HasExited)
+            {
+                try { process.Kill(); }
+                catch (InvalidOperationException) { } // Exited between the check and Kill.
+                await process.WaitForExitAsync();
+            }
+            throw;
+        }
         var message = (await output).Trim();
         return new Result(process.ExitCode, message);
     }

@@ -17,7 +17,7 @@ internal sealed class ApplicationView : Panel
     private SafeFileHandle? job;
     private readonly object ownershipScope;
     private readonly HashSet<IntPtr> placedDialogs = new();
-    private DateTime windowLostAt = DateTime.MaxValue;
+    private long? windowLostAtMilliseconds;
     private uint inputThread;
     private readonly byte[] accounting = new byte[48];
     private long dialogsCheckedAt;
@@ -154,7 +154,7 @@ internal sealed class ApplicationView : Panel
             if (inputThread != 0) AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), inputThread, false);
             inputThread = AppNative.AttachThreadInput(AppNative.GetCurrentThreadId(), thread, true) ? thread : 0;
         }
-        windowLostAt = DateTime.MaxValue;
+        windowLostAtMilliseconds = null;
         AppNative.ShowWindow(window, 9); // SW_RESTORE: leave the minimised start state.
         AppNative.ShowWindow(window, 5); // SW_SHOW
         ResizeChild();
@@ -178,7 +178,7 @@ internal sealed class ApplicationView : Panel
         overlay = true;
         overlayOwner = IntPtr.Zero;
         Started = true;
-        windowLostAt = DateTime.MaxValue;
+        windowLostAtMilliseconds = null;
         AppNative.ShowWindow(window, 9); // SW_RESTORE
         overlaySync.Tick -= SyncOverlay;
         overlaySync.Tick += SyncOverlay;
@@ -237,10 +237,11 @@ internal sealed class ApplicationView : Panel
         {
             hostedWindows.Remove(HostedWindow);
             HostedWindow = IntPtr.Zero;
-            if (windowLostAt == DateTime.MaxValue) windowLostAt = DateTime.UtcNow;
+            var now = Environment.TickCount64;
+            windowLostAtMilliseconds ??= now;
             var replacement = FindMainWindow();
             if (replacement != IntPtr.Zero) { try { Embed(replacement); } catch (Win32Exception) { } }
-            else if (ActiveProcesses() == 0 || DateTime.UtcNow - windowLostAt > TimeSpan.FromSeconds(10)) return false;
+            else if (ActiveProcesses() == 0 || now - windowLostAtMilliseconds.Value > 10_000) return false;
         }
         else if (!overlay && Visible && !AppNative.IsWindowVisible(HostedWindow))
             AppNative.ShowWindow(HostedWindow, 5); // An app hiding itself "to the tray" would be lost: the Kiosk has no tray.
