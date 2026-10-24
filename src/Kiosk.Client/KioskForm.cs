@@ -1782,7 +1782,7 @@ internal sealed partial class KioskForm : Form
     {
         foreach (var session in sessions.Values.ToArray())
         foreach (var (name, view) in session.Applications.ToArray())
-            if (view.Started && !view.Refresh())
+            if (view.Started && !view.RefreshHostedWindow())
                 CloseWindow("app:" + name, "application_exited", session);
     }
 

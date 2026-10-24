@@ -250,7 +250,7 @@ internal sealed class ApplicationView : Panel
     /// Called by the shell a few times per second. Returns false once the application has closed
     /// (its window is gone and no replacement appeared), so the Kiosk window can be removed.
     /// </summary>
-    internal bool Refresh()
+    internal bool RefreshHostedWindow()
     {
         if (adopted) return !IsDisposed && AppNative.IsWindow(HostedWindow); // Lives in another view's process.
         if (job == null && untrackedProgram == null || IsDisposed) return false;

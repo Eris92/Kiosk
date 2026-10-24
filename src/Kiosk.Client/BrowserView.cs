@@ -159,7 +159,7 @@ internal sealed class BrowserView : UserControl
         if (!singlePage) Controls.Add(tabStrip);
     }
 
-    private new int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    private int Scale(int value) => (int)Math.Round(value * DeviceDpi / 96d);
 
     private Label? pageTitle;
     private Button? pageClose;

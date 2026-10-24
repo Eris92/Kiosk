@@ -189,11 +189,11 @@ internal sealed partial class KioskForm
         cardKey = key;
         PrepareCardSignIn();
         if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
-        if (cardPage is { Started: true } page && !page.Refresh()) CloseCardPage();   // "Zamknij" or its countdown closed it.
+        if (cardPage is { Started: true } page && !page.RefreshHostedWindow()) CloseCardPage();   // "Zamknij" or its countdown closed it.
         // The card session's own window: "Zamknij" or its countdown parked it (it stays for the next page).
         else if (cardPage != null && cardPage == reusablePage && HelpBrowserForm.GetProp(cardPage.HostedWindow, HelpBrowserForm.ParkedProperty) != IntPtr.Zero)
             CloseCardPage();
-        if (reusablePage is { Started: true } waiting && cardPage != waiting && !waiting.Refresh())
+        if (reusablePage is { Started: true } waiting && cardPage != waiting && !waiting.RefreshHostedWindow())
         {
             Audit.Write("card_page_reusable_lost");   // Closed or crashed: pages start on their own again.
             DropReusablePage();
@@ -257,7 +257,7 @@ internal sealed partial class KioskForm
         helpBrowser?.Close();
         // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.
         if (reusableStarting is { IsCompleted: false } starting) { await starting; if (cardLogon != logon) return; }
-        if (reusablePage is { Started: true } reusable && reusableHost > 0 && reusable.Refresh())
+        if (reusablePage is { Started: true } reusable && reusableHost > 0 && reusable.RefreshHostedWindow())
         {
             ShowSideFor(side);
             var domains = HelpBrowserForm.SignInDomains.Concat(HelpPageDomains()).Append(host).ToArray();

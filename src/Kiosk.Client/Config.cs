@@ -234,11 +234,12 @@ internal sealed record Config
         if (ConfigVersion > CurrentVersion || ConfigVersion < 0)
             throw new InvalidDataException("Wersja konfiguracji nie jest obsługiwana przez ten Kiosk.");
         if (RdpConnections == null) throw new InvalidDataException("Lista RDP nie może być null.");
-        var applications = ConfigVersion < 2 && Applications != null && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications!;
+        if (Applications == null || Applications.Any(a => a == null)) throw new InvalidDataException("Lista aplikacji zawiera wartość null.");
+        var applications = ConfigVersion < 2 && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications;
         // Version 3: the browser became an entry of the application list instead of the EnableBrowser switch.
-        if (ConfigVersion < 3 && applications != null && EnableBrowser && !applications.Any(a => a.IsBuiltInBrowser)) applications = [ApplicationEntry.Browser, .. applications];
+        if (ConfigVersion < 3 && EnableBrowser && !applications.Any(a => a.IsBuiltInBrowser)) applications = [ApplicationEntry.Browser, .. applications];
         // Version 5: the built-in file manager (Pliki) joins the list; remove it there to turn it off.
-        if (ConfigVersion < 5 && applications != null && !applications.Any(a => a.IsBuiltInFiles)) applications = [.. applications, ApplicationEntry.Files];
+        if (ConfigVersion < 5 && !applications.Any(a => a.IsBuiltInFiles)) applications = [.. applications, ApplicationEntry.Files];
         return this with
         {
             RdpConnections = RdpConnections.Length == 0 && !string.IsNullOrWhiteSpace(Server)
@@ -247,7 +248,7 @@ internal sealed record Config
             LockAfterSeconds = IdleSeconds ?? LockAfterSeconds,
             ChangeUserAfterSeconds = IdleSeconds.HasValue ? Math.Max(ChangeUserAfterSeconds, IdleSeconds.Value * 2) : ChangeUserAfterSeconds,
             Applications = applications,
-            EnableBrowser = applications?.Any(a => a.IsBuiltInBrowser) == true,
+            EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
             // Version 4: automatic update is on by default (build-66 saved it switched off without asking).
             AutoUpdate = ConfigVersion < 4 || AutoUpdate,
             MenuCategories = MenuCategory.Complete(MenuCategories, HelpActions),

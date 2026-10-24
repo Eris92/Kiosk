@@ -54,7 +54,7 @@ internal sealed class IdleScreen : Form
         // A program that closed by itself (or crashed) is started again.
         watch.Tick += async (_, _) =>
         {
-            if (app == null || !app.Started || app.Refresh() || IsDisposed) return;
+            if (app == null || !app.Started || app.RefreshHostedWindow() || IsDisposed) return;
             // A program that cannot start again must not take the whole Kiosk (the Windows shell) down with it.
             try { await RestartAppAsync(); }
             catch (Exception ex) { Audit.Write("idle_screen_error", ex.Message); }

@@ -167,11 +167,19 @@ internal sealed record MenuCategory
     internal string Path => Normalize(Name);
 
     /// <summary>The category with an action as an entry of the menu: in its parent category, and opened from the left menu.</summary>
-    internal HelpAction? Link => (Action ?? "").Trim().Length == 0 ? null : new HelpAction
+    internal HelpAction? Link
     {
-        Name = Path.Split('/')[^1], Action = Action.Trim(), Description = Description ?? "", Icon = Icon ?? "", Color = Color ?? "", Side = Side ?? "",
-        SignedInOnly = SignedInOnly, Category = Path.Contains('/') ? Path[..Path.LastIndexOf('/')] : "", LinkPath = Path
-    };
+        get
+        {
+            var action = Action?.Trim();
+            if (string.IsNullOrEmpty(action)) return null;
+            return new HelpAction
+            {
+                Name = Path.Split('/')[^1], Action = action, Description = Description ?? "", Icon = Icon ?? "", Color = Color ?? "", Side = Side ?? "",
+                SignedInOnly = SignedInOnly, Category = Path.Contains('/') ? Path[..Path.LastIndexOf('/')] : "", LinkPath = Path
+            };
+        }
+    }
 
     internal static string Normalize(string? name) => string.Join("/", (name ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
 

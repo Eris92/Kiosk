@@ -161,7 +161,7 @@ internal sealed class FilesView : UserControl
                 var item = new ListViewItem(entry.Name) { Tag = entry.FullName, ImageKey = IconKey(entry.FullName, isFolder) };
                 item.SubItems.Add(entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
                 item.SubItems.Add(isFolder ? "Folder" : TypeName(entry.FullName));
-                item.SubItems.Add(entry is FileInfo f ? Size(f.Length) : "");
+                item.SubItems.Add(entry is FileInfo f ? FormatSize(f.Length) : "");
                 list.Items.Add(item);
             }
             list.EndUpdate();
@@ -265,19 +265,19 @@ internal sealed class FilesView : UserControl
                 if (paths.Length > 1)
                 {
                     long total = paths.Where(File.Exists).Sum(p => new FileInfo(p).Length);
-                    return paths.Length + " elementów\nRozmiar plików: " + Size(total) + "\nLokalizacja: " + folder;
+                    return paths.Length + " elementów\nRozmiar plików: " + FormatSize(total) + "\nLokalizacja: " + folder;
                 }
                 var path = paths[0];
                 FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
                 string size;
-                if (info is FileInfo f) size = Size(f.Length);
+                if (info is FileInfo f) size = FormatSize(f.Length);
                 else
                 {
                     // A folder's size: its files, as far as this account may read them.
                     long bytes = 0; int files = 0;
                     foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
                     { try { bytes += new FileInfo(file).Length; files++; } catch (IOException) { } }
-                    size = Size(bytes) + " (" + files + " plików)";
+                    size = FormatSize(bytes) + " (" + files + " plików)";
                 }
                 return "Nazwa: " + info.Name + "\nTyp: " + (info is DirectoryInfo ? "Folder" : TypeName(path)) + "\nLokalizacja: " + Path.GetDirectoryName(path.TrimEnd('\\')) +
                     "\nRozmiar: " + size + "\nUtworzono: " + info.CreationTime.ToString("yyyy-MM-dd HH:mm") + "\nZmodyfikowano: " + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") +
@@ -411,7 +411,7 @@ internal sealed class FilesView : UserControl
         Audit.Write("files_error", ex.Message);
     }
 
-    private static string Size(long bytes) =>
+    private static string FormatSize(long bytes) =>
         bytes < 1024 ? bytes + " B" : bytes < 1 << 20 ? (bytes / 1024.0).ToString("0") + " KB" : bytes < 1L << 30 ? (bytes / 1048576.0).ToString("0.0") + " MB" : (bytes / 1073741824.0).ToString("0.0") + " GB";
 
     // ------------------------------------------------------------------ icons and types (Windows' own, by extension)

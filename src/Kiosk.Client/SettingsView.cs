@@ -483,7 +483,8 @@ internal sealed class SettingsView : UserControl
             Name = "Bottom", HeaderText = "Dolna sekcja", ToolTipText = "Punkt samoobsługowy: kategoria w lewym menu w drugiej grupie, pod kreską (np. Szybka pomoc, Zgłoś incydent)",
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
-        menuCategories.Columns["Name"].HeaderText = "Nazwa";
+        var categoryNameColumn = menuCategories.Columns["Name"] ?? throw new InvalidOperationException("Brak kolumny nazwy kategorii.");
+        categoryNameColumn.HeaderText = "Nazwa";
         LayOut(menuCategories, "Name", "Action", "Side", "Description", "Icon", "Color", "SignedInOnly", "Bottom");
         foreach (var c in MenuCategory.Complete(config.MenuCategories, config.HelpActions))
         {
@@ -515,11 +516,11 @@ internal sealed class SettingsView : UserControl
         }
         // A renamed category takes its entries and subcategories with it.
         string? renaming = null;
-        menuCategories.CellBeginEdit += (_, e) => renaming = e.ColumnIndex == menuCategories.Columns["Name"].Index
+        menuCategories.CellBeginEdit += (_, e) => renaming = e.ColumnIndex == categoryNameColumn.Index
             ? MenuCategory.Normalize(Convert.ToString(menuCategories.Rows[e.RowIndex].Cells["Name"].Value)) : null;
         menuCategories.CellEndEdit += (_, e) =>
         {
-            if (renaming is not { Length: > 0 } old || e.ColumnIndex != menuCategories.Columns["Name"].Index) return;
+            if (renaming is not { Length: > 0 } old || e.ColumnIndex != categoryNameColumn.Index) return;
             renaming = null;
             var now = MenuCategory.Normalize(Convert.ToString(menuCategories.Rows[e.RowIndex].Cells["Name"].Value));
             if (now.Length == 0 || now.Equals(old, StringComparison.Ordinal)) return;
@@ -1031,8 +1032,8 @@ internal sealed class SettingsView : UserControl
         }
         var options = Grid(("Name", "Opcja", 200), ("Kind", "Rodzaj", 80), ("Category", "Kategoria", 110), ("Count", "Otwarcia", 70), ("People", "Osoby", 60), ("Last", "Ostatnio", 110));
         var days = Grid(("Day", "Dzień", 90), ("SignIns", "Logowania", 80), ("People", "Osoby", 60), ("Opened", "Otwarcia", 70));
-        options.Columns["Count"].ValueType = typeof(int);
-        options.Columns["People"].ValueType = typeof(int);
+        (options.Columns["Count"] ?? throw new InvalidOperationException("Brak kolumny liczby otwarć.")).ValueType = typeof(int);
+        (options.Columns["People"] ?? throw new InvalidOperationException("Brak kolumny liczby osób.")).ValueType = typeof(int);
         var split = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent };
         split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
         split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
@@ -1268,7 +1269,7 @@ internal sealed class SettingsView : UserControl
     {
         for (int i = 0; i < order.Length; i++)
         {
-            var column = grid.Columns[order[i]];
+            var column = grid.Columns[order[i]] ?? throw new InvalidOperationException("Brak kolumny: " + order[i]);
             column.DisplayIndex = i;
             int? width = order[i] switch { "Enabled" => 48, "Icon" or "Color" => 120, "SignedInOnly" => 130, "Bottom" => 120, _ => null };
             if (width is { } fixedWidth)

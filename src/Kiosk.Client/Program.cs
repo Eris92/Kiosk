@@ -152,7 +152,7 @@ internal sealed class RdpHost : AxHost
 {
     // MsRdpClient9NotSafeForScripting, provided by Windows mstscax.dll.
     internal RdpHost() : base("8B918B82-7985-4C24-89DF-C33AD2BBFBCD") { }
-    internal dynamic Client => GetOcx();
+    internal dynamic Client => GetOcx() ?? throw new InvalidOperationException("Kontrolka RDP nie jest zainicjalizowana.");
 }
 
 internal sealed class CardReader : IDisposable

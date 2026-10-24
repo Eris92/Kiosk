@@ -221,7 +221,7 @@ internal sealed class CtapCard : IDisposable
     /// <summary>NFCCTAP_MSG with command chaining for long requests, GET RESPONSE and keep-alive for long answers.</summary>
     private byte[] Exchange(byte[] request)
     {
-        (byte[] Data, bool Ok, int Sw) answer = default;
+        (byte[] Data, bool Ok, int Sw) answer = ([], false, 0);
         for (int offset = 0; offset < request.Length || offset == 0;)
         {
             int size = Math.Min(255, request.Length - offset);
