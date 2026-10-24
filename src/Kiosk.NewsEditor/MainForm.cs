@@ -51,7 +51,7 @@ internal sealed class MainForm : Form
         var listButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
         listButtons.Controls.AddRange([
             Small("Nowy", AddEntry), Small("Duplikuj", Duplicate), Small("Usuń", Remove),
-            Small("▲ Wyżej", () => Move(-1)), Small("▼ Niżej", () => Move(1))
+            Small("▲ Wyżej", () => MoveEntry(-1)), Small("▼ Niżej", () => MoveEntry(1))
         ]);
         left.Controls.Add(list);
         left.Controls.Add(listButtons);
@@ -212,7 +212,7 @@ internal sealed class MainForm : Form
         SetDirty(true);
     }
 
-    private void Move(int by)
+    private void MoveEntry(int by)
     {
         var at = list.SelectedIndex;
         var to = at + by;
