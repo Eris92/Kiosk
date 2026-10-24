@@ -88,9 +88,14 @@ internal static class SharedAccounts
     internal static bool IsInstalledKiosk(string? program)
     {
         if (program == null || !string.Equals(Path.GetFileName(program), "Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase)) return false;
-        // Exactly the installed Kiosk: another Program Files folder may be writable by users (some programs set it so).
-        var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Kiosk", "Kiosk.Client.exe");
-        return string.Equals(Path.GetFullPath(program), installed, StringComparison.OrdinalIgnoreCase);
+        // Only the legacy root EXE or a version installed by Install-KioskShell.ps1.
+        // Other Program Files subfolders must not gain the service's sign-in privileges.
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Kiosk");
+        var relative = Path.GetRelativePath(root, Path.GetFullPath(program)).Split(Path.DirectorySeparatorChar);
+        return relative.Length == 1 && string.Equals(relative[0], "Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase) ||
+            relative.Length == 3 && string.Equals(relative[0], "ClientVersions", StringComparison.OrdinalIgnoreCase) &&
+            System.Text.RegularExpressions.Regex.IsMatch(relative[1], "^release-[a-f0-9]{32}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) &&
+            string.Equals(relative[2], "Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Account Read(string file, string name)

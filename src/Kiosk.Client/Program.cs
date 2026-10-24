@@ -59,6 +59,13 @@ internal static class Program
                 {
                     try
                     {
+                        var installedRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Kiosk");
+                        var versioned = Path.Combine(installedRoot, "ClientVersions", "release-0123456789abcdef0123456789abcdef", "Kiosk.Client.exe");
+                        if (!SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "Kiosk.Client.exe")) ||
+                            !SharedAccounts.IsInstalledKiosk(versioned) ||
+                            SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "ClientVersions", "user-copy", "Kiosk.Client.exe")) ||
+                            SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "Other", "Kiosk.Client.exe")))
+                            throw new InvalidOperationException("Installed client path verification failed.");
                         form.SmokeTest();
                         await form.EmbeddedSmokeTestAsync();
                         await form.ApplicationSmokeTestAsync();
