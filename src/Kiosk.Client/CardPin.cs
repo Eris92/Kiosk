@@ -98,8 +98,11 @@ internal static class CardPin
                         using var certificate = CertificateForKey(key);
                         if (certificate == null || requiredThumbprint.Length > 0 &&
                             !string.Equals(certificate.Thumbprint, requiredThumbprint, StringComparison.OrdinalIgnoreCase)) continue;
-                        SetProperty(key, "HWND Handle", BitConverter.GetBytes(owner.ToInt64()));
-                        SetProperty(key, "Use Context", Encoding.Unicode.GetBytes("Odblokowanie Kiosku\0"));
+                        // A PIN dialog without a parent can appear behind the kiosk shell.
+                        Check(NCryptSetProperty(key, "HWND Handle", BitConverter.GetBytes(owner.ToInt64()), IntPtr.Size, 0));
+                        var context = Encoding.Unicode.GetBytes("Odblokowanie Kiosku\0");
+                        int contextStatus = NCryptSetProperty(key, "Use Context", context, context.Length, 0);
+                        if (contextStatus != 0) Audit.Write("card_pin_context_unavailable", "0x" + contextStatus.ToString("X8"));
                         last = Sign(key, out var hash, out var signature);
                         if (last == 0)
                         {
@@ -253,9 +256,6 @@ internal static class CardPin
         }
         finally { Marshal.FreeHGlobal(padding); Marshal.FreeHGlobal(algorithm); }
     }
-
-    private static void SetProperty(SafeNCryptKeyHandle key, string name, byte[] value) =>
-        NCryptSetProperty(key, name, value, value.Length, 0);
 
     private static void Check(int status)
     {

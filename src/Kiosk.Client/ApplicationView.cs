@@ -132,9 +132,13 @@ internal sealed class ApplicationView : Panel
     private void Embed(IntPtr window)
     {
         var className = new StringBuilder(64);
-        AppNative.GetClassName(window, className, className.Capacity);
+        if (AppNative.GetClassName(window, className, className.Capacity) == 0)
+            throw new InvalidOperationException("Okno aplikacji zniknęło przed osadzeniem.");
         if (className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
-        var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
+        Marshal.SetLastPInvokeError(0);
+        var originalStyle = AppNative.GetWindowLongPtr(window, -16);
+        if (originalStyle == IntPtr.Zero && Marshal.GetLastPInvokeError() != 0) throw new Win32Exception();
+        var style = originalStyle.ToInt64();
         // Remove popup, caption, sizing frame, min/max boxes and the minimised state; make it a child.
         style = (style & ~(0x80000000L | 0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L)) | 0x40000000L;
         Marshal.SetLastPInvokeError(0);
