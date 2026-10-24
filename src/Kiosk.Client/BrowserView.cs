@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -58,7 +59,8 @@ internal sealed class BrowserView : UserControl
         ForeColor = KioskTheme.Muted, Padding = new Padding(10, 5, 10, 0)
     };
     private readonly SitePolicy policy;
-    private readonly HashSet<string> cardCertificates;
+    private readonly Func<IReadOnlyCollection<string>> cardCertificates;
+    private readonly string? expectedCertificateUpn;
 
     /// <summary>The page in the active tab.</summary>
     internal WebView2 Web => active?.Web ?? throw new InvalidOperationException("Przeglądarka nie jest gotowa.");
@@ -67,10 +69,13 @@ internal sealed class BrowserView : UserControl
     internal string ProfileFolder => userDataFolder;
 #endif
 
-    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null, IReadOnlyCollection<string>? cardCertificates = null, bool windowsAccount = false)
+    internal BrowserView(IEnumerable<Bookmark>? bookmarks = null, SitePolicy? policy = null,
+        Func<IReadOnlyCollection<string>>? cardCertificates = null, bool windowsAccount = false, string? expectedCertificateUpn = null)
     {
         this.policy = policy ?? new SitePolicy(false, [], []);
         this.windowsAccount = windowsAccount;
+        this.cardCertificates = cardCertificates ?? (() => []);
+        this.expectedCertificateUpn = expectedCertificateUpn;
         if (windowsAccount)
             userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser");
         else
@@ -88,7 +93,6 @@ internal sealed class BrowserView : UserControl
             liveProfiles.TryAdd(userDataFolder, 0);
             QueueAbandonedProfileCleanup(root);
         }
-        this.cardCertificates = new HashSet<string>(cardCertificates ?? [], StringComparer.OrdinalIgnoreCase);
         Dock = DockStyle.Fill;
         BackColor = KioskTheme.Background;
         ForeColor = KioskTheme.Text;
@@ -194,13 +198,13 @@ internal sealed class BrowserView : UserControl
 
     private async Task InitializeCoreAsync(string url)
     {
-        homeUrl = url;
+        homeUrl = url == "about:blank" || policy.Allows(url) ? url : "about:blank";
         // Per-session profile folder, separate from the user's installed browser; tabs share it.
         // Single sign-on with the Windows account (Entra ID PRT) only when that account is the person's own.
         var environmentOptions = new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = windowsAccount };
         environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, environmentOptions);
         if (disposed) return;
-        await AddTabAsync(url);
+        await AddTabAsync(homeUrl);
         if (!disposed) message.Text = "";
     }
 
@@ -269,20 +273,29 @@ internal sealed class BrowserView : UserControl
                 }
             };
             core.WindowCloseRequested += (_, _) => CloseTab(tab);
-            // Sites that sign in with a certificate (Entra ID certificate-based auth, ADFS, internal portals) get the
-            // certificate from this person's card, so the browser is signed in as the card's user, not as the Windows
-            // account the Kiosk runs under. Windows asks for the card PIN. Certificates of other cards are never offered.
+            // Ask the session for the currently inserted card only when a site
+            // requests a certificate. A removed or changed card cannot use a
+            // thumbprint captured when this browser window was opened.
             core.ClientCertificateRequested += (_, e) =>
             {
-                foreach (var candidate in e.MutuallyTrustedCertificates)
+                try
                 {
-                    using var certificate = candidate.ToX509Certificate2();
-                    if (!cardCertificates.Contains(certificate.Thumbprint)) continue;
-                    e.SelectedCertificate = candidate;
-                    break;
+                    var allowed = cardCertificates();
+                    foreach (var candidate in e.MutuallyTrustedCertificates)
+                    {
+                        using var certificate = candidate.ToX509Certificate2();
+                        if (!AllowsClientCertificate(certificate, allowed, expectedCertificateUpn)) continue;
+                        e.SelectedCertificate = candidate;
+                        break;
+                    }
                 }
-                // Otherwise continue without a certificate: never offer one that is not on this person's card.
-                e.Handled = true;
+                catch (Exception ex) { Audit.Write("browser_certificate_error", ex.Message); }
+                finally
+                {
+                    // No eligible card means no certificate, never an unfiltered
+                    // system picker that could offer another user's credential.
+                    e.Handled = true;
+                }
             };
             core.LaunchingExternalUriScheme += (_, e) => { e.Cancel = true; };
             core.NavigationStarting += (_, e) =>
@@ -310,8 +323,8 @@ internal sealed class BrowserView : UserControl
                 if (tab == active) message.Text = e.IsSuccess ? "" : "Nie udało się wczytać strony: " + e.WebErrorStatus;
             };
             UpdateNavigation();
-            if (request == null && url != null && url != "about:blank")
-                core.Navigate(policy.Allows(url) ? url : homeUrl);
+            if (request == null && url != null && url != "about:blank" && policy.Allows(url))
+                core.Navigate(url);
             return tab;
         }
         catch (Exception) when (disposed || web.IsDisposed || !tabs.Contains(tab)) { return null; }
@@ -393,6 +406,16 @@ internal sealed class BrowserView : UserControl
         message.Text = "Nie udało się otworzyć karty: " + exception.Message;
         Audit.Write("browser_tab_error", exception.Message);
     }
+
+    private static bool AllowsClientCertificate(X509Certificate2 certificate, IReadOnlyCollection<string> allowed, string? expectedUpn) =>
+        allowed.Contains(certificate.Thumbprint, StringComparer.OrdinalIgnoreCase) &&
+        (expectedUpn == null || expectedUpn.Length > 0 &&
+            string.Equals(certificate.GetNameInfo(X509NameType.UpnName, false), expectedUpn, StringComparison.OrdinalIgnoreCase));
+
+#if KIOSK_SELF_TEST
+    internal bool AllowsClientCertificateForTest(X509Certificate2 certificate) =>
+        AllowsClientCertificate(certificate, cardCertificates(), expectedCertificateUpn);
+#endif
 
     private static void QueueAbandonedProfileCleanup(string root)
     {

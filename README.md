@@ -55,7 +55,7 @@ Na komputerze lokalnym Hello potwierdza tylko lokalne konto Windows. Nie tworzy 
 
 Osadzanie zewnętrznych programów obsługuje zgodne okna Win32. Nie każda aplikacja Store/UWP, program wymagający podwyższenia uprawnień lub ponownie używający istniejącej instancji może zostać osadzony. Gdy aplikacja to wspiera, ustaw argument nowej instancji. Dodatkowe okna dialogowe mogą pozostać osobnymi oknami. Kiosk nie przejmuje cudzych wcześniej uruchomionych procesów. Zakończenie sesji zamyka jej uruchomione procesy: zapisz pracę przed wylogowaniem/wygaśnięciem sesji.
 
-Przeglądarka w sesji wspólnego konta Kiosk używa osobnego, tymczasowego profilu InPrivate dla każdej karty. W `WindowsShell` używa trwałego profilu w `%LOCALAPPDATA%\Kiosk\Browser` osobno dla konta Windows; umożliwia to SSO, ale zachowuje dane przeglądania między sesjami tego samego konta. Otwarcie strony nie dowodzi, że strona uwierzytelniła właściwego użytkownika.
+Przeglądarka w sesji wspólnego konta Kiosk używa osobnego, tymczasowego profilu InPrivate dla każdej karty. W `WindowsShell` każde jej okno, także na dodatkowym ekranie, używa trwałego profilu w `%LOCALAPPDATA%\Kiosk\Browser` osobno dla konta Windows; umożliwia to SSO, ale zachowuje dane przeglądania między sesjami tego samego konta. Gdy witryna żąda certyfikatu klienta, Kiosk sprawdza aktualnie włożoną kartę. W `WindowsShell` automatyczny wybór wymaga dodatkowo UPN certyfikatu zgodnego z zalogowanym kontem; dla konta lokalnego bez UPN nie wybiera certyfikatu automatycznie. To ograniczenie wyboru, a nie dowód logowania witryny lub RDS pod właściwym kontem.
 
 ## RDP i wymagania środowiska
 

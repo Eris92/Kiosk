@@ -1,9 +1,26 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
 namespace Kiosk.Client;
 
 internal static class BrowserLifecycleTests
 {
     internal static async Task RunAsync(Form owner)
     {
+        VerifyCurrentCardCertificateSelection();
+        var bookmark = new Bookmark { Name = "Allowed", Url = "https://allowed.invalid/" };
+        using (var restricted = new BrowserView([bookmark], new SitePolicy(true, [bookmark], [])))
+        {
+            owner.Controls.Add(restricted);
+            await restricted.InitializeAsync("https://blocked.invalid/").WaitAsync(TimeSpan.FromSeconds(25));
+            var source = restricted.Web.CoreWebView2.Source;
+            if (source is not ("" or "about:blank"))
+                throw new InvalidOperationException("Restricted browser opened an unapproved start page.");
+            await restricted.OpenTabAsync().WaitAsync(TimeSpan.FromSeconds(20));
+            source = restricted.Web.CoreWebView2.Source;
+            if (source is not ("" or "about:blank"))
+                throw new InvalidOperationException("Restricted browser reopened an unapproved start page.");
+        }
         string profileFolder;
         using (var browser = new BrowserView())
         {
@@ -90,5 +107,32 @@ internal static class BrowserLifecycleTests
             throw new InvalidOperationException("Browser cleanup did not remove the released profile.");
         Directory.Delete(unrelated);
         Directory.Delete(root);
+    }
+
+    private static void VerifyCurrentCardCertificateSelection()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=Alice", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddUserPrincipalName("alice@example.org");
+        request.CertificateExtensions.Add(names.Build());
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        IReadOnlyCollection<string> insertedCard = [certificate.Thumbprint];
+        using var browser = new BrowserView(cardCertificates: () => insertedCard, windowsAccount: true,
+            expectedCertificateUpn: "ALICE@example.org");
+        if (!browser.AllowsClientCertificateForTest(certificate))
+            throw new InvalidOperationException("The inserted card certificate was not selected for its Windows user.");
+        insertedCard = [];
+        if (browser.AllowsClientCertificateForTest(certificate))
+            throw new InvalidOperationException("A removed card remained eligible for browser authentication.");
+        insertedCard = [certificate.Thumbprint];
+        using var otherUser = new BrowserView(cardCertificates: () => insertedCard, windowsAccount: true,
+            expectedCertificateUpn: "bob@example.org");
+        if (otherUser.AllowsClientCertificateForTest(certificate))
+            throw new InvalidOperationException("A different Windows user could use the inserted card certificate.");
+        using var localUser = new BrowserView(cardCertificates: () => insertedCard, windowsAccount: true,
+            expectedCertificateUpn: "");
+        if (localUser.AllowsClientCertificateForTest(certificate))
+            throw new InvalidOperationException("A local Windows account without UPN auto-selected a card certificate.");
     }
 }

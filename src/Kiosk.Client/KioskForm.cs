@@ -531,11 +531,14 @@ internal sealed partial class KioskForm : Form
         }
         else if (key == BrowserKey || key.StartsWith("browser:"))
         {
-            // The Kiosk browser (no Windows account for the person): another browser window of its own.
+            // Another embedded browser window for this session and Windows account.
             var title = NextInstanceName(session, "Przeglądarka");
-            var view = new BrowserView(config.Bookmarks, new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains), session.Identity.Thumbprints);
+            var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
+            var view = new BrowserView(config.Bookmarks, policy,
+                () => CurrentBrowserCertificates(session), windowsAccount: ShellMode,
+                expectedCertificateUpn: ShellMode ? session.Identity.Upn : null);
             AddWindow(session, "browser:" + title, title, view);
-            try { await view.InitializeAsync(config.BrowserUrl); }
+            try { await view.InitializeAsync(policy.Allows(config.BrowserUrl) ? config.BrowserUrl : config.Bookmarks[0].Url); }
             catch (Exception ex) { CloseWindow("browser:" + title, "browser_error", session); notice = "Nie udało się uruchomić przeglądarki: " + ex.Message; }
         }
     }
@@ -725,8 +728,9 @@ internal sealed partial class KioskForm : Form
                 {
                     if (content.Url.Length > 0 && session.Logon == null)
                     {
-                        // Without a Windows account for the person: the Kiosk browser, signed in by the person on the page.
-                        var view = new BrowserView([], null, session.Identity.Thumbprints);
+                        // The embedded browser uses the Windows profile in shell mode and a temporary profile otherwise.
+                        var view = new BrowserView([], null, () => CurrentBrowserCertificates(session),
+                            windowsAccount: ShellMode, expectedCertificateUpn: ShellMode ? session.Identity.Upn : null);
                         AddWindow(session, key, title, view);
                         if (n > 1) PlaceWindow(session, key, n, remember: false);
                         await view.InitializeAsync(content.Url);
@@ -1357,6 +1361,23 @@ internal sealed partial class KioskForm : Form
         Arguments = "--new-window " + config.BrowserUrl
     };
 
+    private IReadOnlyCollection<string> CurrentBrowserCertificates(UserSession session)
+    {
+        if (session.Closed || session.Locked || current != session || shellSignOut.Reason != null ||
+            ShellMode && (disconnectedSince != null || shellLockRequestedAt != null)) return [];
+        try
+        {
+            // A local Windows account has no UPN to compare with a certificate.
+            if (ShellMode && string.IsNullOrWhiteSpace(session.Identity.Upn)) return [];
+            var observed = reader.Snapshot(config.ReaderName);
+            if (observed == null) return [];
+            if (!ShellMode) return observed == cardKey ? session.Identity.Thumbprints : [];
+            // For domain/Entra, WebView2 also checks the candidate certificate's UPN.
+            return CardPin.ReadIdentity(reader.ActiveReader)?.Thumbprints ?? [];
+        }
+        catch (Exception ex) { Audit.Write("browser_certificate_error", ex.Message); return []; }
+    }
+
     private async Task OpenBrowserAsync()
     {
         if (!config.EnableBrowser) return;
@@ -1375,7 +1396,8 @@ internal sealed partial class KioskForm : Form
             return;
         }
         var policy = new SitePolicy(config.BrowserOnlyBookmarks, config.Bookmarks, config.BrowserAllowedDomains);
-        var requested = new BrowserView(config.Bookmarks, policy, session.Identity.Thumbprints, windowsAccount: ShellMode);
+        var requested = new BrowserView(config.Bookmarks, policy, () => CurrentBrowserCertificates(session),
+            windowsAccount: ShellMode, expectedCertificateUpn: ShellMode ? session.Identity.Upn : null);
         session.Browser = requested;
         AddWindow(session, BrowserKey, "Przeglądarka", requested);
         try

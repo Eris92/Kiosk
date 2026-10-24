@@ -23,17 +23,10 @@ internal static class WindowsSession
         var upn = UserName(8);          // NameUserPrincipal: user@tenant
         var display = UserName(3);      // NameDisplay for accounts that provide it
         var name = display.Length > 0 ? display : upn.Length > 0 ? upn : identity.Name[(identity.Name.IndexOf('\\') + 1)..];
-        // The person's own certificates (a signed-in card propagates its certificates here) for websites.
-        string[] thumbprints;
-        using (var store = new System.Security.Cryptography.X509Certificates.X509Store(
-            System.Security.Cryptography.X509Certificates.StoreName.My, System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser))
-        {
-            store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
-            var certificates = store.Certificates;
-            try { thumbprints = certificates.Where(c => c.HasPrivateKey).Select(c => c.Thumbprint).ToArray(); }
-            finally { foreach (var certificate in certificates) certificate.Dispose(); }
-        }
-        return new CardIdentity("win:" + identity.User?.Value, name, upn) { Thumbprints = thumbprints };
+        // A Windows account's certificate store can include old or unrelated
+        // smart cards. Resolve the inserted card only when a website asks for
+        // client authentication, not during every Kiosk startup.
+        return new CardIdentity("win:" + identity.User?.Value, name, upn);
     }
 
     /// <summary>Keep this user's programs running while Windows takes over authentication.</summary>
