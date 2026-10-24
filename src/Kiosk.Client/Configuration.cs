@@ -38,6 +38,13 @@ internal static class Configuration
     internal static bool IsWebUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
+    internal static bool IsRdpServer(string? host) =>
+        host is { Length: > 0 and <= 255 } && !host.Any(char.IsWhiteSpace) &&
+        Uri.CheckHostName(host) is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6;
+
+    internal static bool IsEntraRdpServer(string host) =>
+        Uri.CheckHostName(host) == UriHostNameType.Dns && host.Contains('.') && !host.EndsWith('.');
+
     internal static void Save(string path, Config config)
     {
         config.Validate();

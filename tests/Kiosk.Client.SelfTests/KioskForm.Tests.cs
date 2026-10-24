@@ -46,7 +46,11 @@ internal sealed partial class KioskForm
             legacy with { UnlockMethod = (UnlockMethod)42 },
             legacy with { AccentColor = "zielony" },
             legacy with { RdpConnections = [legacy.RdpConnections[0], legacy.RdpConnections[0]] },
-            legacy with { RdpConnections = [new RdpConnection { Name = "E", Server = "10.0.0.1", Authentication = RdpAuthentication.EntraId }] }
+            legacy with { RdpConnections = [new RdpConnection { Name = "E", Server = "10.0.0.1", Authentication = RdpAuthentication.EntraId }] },
+            legacy with { RdpConnections = [new RdpConnection { Name = "URL", Server = "https://rds.example.local" }] },
+            legacy with { RdpConnections = [new RdpConnection { Name = "Path", Server = "rds.example.local/path" }] },
+            legacy with { RdpConnections = [new RdpConnection { Name = "Port", Server = "rds.example.local:3389" }] },
+            legacy with { RdpConnections = [new RdpConnection { Name = "FQDN", Server = "rds.example.local.", Authentication = RdpAuthentication.EntraId }] }
         })
         {
             try { invalid.Validate(); throw new Exception("Invalid configuration was accepted."); }

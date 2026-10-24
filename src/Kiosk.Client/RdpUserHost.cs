@@ -32,8 +32,10 @@ internal static class RdpUserHost
             var payload = Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
             var request = JsonSerializer.Deserialize<LaunchRequest>(payload);
             var connection = request?.Connection;
-            return connection is { Server.Length: > 0 and <= 255, Name.Length: > 0 and <= 128, UserName.Length: <= 1024 } &&
-                   !connection.Server.Any(char.IsWhiteSpace) && connection.Port is >= 1 and <= 65535 &&
+            return connection is { Name.Length: > 0 and <= 128, UserName.Length: <= 1024 } &&
+                   Configuration.IsRdpServer(connection.Server) &&
+                   (connection.Authentication != RdpAuthentication.EntraId || Configuration.IsEntraRdpServer(connection.Server)) &&
+                   connection.Port is >= 1 and <= 65535 &&
                    Enum.IsDefined(connection.Authentication) && request!.Timeout is >= 10 and <= 300
                 ? request : null;
         }
@@ -57,7 +59,7 @@ internal static class RdpUserHost
         form.Controls.Add(host);
         ((ISupportInitialize)host).EndInit();
         bool wasConnected = false;
-        var connectingSince = DateTime.UtcNow;
+        var connectingSince = Environment.TickCount64;
         using var watch = new System.Windows.Forms.Timer { Interval = 1000 };
         form.Shown += (_, _) =>
         {
@@ -65,7 +67,7 @@ internal static class RdpUserHost
             {
                 host.CreateControl();
                 RdpConfiguration.Apply(host, connection, form.ClientSize, request.Prompt);
-                connectingSince = DateTime.UtcNow;
+                connectingSince = Environment.TickCount64;
                 dynamic client = host.Client;
                 client.Connect();
                 Audit.Write("rdp_user_connect", server);
@@ -86,7 +88,7 @@ internal static class RdpUserHost
                 int state = (int)host.Client.Connected;
                 if (state == 1) wasConnected = true;
                 else if (wasConnected && state == 0) form.Close();
-                else if (DateTime.UtcNow - connectingSince > TimeSpan.FromSeconds(timeout))
+                else if (Environment.TickCount64 - connectingSince > timeout * 1000L)
                 {
                     Audit.Write("rdp_user_timeout", server);
                     form.Close();

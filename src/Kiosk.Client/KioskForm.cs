@@ -15,7 +15,7 @@ internal sealed partial class KioskForm : Form
     private sealed class RdpSession
     {
         internal required RdpHost Host { get; init; }
-        internal DateTime ConnectingSince { get; init; }
+        internal long ConnectingSince { get; init; }
         internal bool WasConnected { get; set; }
     }
 
@@ -1264,7 +1264,7 @@ internal sealed partial class KioskForm : Form
         try
         {
             host = CreateRdp(connection, config.RequireCredentialPrompt);
-            session.Rdp[connection.Name] = new RdpSession { Host = host, ConnectingSince = DateTime.UtcNow };
+            session.Rdp[connection.Name] = new RdpSession { Host = host, ConnectingSince = Environment.TickCount64 };
             AddWindow(session, key, connection.Name, host);
             // Fresh COM control per connection and per person; never store a PIN/password or reuse credentials.
             host.Client.Connect();
@@ -1324,7 +1324,7 @@ internal sealed partial class KioskForm : Form
                 CloseWindow("rdp:" + name, "remote_disconnect", session);
                 session.Notice = "Pulpit zdalny „" + name + "” został rozłączony.";
             }
-            else if (!rdp.WasConnected && DateTime.UtcNow - rdp.ConnectingSince > TimeSpan.FromSeconds(config.ConnectTimeoutSeconds))
+            else if (!rdp.WasConnected && Environment.TickCount64 - rdp.ConnectingSince > config.ConnectTimeoutSeconds * 1000L)
             {
                 CloseWindow("rdp:" + name, "connection_timeout", session);
                 session.Notice = "Nie udało się połączyć z „" + name + "” w ciągu " + config.ConnectTimeoutSeconds + " s.";

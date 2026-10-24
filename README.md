@@ -29,7 +29,7 @@ Jeżeli potrzebny jest osobny skonfigurowany katalog testowy:
 
 | Ustawienie | Znaczenie |
 | --- | --- |
-| `RdpConnections` | Lista unikalnych nazw, hostów, portów i metod logowania: `SmartCard`, `WindowsCurrentUser`, `EntraId`. |
+| `RdpConnections` | Lista unikalnych nazw, hostów, portów i metod logowania: `SmartCard`, `WindowsCurrentUser`, `EntraId`. Host to sama nazwa DNS lub adres IP, bez `https://`, ścieżki ani `:port`; port wpisuje się osobno. Profil Entra wymaga pełnej nazwy DNS. |
 | `RequireCredentialPrompt` | Żądanie systemowego okna poświadczeń RDP. Wyłączenie pozwala Windows użyć dostępnych poświadczeń; nie wyłącza NLA ani wymagań serwera/PIN karty. |
 | `AutoConnectRdpName` | Nazwa istniejącego profilu otwieranego po odblokowaniu; pusty tekst wyłącza automatyczne łączenie. |
 | `UnlockMethod` | `Card` = sama obecność rozpoznanej karty; `CardAndPin` = sprawdzenie PIN-u karty; `CardAndWindowsHello` = potwierdzenie przez Hello bieżącej sesji Windows. |

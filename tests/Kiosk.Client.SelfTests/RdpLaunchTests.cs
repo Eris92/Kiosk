@@ -4,6 +4,9 @@ internal static class RdpLaunchTests
 {
     internal static void Run()
     {
+        if (!Configuration.IsRdpServer("localhost") || !Configuration.IsRdpServer("10.0.0.1") ||
+            !Configuration.IsRdpServer("::1") || !Configuration.IsEntraRdpServer("host.example.org"))
+            throw new InvalidOperationException("RDP server validation rejected a hostname or IP address.");
         foreach (var authentication in Enum.GetValues<RdpAuthentication>())
         {
             var connection = new RdpConnection
@@ -23,5 +26,14 @@ internal static class RdpLaunchTests
         var oversized = new RdpConnection { Name = new string('N', 129), Server = "host.example.org" };
         if (RdpUserHost.Parse(RdpUserHost.ArgumentsFor(oversized, 60, true).Split(' ')[1]) != null)
             throw new InvalidOperationException("RDP helper accepted an oversized connection name.");
+        foreach (var server in new[] { "https://host.example.org", "host.example.org/path", "host.example.org:3389" })
+        {
+            var invalid = new RdpConnection { Name = "Invalid", Server = server };
+            if (RdpUserHost.Parse(RdpUserHost.ArgumentsFor(invalid, 60, true).Split(' ')[1]) != null)
+                throw new InvalidOperationException("RDP helper accepted a URI or an inline port as a server name.");
+        }
+        var entraIp = new RdpConnection { Name = "Entra IP", Server = "10.0.0.1", Authentication = RdpAuthentication.EntraId };
+        if (RdpUserHost.Parse(RdpUserHost.ArgumentsFor(entraIp, 60, true).Split(' ')[1]) != null)
+            throw new InvalidOperationException("RDP helper accepted an Entra profile without an FQDN.");
     }
 }

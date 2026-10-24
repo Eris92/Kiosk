@@ -124,12 +124,11 @@ internal sealed record Config
         foreach (var connection in RdpConnections)
         {
             if (connection == null || string.IsNullOrWhiteSpace(connection.Name) || connection.Name.Length > 128 ||
-                string.IsNullOrWhiteSpace(connection.Server) || connection.Server.Length > 255 ||
-                connection.Server.Any(char.IsWhiteSpace) || connection.Port is < 1 or > 65535 ||
+                !Configuration.IsRdpServer(connection.Server) || connection.Port is < 1 or > 65535 ||
                 connection.UserName == null || connection.UserName.Length > 1024 ||
                 !Enum.IsDefined(connection.Authentication)) throw new InvalidDataException("Każde połączenie RDP wymaga nazwy, hosta, portu i sposobu logowania.");
             if (connection.Authentication == RdpAuthentication.EntraId &&
-                (System.Net.IPAddress.TryParse(connection.Server, out _) || !connection.Server.Contains('.')))
+                !Configuration.IsEntraRdpServer(connection.Server))
                 throw new InvalidDataException("Połączenie Entra wymaga pełnej nazwy DNS komputera; adres IP nie jest obsługiwany.");
         }
         if (RdpConnections.Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != RdpConnections.Length)

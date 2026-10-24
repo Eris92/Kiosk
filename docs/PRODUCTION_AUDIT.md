@@ -1,4 +1,4 @@
-# Audyt wydania Kiosk — 2026-10-23
+# Audyt wydania Kiosk — 2026-10-23–24
 
 ## Zakres i wynik
 
@@ -22,6 +22,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 
 ## Zmiany poddane weryfikacji
 
+- Host RDP jest sprawdzany jako nazwa DNS albo adres IP; konfiguracja i proces pomocniczy odrzucają URL, ścieżkę i port dopisany do hosta. Profil Entra wymaga FQDN. Limit nawiązania połączenia RDP mierzy zegar monotoniczny, więc korekta czasu systemowego nie wydłuża ani nie skraca go.
 - Konfiguracja odrzuca nieznaną wersję, błędne profile RDP, duplikaty, niepoprawne adresy i ścieżki, a produkcyjna lista administratorów nie przyjmuje UID jako uwierzytelnienia. Zapis jest atomowy.
 - Sesje rozróżniają blokadę, odłożenie i wylogowanie; czas zachowania jest egzekwowany także po powrocie z blokady Windows. Na konsoli używany jest `LockWorkStation`, w sesji zdalnej rozłączenie WTS; brak potwierdzenia blokady powoduje próbę wylogowania. Po jawnym `WTS_SESSION_LOCK` sesja czeka na `WTS_SESSION_UNLOCK`, nawet gdy odczyt WTS chwilowo pokazuje `Active`. Gdy WTS nie potrafi odczytać flagi blokady, powiadomienie `WTS_SESSION_UNLOCK` pozwala wznowić sesję po sprawdzeniu limitu; samo `WTS_REMOTE_CONNECT` nie potwierdza odblokowania.
 - Rozpoczęte wylogowanie Windows pozostaje w stanie oczekującym. Powtórna próba następuje najwyżej co 10 sekund, jeśli proces nadal działa; nie jest już wywoływana co 250 ms ani nie powiela wpisu o przyczynie. W tym czasie monitor RDP i aplikacji nie wykonuje zbędnej pracy. Test obejmuje ponowienie po błędzie i zachowanie pierwszej przyczyny.
