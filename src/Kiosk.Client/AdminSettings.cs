@@ -94,7 +94,7 @@ internal static class AdminSettings
         view.SwitchUserRequested += () =>
         {
             Audit.Write("manual_switch_user", "administrator");
-            try { WindowsSession.Disconnect(); }
+            try { WindowsSession.LockOrDisconnect(); }
             catch (Exception ex) { MessageBox.Show(form, "Nie udało się przełączyć użytkownika: " + ex.Message, "Konfiguracja Kiosku"); }
         };
         // The running Kiosk holds the program files: it closes and installs the update itself.

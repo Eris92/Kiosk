@@ -26,6 +26,11 @@ internal enum NewsBanner { Standard, Large, ExtraLarge }
 [JsonConverter(typeof(JsonStringEnumConverter<SessionMode>))]
 internal enum SessionMode { Kiosk, WindowsShell, SelfService }
 
+/// <summary>SelfService account source. WindowsSession uses the user's supported Windows sign-in and OS SSO;
+/// CardBroker retains the older in-app FIDO broker for existing deployments.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<SelfServiceAuthentication>))]
+internal enum SelfServiceAuthentication { CardBroker, WindowsSession }
+
 /// <summary>Where Start and the window icons sit on the taskbar: in the middle (Windows 11) or on the left.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<TaskbarAlignment>))]
 internal enum TaskbarAlignment { Center, Left }
@@ -138,6 +143,7 @@ internal sealed record Config
     /// SelfService (Punkt samoobsługowy): only the start screen with Szybka pomoc and Komunikaty, no Menu or sessions;
     /// a card on the reader signs in once (FIDO2 on the web) for every Szybka pomoc page until it is taken away.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
+    public SelfServiceAuthentication SelfServiceAuthentication { get; init; } = SelfServiceAuthentication.CardBroker;
     /// <summary>Punkt samoobsługowy: the page opened when a card is put on the reader, to sign in with it (FIDO2). Empty = none.</summary>
     public string SelfServiceSignInUrl { get; init; } = "https://myaccount.microsoft.com";
     /// <summary>Punkt samoobsługowy: after a new PIN was set on the card, this page links the card to the person's account.</summary>
@@ -271,6 +277,7 @@ internal sealed record Config
             throw new InvalidDataException("Nazwy połączeń RDP muszą być unikalne.");
         if (!Enum.IsDefined(UnlockMethod)) throw new InvalidDataException("Nieznany sposób odblokowania.");
         if (!Enum.IsDefined(SessionMode)) throw new InvalidDataException("Nieznany tryb sesji.");
+        if (!Enum.IsDefined(SelfServiceAuthentication)) throw new InvalidDataException("Nieznany sposób logowania punktu samoobsługowego.");
         // Numbers are read as enum values too: an unknown one would break Konfiguracja when it opens.
         if (!Enum.IsDefined(TaskbarAlignment) || !Enum.IsDefined(NewsShow) || !Enum.IsDefined(NewsOrder) || !Enum.IsDefined(NewsSize))
             throw new InvalidDataException("Nieznane ustawienie paska zadań albo komunikatów.");

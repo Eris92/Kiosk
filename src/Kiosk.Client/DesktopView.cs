@@ -310,7 +310,7 @@ internal sealed partial class DesktopView : UserControl
         heading.Visible = status;
         detail.Visible = status && !AskingPin;   // The PIN's own text takes its place.
         resume.Visible = status && locked && !AskingPin && !signingIn;
-        hint.Visible = status && !AskingPin && !signingIn;
+        hint.Visible = status && !AskingPin && !signingIn && !portal;
         foreach (var c in new Control[] { askTitle, askText, askYes, askNo }) c.Visible = Asking;
         if (Asking) pinCountdown.Visible = true;
         // Szybka pomoc stays where it is; while a question or the PIN waits it is greyed out.

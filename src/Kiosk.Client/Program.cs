@@ -55,6 +55,18 @@ internal static class Program
             {
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
                     throw new InvalidOperationException("Card service health probe touched a reader or returned an unexpected response.");
+                if (!WindowsSession.RetentionExpired(1_000, 31_000, 30) ||
+                    WindowsSession.RetentionExpired(1_000, 30_999, 30) ||
+                    WindowsSession.CanResume(WindowsSession.Availability.Active, false, true) ||
+                    !WindowsSession.CanResume(WindowsSession.Availability.Unknown, true, false))
+                    throw new InvalidOperationException("Windows session retention or lock state verification failed.");
+                var retry = new SignOutRetry();
+                int attempts = 0;
+                retry.Request("self_test", 1_000, () => { attempts++; throw new IOException("simulated failure"); }, out _);
+                retry.Request("ignored", 2_000, () => attempts++, out _);
+                retry.Request("ignored", 11_000, () => attempts++, out _);
+                if (attempts != 2 || retry.Reason != "self_test")
+                    throw new InvalidOperationException("Windows sign-out retry verification failed.");
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>

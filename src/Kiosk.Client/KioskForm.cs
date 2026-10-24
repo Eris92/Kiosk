@@ -85,12 +85,20 @@ internal sealed partial class KioskForm : Form
     private string? cardKey;
     private bool requireRemoval, inTick, closeConfirmed, verifying;
     private CancellationTokenSource? pinCheck;
-    private bool shellCardSeen;
-    private DateTime? disconnectedSince;
+    private string? shellCardKey;
+    private long? disconnectedSinceMilliseconds;
+    private long? shellLockRequestedAtMilliseconds;
+    private bool shellUnlockNotified;
+    private bool shellLockNotified;
+    private readonly SignOutRetry shellSignOut = new();
+    private IntPtr shellNotificationHandle;
+    private long nextShellNotificationAttemptMilliseconds;
     private bool ShellMode => config.SessionMode == SessionMode.WindowsShell;
+    private bool WindowsSessionMode => ShellMode || SelfServiceWindowsSession;
     private string? notice;
+    private bool modeRestartPending;
 
-    private bool CanUseApps => current is { Locked: false };
+    private bool CanUseApps => current is { Locked: false } && shellSignOut.Reason == null;
 
     /// <summary>The PC's own client.json when the configuration comes from a server (it keeps ConfigSource).</summary>
     private Config? localConfig;
@@ -141,7 +149,7 @@ internal sealed partial class KioskForm : Form
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
         FormClosed += (_, _) => { newsTimer.Dispose(); updateTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
-        if (ShellMode) StartWindowsSession();
+        if (WindowsSessionMode) StartWindowsSession();
         RefreshChrome();
     }
 
@@ -156,6 +164,7 @@ internal sealed partial class KioskForm : Form
             if (ShellMode)
             {
                 ShellTick();
+                if (shellSignOut.Reason != null) return;
                 MonitorRdp();
                 MonitorApplications();
                 return;
@@ -269,14 +278,14 @@ internal sealed partial class KioskForm : Form
 
     private void Unlock(UserSession session)
     {
-        if (!session.ScreensOpened && !ShellMode && config.IdleScreens.Length > 0) { session.ScreensOpened = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
+        if (!session.ScreensOpened && !ShellMode && !SelfService && config.IdleScreens.Length > 0) { session.ScreensOpened = true; BeginInvoke(() => _ = OpenScreenContentsAsync(session)); }
         session.Locked = false;
         session.Verified = true;
         session.Notice = null;
         Audit.Write("unlocked", session.Identity.Name);
-        Stats.Record(Stats.SignIn, ShellMode ? "Windows" : "Karta", person: session.Identity.Name);
+        Stats.Record(Stats.SignIn, ShellMode || SelfServiceWindowsSession ? "Windows" : "Karta", person: session.Identity.Name);
         ShowView(session.LastView != null && session.Windows.Any(w => w.View == session.LastView) ? session.LastView : desktop);
-        if (!session.AutoConnected)
+        if (!SelfService && !session.AutoConnected)
         {
             session.AutoConnected = true;
             var connection = config.RdpConnections.FirstOrDefault(c => c.Name.Equals(config.AutoConnectRdpName, StringComparison.OrdinalIgnoreCase));
@@ -665,7 +674,7 @@ internal sealed partial class KioskForm : Form
     private void StartIdleScreens()
     {
         StopIdleScreens();
-        if (ShellMode || config.IdleScreens.Length == 0) return;
+        if (ShellMode || SelfServiceWindowsSession || config.IdleScreens.Length == 0) return;
         var ordered = Screen.AllScreens.OrderByDescending(s => s.Primary).ToArray();
         for (int i = 0; i < ordered.Length; i++)
         {
@@ -836,43 +845,119 @@ internal sealed partial class KioskForm : Form
         Unlock(session);
     }
 
+    private void ObserveWindowsSessionChange(Message message)
+    {
+        if (message.Msg == WindowsSession.SessionChangeMessage && WindowsSessionMode)
+        {
+            var change = message.WParam.ToInt32();
+            if (change is WindowsSession.SessionLock or WindowsSession.ConsoleDisconnect or WindowsSession.RemoteDisconnect)
+            {
+                disconnectedSinceMilliseconds ??= Environment.TickCount64;
+                shellLockRequestedAtMilliseconds = null;
+                shellUnlockNotified = false;
+                if (change == WindowsSession.SessionLock) shellLockNotified = true;
+            }
+            else if (change == WindowsSession.SessionUnlock)
+            {
+                shellLockRequestedAtMilliseconds = null;
+                shellCardKey = null;
+                shellUnlockNotified = true;
+                shellLockNotified = false;
+                // Keep the time spent away until ShellTick checks the retention limit.
+            }
+            else if (change == WindowsSession.RemoteConnect) shellCardKey = null;
+        }
+    }
+
+    private void TryRegisterShellNotifications()
+    {
+        if (shellNotificationHandle != IntPtr.Zero || !IsHandleCreated) return;
+        var handle = Handle;
+        if (WindowsSession.RegisterNotifications(handle)) shellNotificationHandle = handle;
+        else nextShellNotificationAttemptMilliseconds = Environment.TickCount64 + 5000;
+    }
+
     private void ShellTick()
     {
-        if (WindowsSession.IsDisconnected())
+        if (shellSignOut.Reason is { } pendingReason) { SignOutWindows(pendingReason); return; }
+        var now = Environment.TickCount64;
+        if (shellNotificationHandle == IntPtr.Zero && now >= nextShellNotificationAttemptMilliseconds) TryRegisterShellNotifications();
+        var state = WindowsSession.State();
+        if (state is WindowsSession.Availability.Locked or WindowsSession.Availability.Disconnected)
         {
-            disconnectedSince ??= DateTime.UtcNow;
-            if (config.ChangeUserAfterSeconds > 0 && DateTime.UtcNow - disconnectedSince >= TimeSpan.FromSeconds(config.ChangeUserAfterSeconds))
-                SignOutWindows("session_expired");
+            disconnectedSinceMilliseconds ??= now;
+            shellLockRequestedAtMilliseconds = null;
+        }
+        if (WindowsSession.RetentionExpired(disconnectedSinceMilliseconds, now, config.ChangeUserAfterSeconds))
+        {
+            SignOutWindows("session_expired");
             return;
         }
-        if (disconnectedSince != null)
+        if (disconnectedSinceMilliseconds != null && shellLockRequestedAtMilliseconds == null &&
+            WindowsSession.CanResume(state, shellUnlockNotified, shellLockNotified))
         {
-            // The person signed in again (Windows checked their card / Hello): continue where they left off.
-            disconnectedSince = null;
-            shellCardSeen = false;
+            disconnectedSinceMilliseconds = null;
+            shellCardKey = null;
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
-        if (reader.Snapshot(config.ReaderName) != null) shellCardSeen = true;
-        else if (shellCardSeen && config.DisconnectOnCardRemoval && !verifying) { DisconnectWindows("card_removed"); return; }
+        if (disconnectedSinceMilliseconds == null) shellUnlockNotified = false;
+        if (disconnectedSinceMilliseconds != null) return;
+        if (shellLockRequestedAtMilliseconds is { } requested)
+        {
+            // A lock request is asynchronous. Fail closed if Windows never confirms it.
+            if (now - requested >= 5000) SignOutWindows("windows_lock_unconfirmed");
+            return;
+        }
+        if (config.DisconnectOnCardRemoval)
+        {
+            var observedCard = reader.Snapshot(config.ReaderName);
+            if (shellCardKey == null) shellCardKey = observedCard;
+            else if (observedCard != shellCardKey && !verifying) { DisconnectWindows("card_removed_or_changed"); return; }
+        }
+        else shellCardKey = null;
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
-    /// <summary>Like Windows "Switch user": programs keep running, the sign-in screen is shown for the next person.</summary>
+    /// <summary>Lock the console or disconnect RDP while retaining the person's Windows session.</summary>
     private void DisconnectWindows(string reason)
     {
         menu.HideMenu();
-        shellCardSeen = false;
+        DismissQuestions();
+        shellUnlockNotified = false;
         Audit.Write(reason, current?.Identity.Name ?? "");
-        try { WindowsSession.Disconnect(); }
-        catch (Exception ex) { notice = "Nie udało się rozłączyć sesji Windows: " + ex.Message; Audit.Write("disconnect_failed", ex.Message); }
+        try { WindowsSession.LockOrDisconnect(); shellLockRequestedAtMilliseconds = Environment.TickCount64; }
+        catch (Exception ex)
+        {
+            notice = "Nie udało się zablokować sesji Windows: " + ex.Message;
+            Audit.Write("windows_lock_failed", ex.Message);
+            SignOutWindows("windows_lock_failed");
+        }
     }
 
     private void SignOutWindows(string reason)
     {
-        Audit.Write(reason, current?.Identity.Name ?? "");
-        closeConfirmed = true;
-        try { WindowsSession.SignOut(); }
-        catch (Exception ex) { closeConfirmed = false; notice = "Nie udało się wylogować z Windows: " + ex.Message; Audit.Write("signout_failed", ex.Message); }
+        bool firstRequest = shellSignOut.Reason == null;
+        if (firstRequest)
+        {
+            Audit.Write(reason, current?.Identity.Name ?? "");
+            closeConfirmed = true;
+            timer.Interval = 1000;
+            notice = null;
+            if (SelfServiceWindowsSession) { helpBrowser?.Close(); CloseCardPage(); }
+        }
+        if (!shellSignOut.Request(reason, Environment.TickCount64, WindowsSession.SignOut, out var failure)) return;
+        if (failure != null)
+        {
+            notice = "Nie udało się wylogować z Windows: " + failure.Message;
+            Audit.Write("signout_failed", failure.Message);
+        }
+        if (firstRequest && !IsDisposed)
+        {
+            menu.HideMenu();
+            DismissQuestions();
+            if (visibleView != desktop) ShowView(desktop);
+            else RefreshChrome();
+        }
     }
 
     // ---------------------------------------------------------------- shell chrome
@@ -890,7 +975,7 @@ internal sealed partial class KioskForm : Form
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         TileIcons.SetCategories(config.MenuCategories);
         desktop.SetHelp(config.HelpActions);
-        desktop.Help.SignedIn = !SelfService || cardLogon != null;
+        desktop.Help.SignedIn = shellSignOut.Reason == null && (!SelfService || SelfServiceWindowsSession || cardLogon != null);
         desktop.Portal = SelfService;
         RefreshHosts();
         int others = sessions.Values.Count(s => s != current);
@@ -907,6 +992,8 @@ internal sealed partial class KioskForm : Form
             : "Sesja czeka na powrót karty aż do wylogowania.";
         taskbar.Visible = !SelfService;   // Punkt samoobsługowy: no Menu, only Szybka pomoc on the start screen.
         if (SelfService) SelfServiceStatus();
+        else if (shellSignOut.Reason != null)
+            desktop.UpdateStatus("Wylogowywanie", notice ?? "Trwa kończenie sesji Windows.");
         else if (current is { Locked: true } locked)
         {
             var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
@@ -1099,15 +1186,21 @@ internal sealed partial class KioskForm : Form
             Audit.Write("client_restart_requested");
             closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
             if (!closeConfirmed) return;
-            // The new copy waits until this one has released its single-instance lock.
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
-            {
-                UseShellExecute = false,
-                WorkingDirectory = AppContext.BaseDirectory,
-                Arguments = string.Join(" ", Environment.GetCommandLineArgs().Skip(1).Select(a => "\"" + a + "\""))
-            });
-            Close();
+            RestartClient();
         }
+    }
+
+    private void RestartClient()
+    {
+        // The new copy waits until this one has released its single-instance lock.
+        var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = AppContext.BaseDirectory
+        };
+        foreach (var argument in Environment.GetCommandLineArgs().Skip(1)) start.ArgumentList.Add(argument);
+        if (System.Diagnostics.Process.Start(start) == null) throw new InvalidOperationException("Nie udało się uruchomić nowej kopii Kiosku.");
+        Close();
     }
 
     /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
@@ -1164,7 +1257,7 @@ internal sealed partial class KioskForm : Form
 
     private async Task RunHelpAsync(HelpAction item)
     {
-        if (verifying || desktop.AskingPin) return;
+        if (verifying || desktop.AskingPin || shellSignOut.Reason != null) return;
         if (!desktop.Help.SignedIn && item.NeedsSignIn) return;
         Audit.Write("help_action", item.Name + " " + item.Action);
         Stats.Record(Stats.Option, item.Name, item.CategoryPath, desktop.Help.SignedIn ? StatsPerson : "");
@@ -1189,7 +1282,8 @@ internal sealed partial class KioskForm : Form
         helpBrowser?.Close();
         ShowSideFor(side);
         // In the start screen's middle frame: no separate window over the screen.
-        var window = new HelpBrowserForm(title, url, HelpPageDomains(), config.HelpCloseSeconds, onlyListed: config.BrowserOnlyBookmarks) { TopLevel = false, TopMost = false };
+        var window = new HelpBrowserForm(title, url, HelpPageDomains(), config.HelpCloseSeconds,
+            windowsAccount: SelfServiceWindowsSession, onlyListed: config.BrowserOnlyBookmarks) { TopLevel = false, TopMost = false };
         window.FormClosed += (_, _) =>
         {
             if (desktop.Page == window) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
@@ -1308,7 +1402,7 @@ internal sealed partial class KioskForm : Form
         if (answer.Code != 0) { ShowHelpResult("Pierwsze logowanie nie jest dostępne: " + answer.Message); return; }
         ShowHelpResult("Po zalogowaniu do Windows wrócisz tu automatycznie.");
         if (current != null) Park(current, "first_signin");
-        try { WindowsSession.Disconnect(); }
+        try { WindowsSession.LockOrDisconnect(); }
         catch (Exception ex) { ShowHelpResult("Nie udało się pokazać ekranu logowania Windows: " + ex.Message); }
     }
 
@@ -1782,9 +1876,9 @@ internal sealed partial class KioskForm : Form
     /// <param name="url">A page to open (company message); null = the start page.</param>
     private IReadOnlyCollection<string> CurrentBrowserCertificates(UserSession session)
     {
-        if (session.Locked || current != session ||
+        if (session.Locked || current != session || shellSignOut.Reason != null ||
             !sessions.TryGetValue(session.Identity.Id, out var active) || active != session ||
-            ShellMode && disconnectedSince != null) return [];
+            WindowsSessionMode && (disconnectedSinceMilliseconds != null || shellLockRequestedAtMilliseconds != null)) return [];
         try
         {
             if (ShellMode && string.IsNullOrWhiteSpace(session.Identity.Upn)) return [];
@@ -1933,6 +2027,7 @@ internal sealed partial class KioskForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        if (WindowsSessionMode) TryRegisterShellNotifications();
         AdminSettings.RegisterHotkey(Handle);
         windowsKey ??= new WindowsKey(() => { if (IsHandleCreated) BeginInvoke(new Action(ToggleMenu)); });
     }
@@ -1941,6 +2036,11 @@ internal sealed partial class KioskForm : Form
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
+        if (shellNotificationHandle != IntPtr.Zero)
+        {
+            WindowsSession.UnregisterNotifications(shellNotificationHandle);
+            shellNotificationHandle = IntPtr.Zero;
+        }
         AdminSettings.UnregisterHotkey(Handle);
         windowsKey?.Dispose();
         windowsKey = null;
@@ -1958,6 +2058,7 @@ internal sealed partial class KioskForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == WindowsSession.SessionChangeMessage) ObserveWindowsSessionChange(m);
         // Alt+F4 also arrives as SC_CLOSE (also while a child has the focus); the Kiosk's own exit calls Close() instead.
         if (m.Msg == WmSysCommand && (m.WParam.ToInt64() & 0xFFF0) == ScClose)
         {
@@ -1996,6 +2097,31 @@ internal sealed partial class KioskForm : Form
         StartIdleScreens();
         _ = LoadNewsAsync();
         RefreshChrome();
+        if (modeRestartPending) BeginInvoke(new Action(RestartForModeChange));
+    }
+
+    private void RestartForModeChange()
+    {
+        if (!modeRestartPending || IsDisposed) return;
+        if (sessions.Values.Any(s => s.HasWork) && !ConfirmEnd(sessions.Values))
+        {
+            notice = "Zmiana trybu została zapisana. Zamknij pracę i uruchom Kiosk ponownie, aby ją zastosować.";
+            RefreshChrome();
+            return;
+        }
+        try
+        {
+            closeConfirmed = true;
+            RestartClient();
+            modeRestartPending = false;
+        }
+        catch (Exception ex)
+        {
+            closeConfirmed = false;
+            notice = "Zmiana trybu została zapisana, ale ponowne uruchomienie nie powiodło się: " + ex.Message;
+            Audit.Write("mode_restart_failed", ex.Message);
+            RefreshChrome();
+        }
     }
 
     /// <summary>Konfiguracja → Ekrany → Obrót: Windows' orientation of the monitors (before the screens are laid out).</summary>
@@ -2012,10 +2138,13 @@ internal sealed partial class KioskForm : Form
         try
         {
             var loaded = CentralConfig.Load(configPath!);
-            config = loaded.Effective;
+            var next = loaded.Effective;
+            modeRestartPending = next.SessionMode != config.SessionMode ||
+                next.SelfServiceAuthentication != config.SelfServiceAuthentication;
+            if (!modeRestartPending) config = next;
             localConfig = loaded.Local;
-            Updater.Channel = config.UpdateChannel;
-            notice = loaded.Problem;
+            Updater.Channel = next.UpdateChannel;
+            notice = modeRestartPending ? "Zmiana trybu została zapisana. Kiosk uruchomi się ponownie." : loaded.Problem;
         }
         catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return false; }
         KioskTheme.SetAccent(config.AccentColor);
@@ -2457,6 +2586,7 @@ internal sealed partial class KioskForm : Form
             AutoConnectRdpName = "Biuro", RequireCredentialPrompt = false, UnlockMethod = UnlockMethod.CardAndPin,
             ConfigVersion = Config.CurrentVersion, EnableBrowser = false,
             LockAfterSeconds = 60, ChangeUserAfterSeconds = 30, AccentColor = "#3DDC84",
+            SessionMode = SessionMode.SelfService, SelfServiceAuthentication = SelfServiceAuthentication.WindowsSession,
             BrowserOnlyBookmarks = true, BrowserAllowedDomains = ["login.microsoftonline.com"],
             AdminCards = [new AdminCard { Name = "Admin", Id = "cert:ADMIN" }], AllowWindowsAdministrators = false
         };
@@ -2466,7 +2596,9 @@ internal sealed partial class KioskForm : Form
         if (restored.Applications.Single() != entry || restored.Bookmarks.Single() != testConfig.Bookmarks.Single() ||
             !restored.RdpConnections.SequenceEqual(testConfig.RdpConnections) || restored.AutoConnectRdpName != "Biuro" ||
             restored.RequireCredentialPrompt || restored.UnlockMethod != UnlockMethod.CardAndPin ||
-            restored.LockAfterSeconds != 60 || restored.ChangeUserAfterSeconds != 30 || restored.AccentColor != "#3DDC84" || !restored.BrowserOnlyBookmarks || restored.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || restored.EnableBrowser)
+            restored.LockAfterSeconds != 60 || restored.ChangeUserAfterSeconds != 30 || restored.AccentColor != "#3DDC84" ||
+            restored.SessionMode != SessionMode.SelfService || restored.SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession ||
+            !restored.BrowserOnlyBookmarks || restored.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || restored.EnableBrowser)
             throw new InvalidOperationException("Configuration round-trip failed.");
         try
         {
@@ -2481,7 +2613,11 @@ internal sealed partial class KioskForm : Form
             surface.Controls.Remove(settings);
             if (!edited.RdpConnections.SequenceEqual(restored.RdpConnections) || edited.AutoConnectRdpName != "Biuro" ||
                 edited.RequireCredentialPrompt || edited.UnlockMethod != UnlockMethod.CardAndPin || edited.LockAfterSeconds != 60 ||
-                edited.ChangeUserAfterSeconds != 30 || edited.AccentColor != "#3DDC84" || edited.AdminCards.Single() != restored.AdminCards.Single() || edited.AllowWindowsAdministrators || !edited.BrowserOnlyBookmarks || edited.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || edited.EnableBrowser || edited.ReaderName != restored.ReaderName || !edited.Applications.SequenceEqual(restored.Applications))
+                edited.ChangeUserAfterSeconds != 30 || edited.AccentColor != "#3DDC84" ||
+                edited.SessionMode != SessionMode.SelfService || edited.SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession ||
+                edited.AdminCards.Single() != restored.AdminCards.Single() || edited.AllowWindowsAdministrators ||
+                !edited.BrowserOnlyBookmarks || edited.BrowserAllowedDomains.Single() != "login.microsoftonline.com" ||
+                edited.EnableBrowser || edited.ReaderName != restored.ReaderName || !edited.Applications.SequenceEqual(restored.Applications))
                 throw new InvalidOperationException("Settings view does not round-trip the configuration.");
         }
         SaveSettingsScreenshots(restored);
@@ -2527,7 +2663,7 @@ internal sealed partial class KioskForm : Form
         StartWindowsSession();
         if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
             throw new InvalidOperationException("Windows shell session failed.");
-        _ = WindowsSession.IsDisconnected();
+        _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
     }

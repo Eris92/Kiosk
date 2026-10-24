@@ -3,7 +3,9 @@
   TEMPLATE ONLY: replace the account and deployment paths before assigning this profile.
   Intune Custom OMA-URI: ./Vendor/MSFT/AssignedAccess/ShellLauncher (String / XML).
   Requires Windows Enterprise/Education/IoT Enterprise and Kiosk installed by a separate Win32 app.
-  Deploy production client.json to C:\ProgramData\Kiosk\client.json (SessionMode=WindowsShell, TestMode=false).
+  Deploy production client.json to C:\ProgramData\Kiosk\client.json
+  (SessionMode=SelfService, SelfServiceAuthentication=WindowsSession, TestMode=false).
+  Replace the release placeholder below with the actual versioned client path installed on this PC.
   Explorer remains the default. Assign the Kiosk profile to explicit existing standard-user accounts below;
   duplicate Config for each account. XML Account entries are individual accounts, not a local group shortcut.
   For a group/default-shell assignment use the WESL-based Install-KioskShell.ps1 instead.
@@ -17,7 +19,7 @@
       </Shell>
     </DefaultProfile>
     <Profile Id="{8b6a9b48-5a0c-4d3f-9a3e-1f2b6a1c0d11}" Name="Kiosk">
-      <Shell Shell="&quot;C:\Program Files\Kiosk\Kiosk.Client.exe&quot; &quot;C:\ProgramData\Kiosk\client.json&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="false">
+      <Shell Shell="&quot;C:\Program Files\Kiosk\ClientVersions\release-REPLACE_WITH_32_HEX\Kiosk.Client.exe&quot; &quot;C:\ProgramData\Kiosk\client.json&quot;" V2:AppType="Desktop" V2:AllAppsFullScreen="false">
         <DefaultAction Action="RestartShell"/>
       </Shell>
     </Profile>

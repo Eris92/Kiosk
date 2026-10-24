@@ -35,8 +35,9 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
-    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Kiosk: karta + PIN w Kiosku, aplikacje i przeglądarka jako ta osoba (SSO)", "Powłoka Windows: bez karty w Kiosku, liczy się konto zalogowane do Windows", "Punkt samoobsługowy: tylko ekran startowy z Menu i Komunikatami, karta loguje raz (FIDO2), dopóki leży na czytniku" } };
-    private readonly CheckBox showHelp = new() { Text = "Pokazuj Menu na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
+    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Stanowisko: karta i aplikacje w Kiosku", "Powłoka Windows: aplikacje na koncie zalogowanym do Windows", "Punkt samoobsługowy: Szybka pomoc i komunikaty, bez menu aplikacji" } };
+    private readonly ComboBox selfServiceAuthentication = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Karta w oknie Kiosku (starsza metoda, zależna od wersji Windows)", "Logowanie Windows / Entra przed otwarciem Kiosku (SSO na stronach)" } };
+    private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox adminHotkey = new() { Text = "Ctrl+Alt+K otwiera Konfigurację (jako administrator Windows)", AutoSize = true };
@@ -178,6 +179,7 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Blokada po bezczynności (s, karta w czytniku)", lockAfter);
         AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
         AddField(fields, "Tryb sesji", sessionMode);
+        AddField(fields, "Logowanie w punkcie samoobsługowym", selfServiceAuthentication);
         AddField(fields, "Logowanie i odblokowanie", unlock);
         AddField(fields, "Skrót do Konfiguracji", adminHotkey);
         adminHotkey.Checked = config.AdminHotkey;
@@ -253,6 +255,9 @@ internal sealed class SettingsView : UserControl
         signInAsUser.Checked = config.SignInAsUser;
         unlock.SelectedIndex = (int)config.UnlockMethod;
         sessionMode.SelectedIndex = (int)config.SessionMode;
+        selfServiceAuthentication.SelectedIndex = (int)config.SelfServiceAuthentication;
+        selfServiceAuthentication.Enabled = config.SessionMode == SessionMode.SelfService;
+        sessionMode.SelectedIndexChanged += (_, _) => selfServiceAuthentication.Enabled = sessionMode.SelectedIndex == (int)SessionMode.SelfService;
         disconnectOnRemoval.Checked = config.DisconnectOnCardRemoval;
         SetupAccent(config.AccentColor);
         taskbarAlign.SelectedIndex = (int)config.TaskbarAlignment;
@@ -1401,6 +1406,7 @@ internal sealed class SettingsView : UserControl
             SignInAsUser = signInAsUser.Checked,
             UnlockMethod = (UnlockMethod)Math.Max(0, unlock.SelectedIndex),
             SessionMode = (SessionMode)Math.Max(0, sessionMode.SelectedIndex),
+            SelfServiceAuthentication = (SelfServiceAuthentication)Math.Max(0, selfServiceAuthentication.SelectedIndex),
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,
             AccentColor = accentHex,
             TaskbarAlignment = (TaskbarAlignment)Math.Max(0, taskbarAlign.SelectedIndex),

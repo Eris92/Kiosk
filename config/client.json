@@ -42,6 +42,7 @@
   "ChangeUserAfterSeconds": 600,
   "UnlockMethod": "Card",
   "SessionMode": "SelfService",
+  "SelfServiceAuthentication": "WindowsSession",
   "DisconnectOnCardRemoval": true,
   "AccentColor": "#3DDC84",
   "AdminCards": [],

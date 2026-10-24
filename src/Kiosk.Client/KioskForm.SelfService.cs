@@ -10,6 +10,7 @@ namespace Kiosk.Client;
 internal sealed partial class KioskForm
 {
     private bool SelfService => config.SessionMode == SessionMode.SelfService;
+    private bool SelfServiceWindowsSession => SelfService && config.SelfServiceAuthentication == SelfServiceAuthentication.WindowsSession;
 
     /// <summary>The person signed in to Windows with the card and its PIN; null = nobody (pages open as a guest).</summary>
     private UserLogon? cardLogon;
@@ -19,6 +20,8 @@ internal sealed partial class KioskForm
     private DateTime signInFailedAt;
     /// <summary>Card sign-in screens that did not start in a row: each waits longer (10 s, 20 s… up to 5 minutes).</summary>
     private int signInStartFailures;
+    /// <summary>An unsupported Windows build cannot start this adapter; retrying it does not change the result.</summary>
+    private bool signInUnsupported;
     /// <summary>A Szybka pomoc result (card reset, PIN change…) is shown in the card instead of the sign-in until then.</summary>
     private DateTime noticeUntil;
 
@@ -57,7 +60,24 @@ internal sealed partial class KioskForm
             if (signInStarting.Exception != null) Audit.Write("fido_prepare_failed", signInStarting.Exception.GetBaseException().ToString());
             signInStarting = null;
             if (ready != null && desktop.Page != null) { _ = Task.Run(ready.Dispose); return; }   // A page opened meanwhile.
-            if (ready == null) { signInFailedAt = DateTime.UtcNow; signInStartFailures++; notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…"; RefreshChrome(); return; }
+            if (ready == null)
+            {
+                if (reason.Contains("account adapter has not been verified", StringComparison.OrdinalIgnoreCase) ||
+                    reason.Contains("Native CTAP assertion entry is unavailable", StringComparison.OrdinalIgnoreCase))
+                {
+                    signInUnsupported = true;
+                    notice = "Logowanie kartą jest niedostępne na tej wersji Windows. Strony pomocy możesz otworzyć bez logowania. Skontaktuj się z administratorem.";
+                    Audit.Write("fido_unsupported_windows", reason);
+                }
+                else
+                {
+                    signInFailedAt = DateTime.UtcNow;
+                    signInStartFailures++;
+                    notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…";
+                }
+                RefreshChrome();
+                return;
+            }
             signInScreen = ready;
             signInStartFailures = 0;
             notice = null;
@@ -66,7 +86,7 @@ internal sealed partial class KioskForm
             return;
         }
         // A PC where it cannot start (e.g. Windows refuses the card sign-in there) is not asked again every minute.
-        if (desktop.Page != null) return;
+        if (desktop.Page != null || signInUnsupported) return;
         var pause = TimeSpan.FromSeconds(Math.Min(300, 10 << Math.Min(5, Math.Max(0, signInStartFailures - 1))));
         if (DateTime.UtcNow - signInFailedAt < pause) return;
         Audit.Write("fido_prepare_start");
@@ -159,6 +179,11 @@ internal sealed partial class KioskForm
 
     private void SelfServiceTick()
     {
+        if (SelfServiceWindowsSession)
+        {
+            if (!config.TestMode) ShellTick();
+            return;
+        }
         var key = reader.Snapshot(config.ReaderName);
         if (key != null && key != cardKey) cardPlacedAt = DateTime.UtcNow;
         cardKey = key;
@@ -345,7 +370,16 @@ internal sealed partial class KioskForm
 
     private void SelfServiceStatus()
     {
-        if (cardLogon != null)
+        if (SelfServiceWindowsSession)
+        {
+            var signingOut = shellSignOut.Reason != null;
+            var name = signingOut ? "Wylogowywanie" : current?.Name ?? Environment.UserName;
+            desktop.ShowSignIn(false);
+            desktop.UpdateStatus(name, notice ?? (signingOut ? "Trwa kończenie sesji Windows." :
+                "Wybierz zadanie z Szybkiej pomocy. Strony użyją Twojego konta Windows. Po pracy zakończ sesję."),
+                person: signingOut ? null : name);
+        }
+        else if (cardLogon != null)
         {
             var name = cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
             desktop.ShowSignIn(false);
@@ -360,14 +394,22 @@ internal sealed partial class KioskForm
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         // The name in large letters (without the domain when there is no friendly name), the account under it.
-        var person = cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName.Split('\\')[^1];
+        var person = SelfServiceWindowsSession ? shellSignOut.Reason == null ? current?.Name : null :
+            cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName.Split('\\')[^1];
         desktop.SetPortalState(person, notice,
-            warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true, login: cardLogon?.DisplayName);
+            warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true,
+            login: SelfServiceWindowsSession ? current?.Identity.Upn : cardLogon?.DisplayName);
     }
 
     /// <summary>"Zaloguj kartą" shows the card sign-in (again: back to the tiles); "Zakończ sesję" signs the person out.</summary>
     private void PortalAccount()
     {
+        if (SelfServiceWindowsSession)
+        {
+            if (config.TestMode) { notice = "Tryb testowy: wylogowanie Windows jest wyłączone."; RefreshChrome(); }
+            else SignOutWindows("selfservice_signed_out");
+            return;
+        }
         // The card sign-in waits on Strona główna all the time (as in build-176); the button only signs out.
         if (cardLogon != null) EndCardSession("selfservice_signed_out");
         RefreshChrome();

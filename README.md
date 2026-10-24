@@ -6,11 +6,13 @@ A Windows shell for shared PCs. Konfiguracja is visible only to Kiosk administra
 
 | Mode | Use |
 | --- | --- |
-| `SelfService` (default) | Walk-up help station with announcements and Szybka pomoc pages. A FIDO2 card and PIN sign the person in to Windows; pages then run in that Windows account for SSO. There is no RDP/application menu in this mode. |
+| `SelfService` (default) | Walk-up help station with announcements and Szybka pomoc pages. With `SelfServiceAuthentication=WindowsSession`, the person signs in to Windows with an Entra security key or Windows Hello; the pages run in that Windows account and can use its SSO. There is no RDP/application menu. |
 | `Kiosk` | Longer work sessions with an embedded browser, notes, files, configured applications and RDP profiles in one window. Each card has a separate session. |
 | `WindowsShell` | The same workstation UI as `Kiosk`, started as the signed-in Windows user in place of Explorer. Windows and Entra SSO depend on that user's Windows sign-in. |
 
-The initial deployment target is `SelfService`. It requires a Windows account that can sign in with the card/security key and an identity setup that issues the required site SSO credentials. On an unjoined local test PC, help pages can open, but automatic account SSO cannot be validated there. Password-based domain sign-in paired to a card for the workstation mode is a separate deployment path.
+The initial deployment target is `SelfService`. The supported SSO path is `SelfServiceAuthentication=WindowsSession`: deploy Kiosk as the shell for standard-user Windows accounts and let Windows/Entra authenticate the person before Kiosk starts. The signed-in person's WebView2 profile enables OS account SSO; the site and tenant must also permit it. `CardBroker` is retained for older installations and depends on a pinned Windows DLL version, so validate it on the exact Windows image before use. On an unjoined local PC, help pages can be tested but Entra SSO cannot be verified. Password-based domain sign-in paired to a card for the workstation mode remains a separate deployment path.
+
+For an Entra rollout, join or hybrid join the test PC, enable the organization's Windows security key or Hello sign-in policy, install a signed Kiosk build, and deploy `config/client.json` with `SelfServiceAuthentication=WindowsSession`. After the person signs in at the Windows screen, Kiosk shows Szybka pomoc. **Zakończ sesję** signs out of Windows. The inactivity settings disconnect the session and then sign it out. Test two real accounts and the target SSO websites before using it with the public. A local Windows account does not acquire an Entra SSO token merely by opening Kiosk.
 
 ## Download
 
@@ -21,7 +23,7 @@ CI builds and verifies an unsigned deployment candidate on `main` and `codex/**`
 - Windows 10/11 x64, with a 64-bit PowerShell for the scripts. The scripts refuse a 32-bit PowerShell.
 - The client package carries its own .NET 10 runtime. The separate configuration and news editor tools need .NET 10 Desktop Runtime x64.
 - Microsoft Edge WebView2 Runtime (part of current Windows).
-- A PC/SC card reader and FIDO2 cards. For `SelfService` card sign-in, Windows must support security key sign-in to the person's Entra or domain account.
+- For `SelfService` with Windows sign-in: an Entra joined or hybrid joined PC, an enabled security key or Windows Hello method, and a standard-user account. For the legacy in-app `CardBroker`, a PC/SC reader and FIDO2 card are also required.
 - `.\scripts\Test-Prerequisites.ps1` checks the PC and changes nothing.
 
 ## Installation (as administrator)
@@ -39,7 +41,7 @@ CI builds and verifies an unsigned deployment candidate on `main` and `codex/**`
 All scripts support `-WhatIf`.
 
 Intune: `config/intune/ShellLauncher.xml` (Shell Launcher CSP, Enterprise/Education) plus the Kiosk as a
-Win32 app. Verify it on a test device first.
+Win32 app. Replace its versioned client path with the installed release path before assigning it. Verify it on a test device first. On Windows Pro, the installer can set a shell for future user profiles, but it does not change an existing profile's current Explorer session.
 
 ## Configuration
 
