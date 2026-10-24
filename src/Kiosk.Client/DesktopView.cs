@@ -84,6 +84,7 @@ internal sealed class DesktopView : UserControl
     private readonly Label subtitle = new() { Text = "Twój pulpit pracy", AutoSize = false };
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
+    private long displayedMinute = -1;
     private readonly StatusCard card = new();
     private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
@@ -180,6 +181,9 @@ internal sealed class DesktopView : UserControl
     private void UpdateClock()
     {
         var now = DateTime.Now;
+        var minute = now.Ticks / TimeSpan.TicksPerMinute;
+        if (minute == displayedMinute) return;
+        displayedMinute = minute;
         clock.Text = now.ToString("HH:mm");
         date.Text = now.ToString("dddd, d MMMM", System.Globalization.CultureInfo.GetCultureInfo("pl-PL"));
     }

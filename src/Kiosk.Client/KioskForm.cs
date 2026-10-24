@@ -788,7 +788,7 @@ internal sealed partial class KioskForm : Form
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
-            if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1)) { mainIdle.Hide(); Activate(); }
+            if (someone || idle < 700 && Environment.TickCount64 - mainIdle.ShownAtMilliseconds > 1000) { mainIdle.Hide(); Activate(); }
         }
         else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u) mainIdle.Show();
     }
@@ -999,7 +999,7 @@ internal sealed partial class KioskForm : Form
     {
         if (menu.Visible) { menu.HideMenu(); return; }
         if (!CheckCard()) return;
-        if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
+        if (menu.HiddenAtMilliseconds is { } hidden && Environment.TickCount64 - hidden < 300) return; // The click that just closed it.
         var owner = current!;
         menu.Populate("Wybierz, co chcesz uruchomić.", BuildMenu(),
             () => current == owner && !owner.Locked && !owner.Closed && CheckCard());

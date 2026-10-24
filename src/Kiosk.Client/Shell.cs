@@ -77,6 +77,7 @@ internal sealed class Taskbar : Panel
     private readonly ToolTip tips = new() { InitialDelay = 300 };
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleRight, BackColor = Color.Transparent };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
+    private long displayedMinute = -1;
     private (string Key, string Title, string? Glyph, Image? Icon, bool OtherScreen)[] taskWindows = [];
 
     internal TaskButton MenuButton { get; } = new("", primary: true) { Glyph = KioskIcons.Menu };
@@ -115,6 +116,9 @@ internal sealed class Taskbar : Panel
     private void UpdateClock()
     {
         var now = DateTime.Now;
+        var minute = now.Ticks / TimeSpan.TicksPerMinute;
+        if (minute == displayedMinute) return;
+        displayedMinute = minute;
         clock.Text = now.ToString("HH:mm") + "\n" + now.ToString("dd.MM.yyyy");
     }
 
@@ -198,7 +202,7 @@ internal sealed record MenuSection(string Title, IReadOnlyList<MenuItemSpec> Ite
 internal sealed class StartMenu : Form
 {
     private readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = KioskTheme.Surface };
-    internal DateTime HiddenAt { get; private set; }
+    internal long? HiddenAtMilliseconds { get; private set; }
     internal int ItemCount { get; private set; }
 
     internal StartMenu()
@@ -227,7 +231,7 @@ internal sealed class StartMenu : Form
     {
         if (!Visible) return;
         Hide();
-        HiddenAt = DateTime.UtcNow;
+        HiddenAtMilliseconds = Environment.TickCount64;
     }
 
     internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections, Func<bool> canRun)

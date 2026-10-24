@@ -57,11 +57,11 @@ internal static class SelfTestEntry
                     try
                     {
                         SecuritySelfTests.Run();
-                        await CardPinLifecycleTests.RunAsync();
                         RdpLaunchTests.Run();
                         WindowsSessionTests.Run();
                         form.SmokeTest();
                         form.CoreRegressionTests();
+                        await CardPinLifecycleTests.RunAsync();
                         await form.CommandLifecycleTestsAsync();
                         await form.EmbeddedSmokeTestAsync();
                         await BrowserLifecycleTests.RunAsync(form);
