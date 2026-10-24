@@ -69,9 +69,10 @@ internal static class CardPin
         try
         {
             ResetCard(reader);
-            Check(NCryptOpenStorageProvider(out var provider, Provider, 0));
+            int providerStatus = NCryptOpenStorageProvider(out var provider, Provider, 0);
             using (provider)
             {
+                Check(providerStatus);
                 var scope = @"\\.\" + reader + @"\";
                 IntPtr state = IntPtr.Zero;
                 var names = new List<string>();
@@ -79,8 +80,8 @@ internal static class CardPin
                 {
                     while (NCryptEnumKeys(provider, scope, out var item, ref state, Silent) == 0)
                     {
-                        names.Add(Marshal.PtrToStringUni(Marshal.ReadIntPtr(item))!);
-                        NCryptFreeBuffer(item);
+                        try { names.Add(Marshal.PtrToStringUni(Marshal.ReadIntPtr(item))!); }
+                        finally { NCryptFreeBuffer(item); }
                     }
                 }
                 finally { if (state != IntPtr.Zero) NCryptFreeBuffer(state); }
@@ -91,9 +92,10 @@ internal static class CardPin
                 foreach (var name in names)
                 {
                     // Not silent: a key opened with NCRYPT_SILENT_FLAG refuses to show the PIN dialog (NTE_SILENT_CONTEXT).
-                    if (NCryptOpenKey(provider, out var key, scope + name, 0, 0) != 0) continue;
+                    int openStatus = NCryptOpenKey(provider, out var key, scope + name, 0, 0);
                     using (key)
                     {
+                        if (openStatus != 0) continue;
                         if (!CanSign(key)) continue;
                         using var certificate = CertificateForKey(key);
                         if (certificate == null || requiredThumbprint.Length > 0 &&
@@ -128,34 +130,39 @@ internal static class CardPin
     /// </summary>
     internal static CardIdentity? ReadIdentity(string reader)
     {
-        if (NCryptOpenStorageProvider(out var provider, Provider, 0) != 0) return null;
+        int providerStatus = NCryptOpenStorageProvider(out var provider, Provider, 0);
         using (provider)
         {
+            if (providerStatus != 0) return null;
             var scope = @"\\.\" + reader + @"\";
             var certificates = new List<System.Security.Cryptography.X509Certificates.X509Certificate2>();
-            IntPtr state = IntPtr.Zero;
             try
             {
-                while (NCryptEnumKeys(provider, scope, out var item, ref state, Silent) == 0)
+                IntPtr state = IntPtr.Zero;
+                try
                 {
-                    var name = Marshal.PtrToStringUni(Marshal.ReadIntPtr(item))!;
-                    NCryptFreeBuffer(item);
-                    if (NCryptOpenKey(provider, out var key, scope + name, 0, Silent) != 0) continue;
-                    using (key)
+                    while (NCryptEnumKeys(provider, scope, out var item, ref state, Silent) == 0)
                     {
-                        var certificate = CertificateForKey(key);
-                        if (certificate != null) certificates.Add(certificate);
+                        string name;
+                        try { name = Marshal.PtrToStringUni(Marshal.ReadIntPtr(item))!; }
+                        finally { NCryptFreeBuffer(item); }
+                        int openStatus = NCryptOpenKey(provider, out var key, scope + name, 0, Silent);
+                        using (key)
+                        {
+                            if (openStatus != 0) continue;
+                            var certificate = CertificateForKey(key);
+                            if (certificate != null) certificates.Add(certificate);
+                        }
                     }
                 }
+                finally { if (state != IntPtr.Zero) NCryptFreeBuffer(state); }
+                var chosen = certificates.OrderBy(c => c.Thumbprint, StringComparer.Ordinal).FirstOrDefault();
+                return chosen == null ? null : new CardIdentity("cert:" + chosen.Thumbprint,
+                    chosen.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false),
+                    certificates.Select(c => c.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.UpnName, false)).FirstOrDefault(u => !string.IsNullOrEmpty(u)) ?? "")
+                { Thumbprints = certificates.Select(c => c.Thumbprint).ToArray() };
             }
-            finally { if (state != IntPtr.Zero) NCryptFreeBuffer(state); }
-            var chosen = certificates.OrderBy(c => c.Thumbprint, StringComparer.Ordinal).FirstOrDefault();
-            var identity = chosen == null ? null : new CardIdentity("cert:" + chosen.Thumbprint,
-                chosen.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false),
-                certificates.Select(c => c.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.UpnName, false)).FirstOrDefault(u => !string.IsNullOrEmpty(u)) ?? "")
-            { Thumbprints = certificates.Select(c => c.Thumbprint).ToArray() };
-            foreach (var certificate in certificates) certificate.Dispose();
-            return identity;
+            finally { foreach (var certificate in certificates) certificate.Dispose(); }
         }
     }
 

@@ -141,7 +141,7 @@ internal sealed class Taskbar : Panel
             {
                 // Same look as a browser tab: title plus its own × close button.
                 // Icon only; the name is in the tooltip. Middle click or the right-click menu closes the window.
-                var button = new TabButton(window.Title) { Font = new Font("Segoe UI", 10, FontStyle.Bold), Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
+                var button = new TabButton(window.Title, bold: true) { Glyph = window.Glyph, IconImage = window.Icon, OtherScreen = window.OtherScreen };
                 tips.SetToolTip(button, window.Title);
                 var key = window.Key;
                 button.Selected += () => TaskClicked?.Invoke(key);
@@ -201,6 +201,9 @@ internal sealed record MenuSection(string Title, IReadOnlyList<MenuItemSpec> Ite
 /// <summary>The start-menu popup opened from the taskbar's Menu button.</summary>
 internal sealed class StartMenu : Form
 {
+    private static readonly Font HeaderFont = new("Segoe UI", 18, FontStyle.Bold);
+    private static readonly Font SubtitleFont = new("Segoe UI", 9.5f);
+    private static readonly Font SectionFont = new("Segoe UI", 8.5f, FontStyle.Bold);
     private readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = KioskTheme.Surface };
     internal long? HiddenAtMilliseconds { get; private set; }
     internal int ItemCount { get; private set; }
@@ -240,18 +243,18 @@ internal sealed class StartMenu : Form
         foreach (Control control in content.Controls.Cast<Control>().ToArray()) { content.Controls.Remove(control); control.Dispose(); }
         int columns = 3, tileWidth = Scale(230), tileHeight = Scale(78), gap = Scale(10), margin = Scale(22);
         int y = Scale(18);
-        var header = new Label { Text = "Menu", AutoSize = false, Font = new Font("Segoe UI", 18, FontStyle.Bold), ForeColor = KioskTheme.Text, BackColor = Color.Transparent };
+        var header = new Label { Text = "Menu", AutoSize = false, Font = HeaderFont, ForeColor = KioskTheme.Text, BackColor = Color.Transparent };
         header.SetBounds(margin, y, columns * tileWidth + (columns - 1) * gap, Scale(38));
         content.Controls.Add(header);
         y += Scale(38);
-        var sub = new Label { Text = subtitle, AutoSize = false, Font = new Font("Segoe UI", 9.5f), ForeColor = KioskTheme.Muted, BackColor = Color.Transparent };
+        var sub = new Label { Text = subtitle, AutoSize = false, Font = SubtitleFont, ForeColor = KioskTheme.Muted, BackColor = Color.Transparent };
         sub.SetBounds(margin, y, header.Width, Scale(24));
         content.Controls.Add(sub);
         y += Scale(30);
         ItemCount = 0;
         foreach (var section in sections.Where(s => s.Items.Count > 0))
         {
-            var title = new Label { Text = section.Title.ToUpperInvariant(), AutoSize = false, Font = new Font("Segoe UI", 8.5f, FontStyle.Bold), ForeColor = KioskTheme.AccentLine, BackColor = Color.Transparent };
+            var title = new Label { Text = section.Title.ToUpperInvariant(), AutoSize = false, Font = SectionFont, ForeColor = KioskTheme.AccentLine, BackColor = Color.Transparent };
             title.SetBounds(margin, y + Scale(6), header.Width, Scale(22));
             content.Controls.Add(title);
             y += Scale(32);
@@ -286,12 +289,14 @@ internal sealed class StartMenu : Form
 /// <summary>A browser tab: title on the left and its own × close button inside the tab.</summary>
 internal sealed class TabButton : Control
 {
+    private static readonly Font RegularFont = new("Segoe UI", 9.5f);
+    private static readonly Font BoldFont = new("Segoe UI", 10, FontStyle.Bold);
     private bool hovered, closeHovered, active;
 
-    internal TabButton(string title)
+    internal TabButton(string title, bool bold = false)
     {
         Text = title;
-        Font = new Font("Segoe UI", 9.5f);
+        Font = bold ? BoldFont : RegularFont;
         ForeColor = KioskTheme.Text;
         Cursor = Cursors.Hand;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);

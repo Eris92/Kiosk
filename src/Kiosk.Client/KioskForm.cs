@@ -549,7 +549,9 @@ internal sealed partial class KioskForm : Form
             session.Windows.FirstOrDefault(w => w.Key == key) is not { } window || !CheckCard()) return;
         HideTaskMenu();
         var screens = OrderedScreens;
-        var menuStrip = new ContextMenuStrip { Font = new Font("Segoe UI", 10.5f) };
+        var menuFont = new Font("Segoe UI", 10.5f);
+        var menuStrip = new ContextMenuStrip { Font = menuFont };
+        menuStrip.Disposed += (_, _) => menuFont.Dispose();
         var closeItem = new ToolStripMenuItem("Zamknij okno");
         closeItem.Click += (_, _) =>
         {
@@ -1155,10 +1157,12 @@ internal sealed partial class KioskForm : Form
                 FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual, ShowInTaskbar = false, TopMost = true,
                 BackColor = KioskTheme.Accent, Bounds = new Rectangle(b.Left + b.Width / 2 - 110, b.Top + b.Height / 2 - 110, 220, 220)
             };
+            var numberFont = new Font("Segoe UI", 72, FontStyle.Bold);
+            label.Disposed += (_, _) => numberFont.Dispose();
             label.Controls.Add(new Label
             {
                 Text = (i + 1).ToString(), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 72, FontStyle.Bold), ForeColor = KioskTheme.OnAccent
+                Font = numberFont, ForeColor = KioskTheme.OnAccent
             });
             var close = new System.Windows.Forms.Timer { Interval = 3000 };
             close.Tick += (_, _) => { close.Dispose(); label.Close(); label.Dispose(); };
