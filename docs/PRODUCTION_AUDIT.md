@@ -12,7 +12,7 @@ Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie 
 
 Przywrócono obsługę blokady lokalnej konsoli przez `LockWorkStation`, a sesji RDP przez rozłączenie WTS. Zmiany blokady/odblokowania są odbierane z Windows; limit wylogowania używa monotonicznego czasu obejmującego uśpienie. Niepotwierdzona blokada kończy się próbą wylogowania, ponawianą z ograniczeniem częstotliwości. Zmiana trybu lub sposobu logowania w Konfiguracji wymaga restartu Kiosku; program wykonuje go po zapisie, a gdy są otwarte prace, najpierw pyta o ich zakończenie.
 
-Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Wersję pilota `afeb4ad` skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Zmiany źródłowe po tej rewizji wymagają nowej instalacji pilota. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true` i `AutoUpdate=false`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
+Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Wersję pilota `a9d7e0b` skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Zmiany źródłowe po tej rewizji wymagają nowej instalacji pilota. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true` i `AutoUpdate=false`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
 
 ## Granica tożsamości
 
@@ -57,7 +57,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 
 `scripts/Test.ps1` przeszedł na tej stacji: składnia skryptów, JSON/XML, bezpieczny zakres ścieżki danych, odizolowany rollback HKCU, publikacja Release z ostrzeżeniami traktowanymi jako błędy oraz testy migracji konfiguracji, trybów RDP, PC/SC, PIN, sesji A/B, WebView2, okien Win32, menu, notatek i ustawień. Testy używają atrap i lokalnego interfejsu, więc nie dowodzą logowania do RDS ani obsługi fizycznej karty każdego typu.
 
-W `%TEMP%\KioskBrowser` pozostało 40 katalogów GUID bez znacznika własności, zawierających `EBWebView`; jeden powstał podczas nieudanego testu poprawki. Nie usunięto ich automatycznie, ponieważ nie da się bezpiecznie potwierdzić pochodzenia każdego katalogu. Po finalnej zmianie testy zamknięcia i anulowania startu przeglądarki usuwały swoje nowe profile; aktualny pomiar wykazał 40 katalogów bez znacznika. Próba usunięcia znanego katalogu testowego została odrzucona przez kontrolę uprawnień narzędzia.
+Podczas wcześniejszego audytu w `%TEMP%\KioskBrowser` znaleziono katalogi GUID bez znacznika własności, zawierające `EBWebView`. Nie usunięto ich automatycznie, ponieważ nie da się bezpiecznie potwierdzić pochodzenia każdego katalogu. Testy zamknięcia i anulowania startu przeglądarki usuwały swoje nowe profile.
 
 Mikropomiar `--benchmark` na tym samym stanowisku (po rozgrzaniu, trzy przebiegi, 5000 niezmienionych odświeżeń paska i 1000 odczytów nieistniejącego czytnika):
 
@@ -68,9 +68,13 @@ Mikropomiar `--benchmark` na tym samym stanowisku (po rozgrzaniu, trzy przebiegi
 
 To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się również wersją .NET. Zmiana paska zmniejszyła koszt powtarzanego odświeżania. Ostatni pomiar czytnika to seria 1000 natychmiastowych pytań o wskazany, nieistniejący czytnik; po pierwszej odpowiedzi kolejne nie odpytują PC/SC, dopóki nie nadejdzie sekundowy termin odświeżenia topologii. Przy działającym, wskazanym czytniku obecność karty nadal jest sprawdzana co 250 ms. Nowy czytnik lub powracająca usługa mogą zostać zauważone do około 1 s później.
 
-Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI dla rewizji `afeb4ad` przeszło, a lokalnie zainstalowany MSVC zbudował natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
+Karuzela komunikatów uruchamia timer obrotu tylko wtedy, gdy jest widoczna i ma co najmniej dwa slajdy. Gdy lista jest pusta, ma jeden slajd lub ekran został ukryty, nie wywołuje już co 250 ms pustego sprawdzenia. Po ponownym pokazaniu zachowuje dotychczasową synchronizację między ekranami.
 
-Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium rewizji `afeb4ad` w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną; hash EXE zgadza się z klientem pilota. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
+Obrazy komunikatów z folderu i SharePointa są kopiowane do niezależnych bitmap. Strumień źródłowy oraz dekoder są zamykane po odczycie, zanim karuzela wyświetli obraz. Test komunikatów wczytuje plik PNG i rysuje go w pulpicie Kiosku.
+
+Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI dla rewizji `a9d7e0b` przeszło, a lokalnie zainstalowany MSVC zbudował natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
+
+Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium rewizji `a9d7e0b` w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną; hash EXE zgadza się z klientem pilota. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
 
 `dotnet list package --vulnerable --include-transitive` nie wykazał znanych podatnych pakietów przy źródle NuGet dostępnym podczas tego audytu. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
 

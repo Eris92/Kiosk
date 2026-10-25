@@ -64,12 +64,20 @@ internal static class News
             {
                 var path = Path.IsPathFullyQualified(item.Image) ? item.Image : Path.Combine(folder, item.Image);
                 // Read into memory so the share's file is not kept open.
-                try { if (File.Exists(path)) picture = System.Drawing.Image.FromStream(new MemoryStream(File.ReadAllBytes(path))); }
+                try { if (File.Exists(path)) picture = DecodePicture(File.ReadAllBytes(path)); }
                 catch (Exception) { picture = null; }
             }
             items.Add(item with { Picture = picture, Action = ResolveAction(item.Action, folder), VideoSource = VideoFor(item.Video, folder) });
         }
         return items;
+    }
+
+    /// <summary>Copy the decoded pixels so the source stream can close before the slide is displayed.</summary>
+    internal static Image DecodePicture(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes);
+        using var decoded = Image.FromStream(stream);
+        return new Bitmap(decoded);
     }
 
     /// <summary>A film: https://… as it is, a file (next to the json or a full path) only when it exists.</summary>
@@ -209,9 +217,14 @@ internal sealed class NewsCarousel : Control
             if (Synced) { if (DateTime.UtcNow - Together.ShownAt > wait) Together.Next(index, items.Count); }
             else if (DateTime.UtcNow - shownAt > wait) Step(1);
         };
-        rotation.Start();
         HandleCreated += (_, _) => { if (Synced) Together.Moved += FollowTogether; };
         HandleDestroyed += (_, _) => Together.Moved -= FollowTogether;
+    }
+
+    private void UpdateRotation()
+    {
+        if (Visible && items.Count > 1) rotation.Start();
+        else rotation.Stop();
     }
 
     private void FollowTogether()
@@ -233,7 +246,13 @@ internal sealed class NewsCarousel : Control
         Invalidate();
     }
 
-    protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (Synced && Visible) JumpToTogether(); UpdateVideo(); }
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Synced && Visible) JumpToTogether();
+        UpdateRotation();
+        UpdateVideo();
+    }
     protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateVideo(); }
 
     /// <summary>Shows the film of the current slide (once the slide has stopped moving), or stops it.</summary>
@@ -292,6 +311,7 @@ internal sealed class NewsCarousel : Control
         if (index >= items.Count) index = 0;
         previous = -1; progress = 1; shownAt = DateTime.UtcNow; videoFailed = false;
         if (Synced) JumpToTogether();
+        UpdateRotation();
         UpdateVideo();
         Invalidate();
     }

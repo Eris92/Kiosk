@@ -153,7 +153,7 @@ internal sealed class SharePointNews : IDisposable
             Image? picture = null;
             int comma = image.IndexOf(',');
             if (image.StartsWith("data:image/", StringComparison.Ordinal) && comma > 0)
-                try { picture = Image.FromStream(new MemoryStream(Convert.FromBase64String(image[(comma + 1)..]))); }
+                try { picture = News.DecodePicture(Convert.FromBase64String(image[(comma + 1)..])); }
                 catch (Exception) { picture = null; } // e.g. WebP, which Windows Forms cannot draw.
             items.Add(new NewsItem { Title = title, Text = text, Button = "Czytaj", Action = url, Picture = picture });
         }
