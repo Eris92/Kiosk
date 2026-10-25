@@ -7,9 +7,8 @@ namespace Kiosk.Client;
 /// <summary>
 /// The kiosk shell for a shared PC: a desktop, one Menu button on the bottom taskbar and embedded
 /// windows (remote desktops, browser, notes, applications). Every card gets its own session.
-/// Removing the card parks the session (windows keep running, hidden); another card gets its own
-/// session at once; reinserting a card brings its session back. Sessions expire after
-/// ChangeUserAfterSeconds of inactivity. Nothing here touches the Windows lock screen.
+/// Removing the card parks an application session (windows keep running, hidden); another card gets
+/// its own session at once. In WindowsShell and SelfService/WindowsSession, Windows owns sign-in and lock.
 /// </summary>
 internal sealed partial class KioskForm : Form
 {
@@ -29,6 +28,7 @@ internal sealed partial class KioskForm : Form
         internal List<Window> Windows { get; } = new();
         internal Dictionary<string, RdpSession> Rdp { get; } = new(StringComparer.OrdinalIgnoreCase);
         internal Dictionary<string, ApplicationView> Applications { get; } = new(StringComparer.OrdinalIgnoreCase);
+        internal SessionCommandScope Commands { get; } = new();
         internal BrowserView? Browser { get; set; }
         internal NotesView? Notes { get; set; }
         internal FilesView? Files { get; set; }
@@ -38,7 +38,7 @@ internal sealed partial class KioskForm : Form
         internal bool AutoConnected { get; set; }
         internal DateTime InactiveSince { get; set; } = DateTime.UtcNow;
         internal string? Notice { get; set; }
-        internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0;
+        internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0 || Commands.HasRunning;
         /// <summary>The card's account (UPN from its certificate) is in this PC's local Administrators group.</summary>
         internal bool IsWindowsAdmin { get; set; }
         /// <summary>The person's own Windows / Entra account after "Zaloguj" (SignInAsUser); their programs run as it.</summary>
@@ -478,6 +478,7 @@ internal sealed partial class KioskForm : Form
     private void CloseSession(UserSession session, string reason)
     {
         if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; }
+        session.Commands.Dispose();
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // Forget the password with the session.
         session.Logon = null;
@@ -502,7 +503,7 @@ internal sealed partial class KioskForm : Form
 
     private bool ConfirmEnd(IEnumerable<UserSession> affected) =>
         !affected.Any(s => s.HasWork) ||
-        Ask("Zakończyć sesję? Niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte.", "Wyloguj");
+        Ask("Zakończyć sesję? Niezapisane notatki zostaną usunięte, a pulpity zdalne, aplikacje i polecenia zamknięte.", "Wyloguj");
 
     private bool ConfirmClose(string key)
     {
@@ -1102,53 +1103,45 @@ internal sealed partial class KioskForm : Form
     /// <summary>Menu → Polecenia: runs a program or script in the background and shows how it ended.</summary>
     private void RunCommand(CommandEntry command)
     {
-        if (current is not { } session) return;
+        if (!CanUseApps || current is not { } session) return;
         if (command.Confirm && !Ask("Uruchomić polecenie „" + command.Name + "”?", "Polecenie")) return;
-        var (program, arguments) = command.Resolve();
-        var line = command.CommandLine();
-        var directory = Path.GetDirectoryName(command.Path);
-        Audit.Write("command_started", command.Name);
-        notice = "Polecenie „" + command.Name + "” działa…";
-        RefreshChrome();
-        _ = Task.Run(() =>
-        {
-            int code;
-            if (command.AsUser && session.Logon != null)
-            {
-                var (process, thread) = session.Logon.Start(program, line, directory, show: 0); // SW_HIDE
-                AppNative.ResumeThread(thread);
-                AppNative.CloseHandle(thread);
-                WaitForSingleObject(process, uint.MaxValue);
-                GetExitCodeProcess(process, out var exit);
-                AppNative.CloseHandle(process);
-                code = (int)exit;
-            }
-            else
-            {
-                var start = new System.Diagnostics.ProcessStartInfo(program, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = directory ?? "" };
-                using var process = System.Diagnostics.Process.Start(start)!;
-                process.WaitForExit();
-                code = process.ExitCode;
-            }
-            return code;
-        }).ContinueWith(t =>
-        {
-            var text = t.IsFaulted ? "nie udało się uruchomić: " + t.Exception!.InnerException!.Message : t.Result == 0 ? "zakończone." : "zakończone z kodem " + t.Result + ".";
-            notice = "Polecenie „" + command.Name + "” " + text;
-            Audit.Write("command_finished", command.Name + ": " + (t.IsFaulted ? "error" : t.Result.ToString()));
-            RefreshChrome();
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        if (current != session || !CanUseApps) return;
+        _ = RunCommandAsync(session, command);
     }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    private async Task RunCommandAsync(UserSession session, CommandEntry command)
+    {
+        if (!session.Commands.TryBegin(out var cancellation)) return;
+        try
+        {
+            var (program, arguments) = command.Resolve();
+            var directory = Path.GetDirectoryName(command.Path);
+            Audit.Write("command_started", command.Name);
+            notice = null;
+            session.Notice = "Polecenie „" + command.Name + "” działa…";
+            RefreshChrome();
+            int code = await Task.Run(() => SessionCommand.RunAsync(program, arguments, directory,
+                command.AsUser ? session.Logon : null, session.Commands, cancellation));
+            Audit.Write("command_finished", command.Name + ": " + code);
+            session.Notice = "Polecenie „" + command.Name + "” " + (code == 0 ? "zakończone." : "zakończone z kodem " + code + ".");
+            if (current == session && !session.Locked && !IsDisposed) RefreshChrome();
+        }
+        catch (OperationCanceledException) { Audit.Write("command_cancelled", command.Name); }
+        catch (Exception ex)
+        {
+            Audit.Write("command_failed", command.Name + ": " + ex.Message);
+            session.Notice = "Polecenie „" + command.Name + "”: nie udało się uruchomić: " + ex.Message;
+            if (current == session && !session.Locked && !IsDisposed) RefreshChrome();
+        }
+        finally { session.Commands.End(); }
+    }
 
     /// <summary>Menu → Uruchom ponownie / Wyłącz: restarts or shuts down the computer (all sessions end).</summary>
     private void PowerOffComputer(bool restart)
     {
         string action = restart ? "Uruchomić ponownie komputer?" : "Wyłączyć komputer?";
         string text = sessions.Values.Any(x => x.HasWork)
-            ? "Wszystkie sesje zostaną zakończone: niezapisane notatki zostaną usunięte, a pulpity zdalne i aplikacje zamknięte."
+            ? "Wszystkie sesje zostaną zakończone: niezapisane notatki zostaną usunięte, a pulpity zdalne, aplikacje i polecenia zamknięte."
             : "Wszystkie sesje zostaną zakończone.";
         if (!Ask(text, action)) return;
         Audit.Write(restart ? "computer_restart_requested" : "computer_shutdown_requested", current?.Identity.Name ?? "");
@@ -2702,6 +2695,71 @@ internal sealed partial class KioskForm : Form
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
+    }
+
+    internal async Task CommandSmokeTestAsync()
+    {
+        var original = config;
+        var marker = Path.Combine(AppContext.BaseDirectory, "self-test-command-" + Guid.NewGuid().ToString("N"));
+        var script = marker + ".ps1";
+        var completedScript = marker + ".done.ps1";
+        System.Diagnostics.Process? parent = null, child = null;
+        UserSession? session = null;
+        try
+        {
+            config = config with { SessionMode = SessionMode.Kiosk, UnlockMethod = UnlockMethod.Card };
+            CardInserted(new CardIdentity("cert:COMMAND", "Command Test"));
+            session = current ?? throw new InvalidOperationException("Command test did not open a session.");
+            File.WriteAllText(completedScript, "exit 7");
+            RunCommand(new CommandEntry { Name = "Completed fixture", Path = completedScript });
+            var until = DateTime.UtcNow.AddSeconds(10);
+            while (session.Commands.HasRunning && DateTime.UtcNow < until) await Task.Delay(50);
+            if (session.Commands.HasRunning || session.HasWork || session.Notice != "Polecenie „Completed fixture” zakończone z kodem 7.")
+                throw new InvalidOperationException("A completed command did not release its session job or report its exit code.");
+            File.WriteAllText(script, """
+                param([string]$Marker, [switch]$Child)
+                $suffix = if ($Child) { '.child' } else { '.parent' }
+                Set-Content -LiteralPath ($Marker + $suffix) -Value $PID -NoNewline
+                if ($Child) { Start-Sleep -Seconds 3600; return }
+                $arguments = '-NoProfile -NonInteractive -File "' + $PSCommandPath + '" -Marker "' + $Marker + '" -Child'
+                $process = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -WindowStyle Hidden -PassThru
+                """);
+            RunCommand(new CommandEntry { Name = "Command fixture", Path = script,
+                Arguments = "-Marker \"" + marker + "\"" });
+            until = DateTime.UtcNow.AddSeconds(15);
+            while ((!File.Exists(marker + ".parent") || !File.Exists(marker + ".child")) && DateTime.UtcNow < until)
+                await Task.Delay(50);
+            if (!File.Exists(marker + ".parent") || !File.Exists(marker + ".child"))
+                throw new InvalidOperationException("Background command or its child did not start.");
+            try { parent = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(marker + ".parent"))); }
+            catch (ArgumentException) { } // The short wrapper already exited.
+            child = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(marker + ".child")));
+            if (parent != null) await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            if (child.HasExited || !session.HasWork)
+                throw new InvalidOperationException("A child process did not remain in its session after its parent exited.");
+            CloseSession(session, "command_smoke_test");
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            until = DateTime.UtcNow.AddSeconds(5);
+            while (session.Commands.HasRunning && DateTime.UtcNow < until) await Task.Delay(50);
+            if (session.Commands.HasRunning || sessions.ContainsKey(session.Identity.Id))
+                throw new InvalidOperationException("Background command remained after its session closed.");
+        }
+        finally
+        {
+            if (session != null && sessions.ContainsKey(session.Identity.Id)) CloseSession(session, "command_smoke_cleanup");
+            foreach (var process in new[] { parent, child })
+            {
+                if (process == null) continue;
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { }
+                process.Dispose();
+            }
+            foreach (var suffix in new[] { ".parent", ".child" })
+                if (File.Exists(marker + suffix)) File.Delete(marker + suffix);
+            if (File.Exists(script)) File.Delete(script);
+            if (File.Exists(completedScript)) File.Delete(completedScript);
+            config = original;
+        }
     }
 
     internal void FinishSelfTest()
