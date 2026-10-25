@@ -40,6 +40,8 @@ CI builds and verifies an unsigned deployment candidate on `main` and `codex/**`
 
 All scripts support `-WhatIf`.
 
+`Install-KioskShell.ps1` keeps an existing `%ProgramData%\Kiosk\client.json` during an ordinary upgrade. To replace it deliberately, pass `-SourceConfig` with the prepared JSON file; this takes precedence even when the installed configuration exists. For a SelfService migration to Windows sign-in, check that the selected file sets `SessionMode=SelfService` and `SelfServiceAuthentication=WindowsSession`, then run the installer with that explicit source. The installer reports its selected source and validates the resulting configuration before changing the shell. Use `-WhatIf` to check source selection without applying the installation.
+
 Intune: `config/intune/ShellLauncher.xml` (Shell Launcher CSP, Enterprise/Education) plus the Kiosk as a
 Win32 app. Replace its versioned client path with the installed release path before assigning it. Verify it on a test device first. On Windows Pro, the installer can set a shell for future user profiles, but it does not change an existing profile's current Explorer session.
 

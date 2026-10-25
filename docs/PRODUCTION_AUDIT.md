@@ -12,7 +12,7 @@ Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie 
 
 Przywrócono obsługę blokady lokalnej konsoli przez `LockWorkStation`, a sesji RDP przez rozłączenie WTS. Zmiany blokady/odblokowania są odbierane z Windows; limit wylogowania używa monotonicznego czasu obejmującego uśpienie. Niepotwierdzona blokada kończy się próbą wylogowania, ponawianą z ograniczeniem częstotliwości. Zmiana trybu lub sposobu logowania w Konfiguracji wymaga restartu Kiosku; program wykonuje go po zapisie, a gdy są otwarte prace, najpierw pyta o ich zakończenie.
 
-Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Wersję pilota `a9d7e0b` skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Zmiany źródłowe po tej rewizji wymagają nowej instalacji pilota. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true` i `AutoUpdate=false`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
+Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Pilota skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true` i `AutoUpdate=false`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
 
 ## Granica tożsamości
 
@@ -52,6 +52,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 - Polecenia uruchamiane z menu należą do sesji karty; jej zakończenie zamyka całą grupę procesów polecenia. Test uruchamia proces potomny i sprawdza zamknięcie obu procesów.
 - Usługa karty uruchamia się bez inicjalizacji WinForms i zgłasza Windowsowi `Running` dopiero po utworzeniu chronionego pipe’a; gdy nie może go ponownie otworzyć, zgłasza błąd i kończy pracę. Przy zatrzymywaniu utrzymuje `StopPending` do zakończenia wątku obsługi. Skrypty instalacji zapisują stan do wycofania, nie dotykają już działających sesji, ograniczają ścieżki oraz ACL i sprawdzają komplet skopiowanego klienta plik po pliku przed przełączeniem powłoki/usługi. Pakowanie bierze tylko jawnie dozwolone pliki, sprawdza hash każdego składnika i opcjonalnie weryfikuje podpis. Źródłowe testy są oddzielone od binariów produkcyjnych.
 - Publikacja i instalator powłoki sprawdzają konfigurację przez rzeczywisty kod walidacji klienta. Instalator zachowuje wybrany `SessionMode`, przygotowuje `TestMode=false` i odrzuca konfigurację przed zapisaniem stanu instalacji, jeśli klient nie mógłby jej otworzyć. Zapisuje konfigurację przez atomową podmianę z zachowaniem ACL, więc przerwanie zapisu nie ujawnia niepełnego JSON. Test uruchamia walidator dla celowo błędnego adresu strony oraz sprawdza podmianę i ACL w PowerShell 7 i 5.1.
+- Przy aktualizacji instalator zachowuje istniejący plik konfiguracyjny, chyba że administrator jawnie poda `-SourceConfig`; wtedy nowy plik ma pierwszeństwo, również przy migracji z `CardBroker` do `WindowsSession`. `-WhatIf` wypisuje wybrane źródło bez zmiany powłoki. Test obejmuje nową instalację, zwykłą aktualizację, jawne zastąpienie i brakujący plik.
 
 ## Dowody lokalne
 
@@ -72,9 +73,9 @@ Karuzela komunikatów uruchamia timer obrotu tylko wtedy, gdy jest widoczna i ma
 
 Obrazy komunikatów z folderu i SharePointa są kopiowane do niezależnych bitmap. Strumień źródłowy oraz dekoder są zamykane po odczycie, zanim karuzela wyświetli obraz. Test komunikatów wczytuje plik PNG i rysuje go w pulpicie Kiosku.
 
-Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI dla rewizji `a9d7e0b` przeszło, a lokalnie zainstalowany MSVC zbudował natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
+Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI i lokalnie zainstalowany MSVC zbudowały natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
 
-Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium rewizji `a9d7e0b` w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną; hash EXE zgadza się z klientem pilota. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
+Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną; hash EXE zgadza się z klientem pilota. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
 
 `dotnet list package --vulnerable --include-transitive` nie wykazał znanych podatnych pakietów przy źródle NuGet dostępnym podczas tego audytu. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
 

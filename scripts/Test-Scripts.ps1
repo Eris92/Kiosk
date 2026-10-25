@@ -15,6 +15,35 @@ Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.json' | ForEach
 }
 [xml](Get-Content -LiteralPath (Join-Path $root 'config\intune\ShellLauncher.xml') -Raw) | Out-Null
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+$configFixtureRoot = [IO.Path]::GetFullPath((Join-Path $root ('out\config-source-' + [Guid]::NewGuid().ToString('N'))))
+try {
+    New-Item -ItemType Directory -Path $configFixtureRoot -Force | Out-Null
+    $installedConfig = Join-Path $configFixtureRoot 'installed.json'
+    $newConfig = Join-Path $configFixtureRoot 'new.json'
+    [IO.File]::WriteAllText($newConfig, '{"SelfServiceAuthentication":"WindowsSession"}')
+    if ((Get-KioskInstallConfigSource $installedConfig $newConfig $false) -ne $newConfig) {
+        throw 'A fresh installation did not select the source configuration.'
+    }
+    [IO.File]::WriteAllText($installedConfig, '{"SelfServiceAuthentication":"CardBroker"}')
+    if ((Get-KioskInstallConfigSource $installedConfig $newConfig $false) -ne $installedConfig) {
+        throw 'An ordinary upgrade replaced the installed configuration.'
+    }
+    if ((Get-KioskInstallConfigSource $installedConfig $newConfig $true) -ne $newConfig) {
+        throw 'An explicit source did not override the installed configuration.'
+    }
+    try {
+        Get-KioskInstallConfigSource $installedConfig (Join-Path $configFixtureRoot 'missing.json') $true | Out-Null
+        throw 'A missing explicit source was accepted.'
+    } catch {
+        if ($_.Exception.Message -notmatch '^Kiosk configuration source does not exist:') { throw }
+    }
+} finally {
+    $resolvedFixture = [IO.Path]::GetFullPath($configFixtureRoot)
+    $outputRoot = [IO.Path]::GetFullPath((Join-Path $root 'out')).TrimEnd('\')
+    if ((Split-Path -Parent $resolvedFixture) -ne $outputRoot -or
+        (Split-Path -Leaf $resolvedFixture) -notmatch '^config-source-[a-f0-9]{32}$') { throw 'Unexpected configuration test cleanup path.' }
+    if (Test-Path -LiteralPath $resolvedFixture) { Remove-Item -LiteralPath $resolvedFixture -Recurse -Force }
+}
 $validDataFile = Join-Path $env:ProgramData 'Kiosk\client.json'
 if ((Assert-KioskDataFilePath $validDataFile '.json') -ne [IO.Path]::GetFullPath($validDataFile)) {
     throw 'Deployment rejected its expected data file.'

@@ -56,6 +56,16 @@ function Get-KioskClientSource {
     return Join-Path $root 'client'
 }
 
+function Get-KioskInstallConfigSource([string]$DestinationPath, [string]$SourcePath, [bool]$ExplicitSource) {
+    $selected = if ($ExplicitSource -or -not (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
+        $SourcePath
+    } else {
+        $DestinationPath
+    }
+    if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) { throw "Kiosk configuration source does not exist: $selected" }
+    return (Resolve-Path -LiteralPath $selected).ProviderPath
+}
+
 function Get-KioskPayloadFiles([string]$Root, [switch]$SkipLocalFiles) {
     $full = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw "Client payload directory does not exist: $full" }

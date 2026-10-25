@@ -112,7 +112,7 @@ $sourceExe = Join-Path $source 'Kiosk.Client.exe'
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) { throw 'Publish the production client first.' }
 $edition = (Get-CimInstance Win32_OperatingSystem).Caption
 if ($Method -eq 'Auto') { $Method = if ($edition -match 'Enterprise|Education|IoT') { 'ShellLauncher' } else { 'DefaultProfile' } }
-$configSource = if (Test-Path -LiteralPath $ConfigPath) { $ConfigPath } else { $SourceConfig }
+$configSource = Get-KioskInstallConfigSource $ConfigPath $SourceConfig ($PSBoundParameters.ContainsKey('SourceConfig'))
 $json = Get-Content -LiteralPath $configSource -Raw -Encoding UTF8 | ConvertFrom-Json
 if (-not $json.SessionMode) { $json | Add-Member -NotePropertyName SessionMode -NotePropertyValue 'SelfService' -Force }
 $json | Add-Member -NotePropertyName TestMode -NotePropertyValue $false -Force
@@ -121,6 +121,7 @@ $release = Join-Path $InstallPath ('ClientVersions\release-' + [Guid]::NewGuid()
 $exe = Join-Path $release 'Kiosk.Client.exe'
 $shellCommand = '"{0}" "{1}"' -f $exe, [IO.Path]::GetFullPath($ConfigPath)
 Write-Output "Windows: $edition; method: $Method"
+Write-Output "Configuration source: $configSource"
 if (-not $PSCmdlet.ShouldProcess($InstallPath, 'copy an isolated client version and configure the shell for future sign-ins')) { return }
 $candidate = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-shell-config-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
