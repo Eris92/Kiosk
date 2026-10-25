@@ -1,11 +1,10 @@
 namespace Kiosk.Client;
 
 /// <summary>
-/// Punkt samoobsługowy (SessionMode.SelfService): only the start screen with Szybka pomoc and Komunikaty, no Menu,
-/// no taskbar and no sessions. Its only sign-in is the card: Windows' card + PIN sign-in (the Edge-FIDO2 PIN screen,
-/// <see cref="FidoSignIn"/>) sits in the start screen's card and waits for a tap; the PIN goes into Windows' own field
-/// there. Signed in, Szybka pomoc pages open in the person's own Edge (their account, SSO) until the card is taken away.
-/// Ctrl+Alt+K (Konfiguracja) and Ctrl+Alt+U (update) work as in the other modes.
+/// Punkt samoobsługowy (SessionMode.SelfService): the start screen with Szybka pomoc and Komunikaty, without Menu
+/// or taskbar. WindowsSession uses the person's existing Windows sign-in for SSO. The optional CardBroker path shows
+/// the card + PIN sign-in (<see cref="FidoSignIn"/>) inside the start screen and runs help pages as that person until
+/// the card is removed. Ctrl+Alt+K (Konfiguracja) and Ctrl+Alt+U (update) work in both paths.
 /// </summary>
 internal sealed partial class KioskForm
 {
@@ -17,16 +16,16 @@ internal sealed partial class KioskForm
     /// <summary>The card sign-in screen inside the Kiosk, listening for a tap; null while it starts or after it ended.</summary>
     private FidoSignIn? signInScreen;
     private Task<FidoSignIn?>? signInStarting;
-    private DateTime signInFailedAt;
+    private long? signInFailedAtMilliseconds;
     /// <summary>Card sign-in screens that did not start in a row: each waits longer (10 s, 20 s… up to 5 minutes).</summary>
     private int signInStartFailures;
     /// <summary>An unsupported Windows build cannot start this adapter; retrying it does not change the result.</summary>
     private bool signInUnsupported;
     /// <summary>A Szybka pomoc result (card reset, PIN change…) is shown in the card instead of the sign-in until then.</summary>
-    private DateTime noticeUntil;
+    private long? noticeUntilMilliseconds;
 
     /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
-    private DateTime? cardAwaySince;
+    private long? cardAwaySinceMilliseconds;
     /// <summary>
     /// The readers that held a card when the person signed in: the card on the NFC reader, or the USB key (its own
     /// reader). The configured reader alone is not enough: with a USB key it holds nothing, and the person was signed
@@ -71,7 +70,7 @@ internal sealed partial class KioskForm
                 }
                 else
                 {
-                    signInFailedAt = DateTime.UtcNow;
+                    signInFailedAtMilliseconds = Environment.TickCount64;
                     signInStartFailures++;
                     notice = "Logowanie kartą nie wystartowało" + (reason.Length > 0 ? ": " + reason.TrimEnd('.') : "") + ". Ponawiam…";
                 }
@@ -88,7 +87,7 @@ internal sealed partial class KioskForm
         // A PC where it cannot start (e.g. Windows refuses the card sign-in there) is not asked again every minute.
         if (desktop.Page != null || signInUnsupported) return;
         var pause = TimeSpan.FromSeconds(Math.Min(300, 10 << Math.Min(5, Math.Max(0, signInStartFailures - 1))));
-        if (DateTime.UtcNow - signInFailedAt < pause) return;
+        if (signInFailedAtMilliseconds is { } failedAt && Environment.TickCount64 - failedAt < pause.TotalMilliseconds) return;
         Audit.Write("fido_prepare_start");
         try { signInStarting = FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi); }
         catch (Exception ex) { signInStarting = Task.FromException<FidoSignIn?>(ex); }
@@ -111,7 +110,7 @@ internal sealed partial class KioskForm
                 return;
             }
             // A fresh sign-in screen follows after the usual pause (not at once: a screen per tick piled up).
-            signInFailedAt = DateTime.UtcNow;
+            signInFailedAtMilliseconds = Environment.TickCount64;
             Audit.Write("selfservice_card_signin_failed", outcome.Message);
             notice = "Nie udało się zalogować kartą: " + outcome.Message;
             RefreshChrome();
@@ -119,7 +118,7 @@ internal sealed partial class KioskForm
         }
         var logon = UserLogon.FromCard(signIn);
         cardLogon = logon;
-        cardAwaySince = null;
+        cardAwaySinceMilliseconds = null;
         cardKey = reader.Snapshot(config.ReaderName);
         signInReaders = reader.ReadersWithCard() ?? [];
         Audit.Write("selfservice_signed_in_with_card", logon.DisplayName);
@@ -158,8 +157,8 @@ internal sealed partial class KioskForm
                 // Windows read it with a tap: the card may already be off the reader.
                 notice = "Ta karta nie jest jeszcze zarejestrowana. Przyłóż ją ponownie, aby ją skonfigurować.";
                 RefreshChrome();
-                var until = DateTime.UtcNow.AddSeconds(20);
-                while ((readerName = PresentReader()) == null && DateTime.UtcNow < until) await Task.Delay(200);
+                var until = Environment.TickCount64 + 20_000;
+                while ((readerName = PresentReader()) == null && Environment.TickCount64 < until) await Task.Delay(200);
                 notice = null;
             }
             if (readerName == null) { ShowHelpResult("Karta nie wróciła do czytnika. Przyłóż ją, aby spróbować ponownie."); return; }
@@ -185,10 +184,11 @@ internal sealed partial class KioskForm
             return;
         }
         var key = reader.Snapshot(config.ReaderName);
-        if (key != null && key != cardKey) cardPlacedAt = DateTime.UtcNow;
+        if (key != null && key != cardKey) cardPlacedAtMilliseconds = Environment.TickCount64;
         cardKey = key;
         PrepareCardSignIn();
-        if (cardLogon == null && notice != null && noticeUntil != default && DateTime.UtcNow >= noticeUntil) { noticeUntil = default; notice = null; RefreshChrome(); }
+        if (cardLogon == null && notice != null && noticeUntilMilliseconds is { } noticeDeadline && Environment.TickCount64 >= noticeDeadline)
+        { noticeUntilMilliseconds = null; notice = null; RefreshChrome(); }
         if (cardPage is { Started: true } page && !page.RefreshHostedWindow()) CloseCardPage();   // "Zamknij" or its countdown closed it.
         // The card session's own window: "Zamknij" or its countdown parked it (it stays for the next page).
         else if (cardPage != null && cardPage == reusablePage && HelpBrowserForm.GetProp(cardPage.HostedWindow, HelpBrowserForm.ParkedProperty) != IntPtr.Zero)
@@ -210,24 +210,24 @@ internal sealed partial class KioskForm
         if (holding == null) return;   // The smart card service did not answer: no decision this tick.
         if (holding.Intersect(signInReaders, StringComparer.Ordinal).Any())
         {
-            if (cardAwaySince != null) { cardAwaySince = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
+            if (cardAwaySinceMilliseconds != null) { cardAwaySinceMilliseconds = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
             return;
         }
-        if (cardAwaySince == null)
+        if (cardAwaySinceMilliseconds == null)
         {
-            cardAwaySince = DateTime.UtcNow;
+            cardAwaySinceMilliseconds = Environment.TickCount64;
             notice = "Karta zdjęta. Jeśli nie przyłożysz jej ponownie w ciągu " + CardReturnSeconds + " s, nastąpi wylogowanie.";
             Audit.Write("selfservice_card_away");
             RefreshChrome();
         }
-        else if (DateTime.UtcNow - cardAwaySince.Value >= TimeSpan.FromSeconds(CardReturnSeconds)) EndCardSession("selfservice_card_removed");
+        else if (Environment.TickCount64 - cardAwaySinceMilliseconds.Value >= CardReturnSeconds * 1000L) EndCardSession("selfservice_card_removed");
     }
 
     /// <summary>The card is gone: the person is signed out here, their pages and programs close.</summary>
     private void EndCardSession(string? reason)
     {
         if (cardLogon == null) return;
-        cardAwaySince = null;
+        cardAwaySinceMilliseconds = null;
         signInReaders = [];
         helpBrowser?.Close();
         CloseCardPage();
@@ -386,7 +386,7 @@ internal sealed partial class KioskForm
             desktop.UpdateStatus(name, notice ?? "Wybierz zadanie z Szybkiej pomocy – strony otworzą się na Twoim koncie. " +
                 "Zabierz kartę z czytnika, aby się wylogować.", person: name);
         }
-        else if (signInScreen != null && !(notice != null && DateTime.UtcNow < noticeUntil)) desktop.ShowSignIn(true);
+        else if (signInScreen != null && !(notice != null && noticeUntilMilliseconds is { } deadline && Environment.TickCount64 < deadline)) desktop.ShowSignIn(true);
         else
         {
             desktop.ShowSignIn(false);
@@ -397,7 +397,7 @@ internal sealed partial class KioskForm
         var person = SelfServiceWindowsSession ? shellSignOut.Reason == null ? current?.Name : null :
             cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName.Split('\\')[^1];
         desktop.SetPortalState(person, notice,
-            warning: cardAwaySince != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true,
+            warning: cardAwaySinceMilliseconds != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true,
             login: SelfServiceWindowsSession ? current?.Identity.Upn : cardLogon?.DisplayName);
     }
 

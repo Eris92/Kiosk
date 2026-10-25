@@ -30,7 +30,7 @@ internal sealed class IdleScreen : Form
             if (app != null) app.InputEnabled = value;
         }
     }
-    internal DateTime ShownAt { get; private set; }
+    internal long? ShownAtMilliseconds { get; private set; }
 
     internal IdleScreen(Screen screen, ScreenContent content, int number)
     {
@@ -48,7 +48,7 @@ internal sealed class IdleScreen : Form
         VisibleChanged += (_, _) =>
         {
             if (!Visible) return;
-            ShownAt = DateTime.UtcNow;
+            ShownAtMilliseconds = Environment.TickCount64;
             Bounds = Target.Bounds;
         };
         // A program that closed by itself (or crashed) is started again.

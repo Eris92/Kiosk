@@ -615,7 +615,8 @@ internal sealed class HelpSignIn : Panel
 internal sealed class HelpCountdown : Control
 {
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 200 };
-    private DateTime last = DateTime.UtcNow;
+    private readonly Font captionFont = new("Segoe UI", 9.5f);
+    private long lastMilliseconds = Environment.TickCount64;
     private int seconds = 60;
     internal event Action? Expired;
 
@@ -631,14 +632,14 @@ internal sealed class HelpCountdown : Control
         };
     }
 
-    private double SecondsLeft => seconds - (DateTime.UtcNow - last).TotalSeconds;
+    private double SecondsLeft => seconds - (Environment.TickCount64 - lastMilliseconds) / 1000d;
     private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Height = S(30) + Padding.Vertical; }
 
-    internal void Start(int idleSeconds) { seconds = Math.Max(1, idleSeconds); last = DateTime.UtcNow; timer.Start(); Invalidate(); }
+    internal void Start(int idleSeconds) { seconds = Math.Max(1, idleSeconds); lastMilliseconds = Environment.TickCount64; timer.Start(); Invalidate(); }
     internal void Stop() => timer.Stop();
-    internal void Restart() { last = DateTime.UtcNow; Invalidate(); }
+    internal void Restart() { lastMilliseconds = Environment.TickCount64; Invalidate(); }
 
     /// <summary>Activity in a window: a real mouse move (Windows repeats "move" over a resting cursor), a click or a key.</summary>
     internal static void Watch(Control root, Action touched)
@@ -661,8 +662,7 @@ internal sealed class HelpCountdown : Control
         g.Clear(BackColor);
         var area = new Rectangle(Padding.Left, Padding.Top, Math.Max(0, Width - Padding.Horizontal), Math.Max(0, Height - Padding.Vertical));
         double left = Math.Max(0, SecondsLeft);
-        using var font = new Font("Segoe UI", 9.5f);
-        TextRenderer.DrawText(g, "Bez aktywności zamknie się za " + (int)Math.Ceiling(left) + " s", font,
+        TextRenderer.DrawText(g, "Bez aktywności zamknie się za " + (int)Math.Ceiling(left) + " s", captionFont,
             new Rectangle(area.Left, area.Top, area.Width, area.Height - S(8)), KioskTheme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         var track = new Rectangle(area.Left, area.Bottom - S(5), area.Width, S(5));
         using (var back = new SolidBrush(KioskTheme.Border)) g.FillRectangle(back, track);
@@ -672,7 +672,7 @@ internal sealed class HelpCountdown : Control
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) timer.Dispose();
+        if (disposing) { timer.Dispose(); captionFont.Dispose(); }
         base.Dispose(disposing);
     }
 }

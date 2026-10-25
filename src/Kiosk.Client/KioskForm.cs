@@ -16,7 +16,7 @@ internal sealed partial class KioskForm : Form
     {
         internal required RdpConnection Connection { get; init; }
         internal required RdpHost Host { get; init; }
-        internal DateTime ConnectingSince { get; init; }
+        internal long ConnectingSinceMilliseconds { get; init; }
         internal bool WasConnected { get; set; }
     }
 
@@ -36,7 +36,7 @@ internal sealed partial class KioskForm : Form
         internal bool Locked { get; set; } = true;
         internal bool Verified { get; set; }
         internal bool AutoConnected { get; set; }
-        internal DateTime InactiveSince { get; set; } = DateTime.UtcNow;
+        internal long InactiveSinceMilliseconds { get; set; } = Environment.TickCount64;
         internal string? Notice { get; set; }
         internal bool HasWork => Notes?.Dirty == true || Applications.Count > 0 || Rdp.Count > 0 || Commands.HasRunning;
         /// <summary>The card's account (UPN from its certificate) is in this PC's local Administrators group.</summary>
@@ -269,7 +269,7 @@ internal sealed partial class KioskForm : Form
         menu.HideMenu();
         DismissQuestions();
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
-        if (!session.Locked) session.InactiveSince = DateTime.UtcNow;
+        if (!session.Locked) session.InactiveSinceMilliseconds = Environment.TickCount64;
         session.Locked = true;
         if (current == session) current = null;
         ShowView(desktop);
@@ -284,7 +284,7 @@ internal sealed partial class KioskForm : Form
         menu.HideMenu();
         DismissQuestions();
         session.Locked = true;
-        session.InactiveSince = DateTime.UtcNow - TimeSpan.FromMilliseconds(idleMilliseconds);
+        session.InactiveSinceMilliseconds = Environment.TickCount64 - idleMilliseconds;
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
         RefreshChrome();
@@ -467,11 +467,12 @@ internal sealed partial class KioskForm : Form
     private void ExpireSessions()
     {
         if (config.ChangeUserAfterSeconds <= 0) return;
-        var limit = TimeSpan.FromSeconds(config.ChangeUserAfterSeconds);
+        var now = Environment.TickCount64;
+        var limitMilliseconds = config.ChangeUserAfterSeconds * 1000L;
         foreach (var session in sessions.Values.ToArray())
         {
             if (!session.Locked || verifying && session == current) continue;
-            if (DateTime.UtcNow - session.InactiveSince < limit) continue;
+            if (now - session.InactiveSinceMilliseconds < limitMilliseconds) continue;
             bool wasCurrent = session == current;
             CloseSession(session, "session_expired");
             if (wasCurrent) requireRemoval = true; // Its card is still inserted: reinserting starts afresh.
@@ -784,15 +785,16 @@ internal sealed partial class KioskForm : Form
         };
     }
 
-    private DateTime mainIdleHeldAt = DateTime.MinValue;
+    private long? mainIdleHeldAtMilliseconds;
     /// <summary>Self-service: when the card (or a USB key) was put on the reader.</summary>
-    private DateTime cardPlacedAt = DateTime.MinValue;
+    private long? cardPlacedAtMilliseconds;
 
     /// <summary>
     /// Self-service: a card just put on the reader means someone is there, but only for the screensaver's time.
     /// A card left lying there (or a USB key that stays in the port) no longer holds the screensaver back.
     /// </summary>
-    private bool CardJustPlaced => SelfService && cardKey != null && DateTime.UtcNow - cardPlacedAt < TimeSpan.FromSeconds(config.IdleAfterSeconds);
+    private bool CardJustPlaced => SelfService && cardKey != null && cardPlacedAtMilliseconds is { } placed &&
+        Environment.TickCount64 - placed < config.IdleAfterSeconds * 1000L;
 
     /// <summary>For the log: what keeps the Kiosk in front of the main screen's screensaver.</summary>
     private string MainIdleReason(uint idle)
@@ -822,7 +824,7 @@ internal sealed partial class KioskForm : Form
         uint idle = Native.IdleMilliseconds();
         if (mainIdle.Visible)
         {
-            if (someone || idle < 700 && DateTime.UtcNow - mainIdle.ShownAt > TimeSpan.FromSeconds(1))
+            if (someone || idle < 700 && mainIdle.ShownAtMilliseconds is { } shown && Environment.TickCount64 - shown > 1000)
             {
                 Audit.Write("main_idle_hidden", MainIdleReason(idle));
                 mainIdle.Hide(); Activate(); desktop.FocusSignIn();
@@ -831,7 +833,8 @@ internal sealed partial class KioskForm : Form
         else if (someone && idle >= (uint)config.IdleAfterSeconds * 1000u)
         {
             // Why the screensaver waits although nobody touched anything (at most every 5 minutes).
-            if (DateTime.UtcNow - mainIdleHeldAt > TimeSpan.FromMinutes(5)) { mainIdleHeldAt = DateTime.UtcNow; Audit.Write("main_idle_held", MainIdleReason(idle)); }
+            if (mainIdleHeldAtMilliseconds is not { } held || Environment.TickCount64 - held > 300_000)
+            { mainIdleHeldAtMilliseconds = Environment.TickCount64; Audit.Write("main_idle_held", MainIdleReason(idle)); }
         }
         else if (!someone && idle >= (uint)config.IdleAfterSeconds * 1000u)
         {
@@ -1032,7 +1035,7 @@ internal sealed partial class KioskForm : Form
     {
         if (menu.Visible) { menu.HideMenu(); return; }
         if (!CanUseApps) return;
-        if (DateTime.UtcNow - menu.HiddenAt < TimeSpan.FromMilliseconds(300)) return; // The click that just closed it.
+        if (menu.HiddenAtMilliseconds is { } hidden && Environment.TickCount64 - hidden < 300) return; // The click that just closed it.
         PopulateMenu(CanUseApps ? "" : "Przyłóż kartę, aby uruchamiać pulpity zdalne i aplikacje.");
         menu.ShowAt(this, taskbar.MenuButton.RectangleToScreen(taskbar.MenuButton.ClientRectangle), taskbar.Centered);
     }
@@ -1358,7 +1361,7 @@ internal sealed partial class KioskForm : Form
     private void ShowHelpResult(string text)
     {
         notice = text;
-        noticeUntil = DateTime.UtcNow.AddSeconds(10);   // Punkt samoobsługowy: shown in place of the sign-in for a while.
+        noticeUntilMilliseconds = Environment.TickCount64 + 10_000;   // Punkt samoobsługowy: shown in place of the sign-in for a while.
         if (current != null) current.Notice = text;
         RefreshChrome();
     }
@@ -1470,9 +1473,9 @@ internal sealed partial class KioskForm : Form
                 // Too late after power-up: the person takes the card off and puts it back; the reset follows at once.
                 ShowHelpResult("Zdejmij kartę z czytnika i przyłóż ją ponownie – Kiosk od razu ją zresetuje.");
                 RefreshChrome();
-                var until = DateTime.UtcNow.AddSeconds(30);
-                while (cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
-                while (!cardPresent() && DateTime.UtcNow < until) await Task.Delay(100);
+                var until = Environment.TickCount64 + 30_000;
+                while (cardPresent() && Environment.TickCount64 < until) await Task.Delay(100);
+                while (!cardPresent() && Environment.TickCount64 < until) await Task.Delay(100);
                 if (!cardPresent()) { ShowHelpResult("Reset karty anulowany: karta nie wróciła do czytnika."); return; }
                 readerName = PresentReader() ?? readerName;
                 answer = await Task.Run(() => CardService.Call(new CardService.Request { Op = "reset", Reader = readerName }));
@@ -1763,7 +1766,7 @@ internal sealed partial class KioskForm : Form
         try
         {
             host = CreateRdp(connection, config.RequireCredentialPrompt, session.Logon);
-            session.Rdp[connection.Name] = new RdpSession { Connection = connection, Host = host, ConnectingSince = DateTime.UtcNow };
+            session.Rdp[connection.Name] = new RdpSession { Connection = connection, Host = host, ConnectingSinceMilliseconds = Environment.TickCount64 };
             AddWindow(session, key, connection.Name, host);
             // Fresh COM control per connection and per person; never store a PIN/password or reuse credentials.
             host.Client.Connect();
@@ -1859,7 +1862,7 @@ internal sealed partial class KioskForm : Form
                 CloseWindow("rdp:" + name, "remote_disconnect", session);
                 session.Notice = "Pulpit zdalny „" + name + "” został rozłączony.";
             }
-            else if (!rdp.WasConnected && DateTime.UtcNow - rdp.ConnectingSince > TimeSpan.FromSeconds(config.ConnectTimeoutSeconds))
+            else if (!rdp.WasConnected && Environment.TickCount64 - rdp.ConnectingSinceMilliseconds >= config.ConnectTimeoutSeconds * 1000L)
             {
                 CloseWindow("rdp:" + name, "connection_timeout", session);
                 session.Notice = "Nie udało się połączyć z „" + name + "” w ciągu " + config.ConnectTimeoutSeconds + " s.";
@@ -2668,7 +2671,11 @@ internal sealed partial class KioskForm : Form
             throw new InvalidOperationException("Returning card did not restore its session.");
 
         // Parked sessions expire after the retention time.
-        sessions[bob.Id].InactiveSince = DateTime.UtcNow.AddHours(-1);
+        var parkedBob = sessions[bob.Id];
+        parkedBob.InactiveSinceMilliseconds = Environment.TickCount64 - config.ChangeUserAfterSeconds * 1000L + 1000;
+        ExpireSessions();
+        if (!sessions.ContainsKey(bob.Id)) throw new InvalidOperationException("Parked session expired before its retention limit.");
+        parkedBob.InactiveSinceMilliseconds = Environment.TickCount64 - config.ChangeUserAfterSeconds * 1000L - 1000;
         ExpireSessions();
         if (sessions.ContainsKey(bob.Id) || sessions.Count != 1) throw new InvalidOperationException("Parked session did not expire.");
 

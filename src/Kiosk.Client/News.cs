@@ -182,7 +182,7 @@ internal sealed class NewsCarousel : Control
     private int index, previous = -1, direction = 1;
     private double progress = 1;
     private bool hover;
-    private DateTime shownAt = DateTime.UtcNow;
+    private long shownAtMilliseconds = Environment.TickCount64;
     private readonly System.Windows.Forms.Timer animation = new() { Interval = 15 };
     private readonly System.Windows.Forms.Timer rotation = new() { Interval = 250 };
     private Rectangle buttonBounds, leftArrow, rightArrow;
@@ -190,7 +190,7 @@ internal sealed class NewsCarousel : Control
     // A film slide: played in a small browser over the slide; the slide moves on when the film ends.
     private NewsVideo? player;
     private bool videoFailed;
-    private static readonly TimeSpan LongestVideo = TimeSpan.FromMinutes(30);
+    private const long LongestVideoMilliseconds = 30 * 60_000L;
 
     internal int Seconds { get; set; } = 8;
     /// <summary>The screensaver (Ekrany → kiosk:komunikaty): each slide fills the whole control, the dots lie on it.</summary>
@@ -204,13 +204,13 @@ internal sealed class NewsCarousel : Control
     private static class Together
     {
         internal static int Index;
-        internal static DateTime ShownAt = DateTime.UtcNow;
+        internal static long ShownAtMilliseconds = Environment.TickCount64;
         internal static event Action? Moved;
         internal static void Next(int from, int count)
         {
             if (from != Index || count < 2) return;   // Another screen moved them already.
             Index = (Index + 1) % count;
-            ShownAt = DateTime.UtcNow;
+            ShownAtMilliseconds = Environment.TickCount64;
             Moved?.Invoke();
         }
     }
@@ -235,9 +235,10 @@ internal sealed class NewsCarousel : Control
         {
             if (hover || items.Count < 2 || !Visible) return;
             // Pictures and text: the time from Konfiguracja; a film: until it ends (a broken film: the same time).
-            var wait = items[index].IsVideo && !videoFailed ? LongestVideo : TimeSpan.FromSeconds(Math.Max(3, Seconds));
-            if (Synced) { if (DateTime.UtcNow - Together.ShownAt > wait) Together.Next(index, items.Count); }
-            else if (DateTime.UtcNow - shownAt > wait) Step(1);
+            var waitMilliseconds = items[index].IsVideo && !videoFailed ? LongestVideoMilliseconds : Math.Max(3, Seconds) * 1000L;
+            var now = Environment.TickCount64;
+            if (Synced) { if (now - Together.ShownAtMilliseconds > waitMilliseconds) Together.Next(index, items.Count); }
+            else if (now - shownAtMilliseconds > waitMilliseconds) Step(1);
         };
         HandleCreated += (_, _) => { if (Synced) Together.Moved += FollowTogether; };
         HandleDestroyed += (_, _) => Together.Moved -= FollowTogether;
@@ -261,7 +262,7 @@ internal sealed class NewsCarousel : Control
     private void JumpToTogether()
     {
         if (items.Count == 0) return;
-        if (Together.Index >= items.Count) { Together.Index = 0; Together.ShownAt = DateTime.UtcNow; }
+        if (Together.Index >= items.Count) { Together.Index = 0; Together.ShownAtMilliseconds = Environment.TickCount64; }
         if (index == Together.Index) return;
         player?.Stop();
         index = Together.Index; previous = -1; progress = 1; videoFailed = false;
@@ -294,7 +295,7 @@ internal sealed class NewsCarousel : Control
             player.Failed += message =>
             {
                 // The slide then stays as long as a picture would, with the black placeholder.
-                videoFailed = true; shownAt = DateTime.UtcNow;
+                videoFailed = true; shownAtMilliseconds = Environment.TickCount64;
                 player?.Stop();
                 Audit.Write("news_video_failed", message);
             };
@@ -331,7 +332,7 @@ internal sealed class NewsCarousel : Control
         // disposing here broke the others' drawing (red X) after a reload, e.g. saving Konfiguracja.
         items = news;
         if (index >= items.Count) index = 0;
-        previous = -1; progress = 1; shownAt = DateTime.UtcNow; videoFailed = false;
+        previous = -1; progress = 1; shownAtMilliseconds = Environment.TickCount64; videoFailed = false;
         if (Synced) JumpToTogether();
         UpdateRotation();
         UpdateVideo();
@@ -348,7 +349,7 @@ internal sealed class NewsCarousel : Control
     {
         if (target == index || items.Count == 0) return;
         previous = index; index = target; direction = Math.Sign(step) == 0 ? 1 : Math.Sign(step);
-        progress = 0; shownAt = DateTime.UtcNow; videoFailed = false;
+        progress = 0; shownAtMilliseconds = Environment.TickCount64; videoFailed = false;
         player?.Stop();
         animation.Start();
         Invalidate();
@@ -357,7 +358,7 @@ internal sealed class NewsCarousel : Control
     private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
 
     protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { hover = false; shownAt = DateTime.UtcNow; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; shownAtMilliseconds = Environment.TickCount64; Invalidate(); base.OnMouseLeave(e); }
 
     protected override void OnMouseClick(MouseEventArgs e)
     {

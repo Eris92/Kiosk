@@ -258,7 +258,7 @@ internal sealed class StartMenu : Form
     private readonly Panel power = new() { Visible = false, BackColor = KioskTheme.ShellBorder, Padding = new Padding(1) };
     private readonly ToolTip tips = new() { InitialDelay = 400 };
     private FooterButton? powerButton;
-    internal DateTime HiddenAt { get; private set; }
+    internal long? HiddenAtMilliseconds { get; private set; }
     internal int ItemCount { get; private set; }
 
     internal StartMenu()
@@ -305,7 +305,7 @@ internal sealed class StartMenu : Form
         if (!Visible) return;
         power.Visible = false;
         Hide();
-        HiddenAt = DateTime.UtcNow;
+        HiddenAtMilliseconds = Environment.TickCount64;
     }
 
     internal void Populate(string subtitle, IReadOnlyList<MenuSection> sections, IReadOnlyList<MenuItemSpec> footerItems, IReadOnlyList<MenuItemSpec> powerItems)

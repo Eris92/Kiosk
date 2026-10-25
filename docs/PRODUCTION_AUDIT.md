@@ -1,4 +1,4 @@
-# Audyt wydania Kiosk — 2026-10-23–24
+# Audyt wydania Kiosk — 2026-10-23–25
 
 ## Zakres i wynik
 
@@ -34,6 +34,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 - Konfiguracja odrzuca nieznaną wersję, błędne profile RDP, duplikaty, niepoprawne adresy i ścieżki, a produkcyjna lista administratorów nie przyjmuje UID jako uwierzytelnienia. Zapis jest atomowy.
 - Sesje rozróżniają blokadę, odłożenie i wylogowanie; czas zachowania jest egzekwowany także po powrocie z blokady Windows. Na konsoli używany jest `LockWorkStation`, w sesji zdalnej rozłączenie WTS; brak potwierdzenia blokady powoduje próbę wylogowania. Po jawnym `WTS_SESSION_LOCK` sesja czeka na `WTS_SESSION_UNLOCK`, nawet gdy odczyt WTS chwilowo pokazuje `Active`. Gdy WTS nie potrafi odczytać flagi blokady, powiadomienie `WTS_SESSION_UNLOCK` pozwala wznowić sesję po sprawdzeniu limitu; samo `WTS_REMOTE_CONNECT` nie potwierdza odblokowania.
 - Limit zachowania odłożonej lub zablokowanej sesji i pięciosekundowy limit potwierdzenia blokady używają monotonicznego `Environment.TickCount64`. [W .NET 10 na Windows](https://learn.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/11/environment-tickcount-windows-behavior) ten licznik obejmuje czas uśpienia, więc korekta zegara systemowego nie zmienia limitu, a powrót z uśpienia nie wydłuża sesji. Test obejmuje obie strony granicy czasu oraz stan przed początkiem pomiaru.
+- Limit zachowania sesji kartowej w trybie stanowiskowym, czas na powrót wyjętej karty w `SelfService/CardBroker`, ponowienie logowania kartą, limit nawiązania osadzonego RDP i licznik automatycznego zamknięcia pomocy również używają monotonicznego czasu. To samo dotyczy 30 sekund na ponowne przyłożenie karty przy resecie, krótkiej blokady ponownego otwarcia Menu, czasu pokazania wygaszacza na głównym ekranie i obrotu komunikatów. Zmiana godziny systemowej nie przedłuża tych terminów. Test sesji kartowej sprawdza stan tuż przed i po limicie; rzeczywista karta, RDS i docelowy ekran pomocy nadal wymagają prób na stanowisku.
 - Rozpoczęte wylogowanie Windows pozostaje w stanie oczekującym. Powtórna próba następuje najwyżej co 10 sekund, jeśli proces nadal działa; nie jest już wywoływana co 250 ms ani nie powiela wpisu o przyczynie. W tym czasie monitor RDP i aplikacji nie wykonuje zbędnej pracy. Test obejmuje ponowienie po błędzie i zachowanie pierwszej przyczyny.
 - W `WindowsShell` z wyłączonym `DisconnectOnCardRemoval` timer nie odpytuje już PC/SC, ponieważ stan karty nie wpływa wtedy na blokadę sesji. Ponowne włączenie tej opcji rozpoczyna obserwację od bieżącej karty.
 - Menu kontekstowe paska zadań jest związane z oknem i sesją, które je otworzyły; zamyka się przy blokadzie, zmianie karty lub zamknięciu okna. Działanie opcji ponownie sprawdza obecność właściwej karty przed wykonaniem.
@@ -83,7 +84,7 @@ Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest pr
 
 Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną. Usługa pozostaje na wcześniej zainstalowanej wersji pliku EXE; pilot jest aktualizowany niezależnie. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
 
-`dotnet list package --vulnerable --include-transitive` nie wykazał znanych podatnych pakietów przy źródle NuGet dostępnym podczas tego audytu. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
+`dotnet list package --vulnerable --include-transitive` ponowiono 2026-10-25 dla klienta i FidoRun; źródło NuGet nie zgłosiło znanych podatnych pakietów. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
 
 ## Bramka akceptacyjna przed produkcją
 
