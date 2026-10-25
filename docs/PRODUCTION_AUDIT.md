@@ -2,7 +2,7 @@
 
 ## Zakres i wynik
 
-Repozytorium buduje klienta Windows x64 (.NET 10, WinForms/WebView2), opcjonalny natywny kafelek logowania oraz skrypty instalacji i wycofania. Przejrzano przepływ tożsamości i sesji, połączenia RDP, czytnik/CTAP, osadzanie okien, konfigurację, pakowanie i instalację. Usunięto stary mechanizm uruchamiania sesji oraz prywatne przykłady konfiguracji. Publiczna konfiguracja wdrożeniowa ma `SelfService`, `SelfServiceAuthentication=WindowsSession`, `TestMode=false`, `AutoUpdate=false` i pustą listę serwerów RDP.
+Repozytorium buduje klienta Windows x64 (.NET 10, WinForms/WebView2), opcjonalny natywny kafelek logowania oraz skrypty instalacji i wycofania. Przejrzano przepływ tożsamości i sesji, połączenia RDP, czytnik/CTAP, osadzanie okien, konfigurację, pakowanie i instalację. Usunięto stary mechanizm uruchamiania sesji, nieobsługiwany aktualizator w miejscu oraz prywatne przykłady konfiguracji. Publiczna konfiguracja wdrożeniowa ma `SelfService`, `SelfServiceAuthentication=WindowsSession`, `TestMode=false` i pustą listę serwerów RDP.
 
 Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie potwierdza gotowości produkcyjnej środowiska**: na tej stacji nie wykonano rzeczywistego logowania dwóch osób do Entra, SSO na docelowych witrynach, połączenia z docelowym RDS, próby na konsoli blokowanej przez Windows ani podpisu certyfikatem organizacji. Kompilacja natywnej DLL MSVC przeszła lokalnie. Paczka CI bez podpisu jest kandydatem testowym.
 
@@ -12,7 +12,11 @@ Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie 
 
 Przywrócono obsługę blokady lokalnej konsoli przez `LockWorkStation`, a sesji RDP przez rozłączenie WTS. Zmiany blokady/odblokowania są odbierane z Windows; limit wylogowania używa monotonicznego czasu obejmującego uśpienie. Niepotwierdzona blokada kończy się próbą wylogowania, ponawianą z ograniczeniem częstotliwości. Zmiana trybu lub sposobu logowania w Konfiguracji wymaga restartu Kiosku; program wykonuje go po zapisie, a gdy są otwarte prace, najpierw pyta o ich zakończenie.
 
-Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Pilota skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true` i `AutoUpdate=false`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
+Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/Build-CredentialProvider.ps1` i pełne `scripts/Test.ps1` przeszły. Pilota skopiowano obok dotychczasowego klienta i zaktualizowano usługę `KioskCard`; usługa działa i odpowiada na sondę bez karty. Konfiguracja produkcyjna w `%ProgramData%\Kiosk\client.json` pozostała bez zmian. Osobna konfiguracja pilota używa `TestMode=true`. Weryfikacja UI potwierdziła ekran SelfService i lokalną sesję Windows; wymagana jest jeszcze próba z kontem Entra oraz docelową stroną SSO.
+
+## Wdrażanie wersji
+
+Klient nie pobiera już wydania GitHub i nie podmienia plików we własnym katalogu. Ta ścieżka nie odpowiadała obecnej paczce CI, a kopiowanie pojedynczych plików mogło zostawić mieszankę wersji. Usunięto również skrót `Ctrl+Alt+U` i operację `update` usługi. Dawne pola konfiguracji `AutoUpdate` i `UpdateChannel` są ignorowane przy odczycie; zapis aktualnej konfiguracji je usuwa. Nową paczkę weryfikuje `Verify-Package.ps1`, a administrator wdraża klienta i usługę osobno skryptami `Install-KioskShell.ps1` oraz `Install-KioskCardService.ps1` do katalogów wersjonowanych. Kandydat CI pozostaje niepodpisany i służy do testów; przed produkcją wymagany jest podpis organizacji.
 
 ## Granica tożsamości
 

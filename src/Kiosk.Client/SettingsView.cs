@@ -41,9 +41,6 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly CheckBox adminHotkey = new() { Text = "Ctrl+Alt+K otwiera Konfigurację (jako administrator Windows)", AutoSize = true };
-    private readonly CheckBox autoUpdate = new() { Text = "Aktualizuj automatycznie przy uruchomieniu Kiosku", AutoSize = true, Margin = new Padding(4, 0, 4, 12) };
-    private readonly ComboBox updateChannel = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Margin = new Padding(4, 0, 4, 12),
-        Items = { "main – stabilne wydania (komputery produkcyjne)", "dev – także wersje testowe (komputery testowe)" } };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
     private readonly TextBox sourceUser = new() { Width = 300, PlaceholderText = "kiosk@firma.pl  albo  DOMENA\\kiosk", Margin = new Padding(4, 0, 4, 4) };
@@ -94,10 +91,6 @@ internal sealed class SettingsView : UserControl
     internal static float? ScaleOverride;
     /// <summary>Shows each screen's number on the screen itself.</summary>
     internal event Action? IdentifyScreensRequested;
-    /// <summary>A new version is downloaded (folder with its Kiosk.Client.exe); Kiosk closes and the new copy installs itself.</summary>
-    internal event Action<string>? UpdateRequested;
-    /// <summary>The administrator's window: the running Kiosk downloads and installs, so this window does not download too.</summary>
-    internal bool UpdateByKiosk { get; init; }
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
     private readonly CheckBox allowWindowsAdmins = new() { Text = "Administratorzy Windows tego komputera też mają dostęp (sprawdzane po koncie z certyfikatu karty)", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4, 6, 4, 6) };
     private readonly Func<Config, bool>? keepsAccess;
@@ -108,7 +101,7 @@ internal sealed class SettingsView : UserControl
     internal event Action? SwitchUserRequested;
 
     /// <param name="fileEditor">Konfiguracje Kiosków: a configuration file for many PCs, not this PC; this PC's account,
-    /// keys, update and Windows session are not shown.</param>
+    /// keys and Windows session are not shown.</param>
     internal SettingsView(Config config, CardIdentity? me = null, Func<Config, bool>? keepsAccess = null, bool fileEditor = false)
     {
         original = config;
@@ -625,54 +618,16 @@ internal sealed class SettingsView : UserControl
         });
         newsTab.Controls.Add(newsFields);
 
-        var updateTab = new TabPage("Aktualizacja") { Padding = new Padding(16) };
+        var updateTab = new TabPage("Konfiguracja z serwera") { Padding = new Padding(16) };
         tabs.TabPages.Add(updateTab);
         var updatePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
-        updatePanel.Controls.Add(new Label { Text = "Zainstalowana wersja: " + Updater.CurrentVersion, AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 4, 4, 8) });
+        updatePanel.Controls.Add(new Label { Text = "Wersja programu: " + BuildVersion.Label, AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 4, 4, 8) });
         updatePanel.Controls.Add(new Label
         {
             AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = HelpText, Margin = new Padding(4, 0, 4, 12),
-            Text = "Pobiera najnowsze wydanie z GitHub (github.com/Eris92/Kiosk, zakładka Releases), zamyka Kiosk, podmienia pliki programu " +
-                   "i uruchamia nową wersję. Konfiguracja zostaje bez zmian. Gdy Kiosk jest zainstalowany w Program Files, Windows zapyta o administratora. " +
-                   "Niezapisane zmiany w tej Konfiguracji przepadną. Automatyczna aktualizacja działa po zapisaniu konfiguracji: sprawdza przy starcie Kiosku i potem co 24 godziny; " +
-                   "nowszą wersję instaluje, gdy nikt nie ma otwartej pracy (do tego czasu próbuje co godzinę), i uruchamia Kiosk ponownie."
+            Text = "Nową wersję wdraża administrator ze zweryfikowanej paczki za pomocą skryptów Install-KioskShell.ps1 i Install-KioskCardService.ps1. " +
+                   "Instalator zapisuje pliki w nowym katalogu i zachowuje poprzednią wersję do wycofania."
         });
-        var updateButton = new Button { Text = "Sprawdź i zaktualizuj", Size = new Size(240, 38), Margin = new Padding(4) };
-        KioskTheme.StyleButton(updateButton, primary: true);
-        var updateStatus = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(4, 12, 4, 4) };
-        updateButton.Click += async (_, _) =>
-        {
-            updateButton.Enabled = false;
-            try
-            {
-                updateStatus.Text = "Sprawdzam najnowsze wydanie…";
-                Updater.Channel = updateChannel.SelectedIndex == 1 ? "dev" : "main";   // The channel chosen here, saved or not.
-                var release = await Updater.LatestAsync();
-                if (release.Tag == Updater.CurrentVersion)
-                {
-                    updateStatus.Text = "Masz najnowszą wersję (" + release.Tag + ").";
-                    return;
-                }
-                if (UpdateByKiosk) { updateStatus.Text = "Kiosk pobiera i instaluje " + release.Tag + "…"; UpdateRequested?.Invoke(""); return; }
-                updateStatus.Text = "Pobieram " + release.Tag + "…";
-                var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
-                    updateStatus.Text = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Rozpakowuję " + release.Tag + "…"));
-                updateStatus.Text = "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
-                UpdateRequested?.Invoke(folder);
-            }
-            catch (Exception ex) { updateStatus.Text = "Aktualizacja nie powiodła się: " + ex.Message; }
-            finally { if (!IsDisposed) updateButton.Enabled = true; }
-        };
-        autoUpdate.Checked = config.AutoUpdate;
-        updatePanel.Controls.Add(autoUpdate);
-        updateChannel.SelectedIndex = config.UpdateChannel == "dev" ? 1 : 0;
-        updatePanel.Controls.Add(new Label { Text = "Kanał aktualizacji", AutoSize = true, Margin = new Padding(4, 0, 4, 2) });
-        updatePanel.Controls.Add(updateChannel);
-        if (!fileEditor)
-        {
-            updatePanel.Controls.Add(updateButton);
-            updatePanel.Controls.Add(updateStatus);
-        }
         updatePanel.Controls.Add(new Label { Text = "Konfiguracja z serwera", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 24, 4, 4) });
         updatePanel.Controls.Add(new Label
         {
@@ -755,20 +710,17 @@ internal sealed class SettingsView : UserControl
         {
             Dock = DockStyle.Top, Height = 64, Padding = new Padding(24, 6, 24, 6), ForeColor = KioskTheme.Text, BackColor = Card, Visible = Central,
             Text = "Podgląd – konfiguracja z serwera " + config.ConfigSource + ". Zmiany wprowadza się w plikach na serwerze; " +
-                   "tutaj można zmienić tylko adres serwera (Aktualizacja → Konfiguracja z serwera) i Konto Kiosku."
+                   "tutaj można zmienić tylko adres serwera i Konto Kiosku."
         };
         if (Central)
         {
             foreach (TabPage page in tabs.TabPages) if (page != statsTab && page != accountTab) Preview(page);   // Statystyki only reads; the account is this PC's own.
-            autoUpdate.Enabled = false;
-            updateChannel.Enabled = false;
             configSource.ReadOnly = false;
             sourceUser.ReadOnly = sourcePassword.ReadOnly = false;
             removeAccount.Enabled = true;
             accountsKey.ReadOnly = false;
             removeKey.Enabled = true;
             sourceTest.Enabled = true;
-            updateButton.Enabled = true;
             foreach (var (_, choice, _) in rotations) choice.Enabled = true;   // The monitors are this PC's own.
             rotateNow!.Enabled = true;
         }
@@ -1414,8 +1366,6 @@ internal sealed class SettingsView : UserControl
             BrowserOnlyBookmarks = onlyBookmarks.Checked,
             AdminCards = adminCards.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new AdminCard { Name = Cell(r, "Name"), Id = Cell(r, "Id"), Enabled = IsEnabled(r) }).ToArray(),
             AllowWindowsAdministrators = allowWindowsAdmins.Checked,
-            AutoUpdate = autoUpdate.Checked,
-            UpdateChannel = updateChannel.SelectedIndex == 1 ? "dev" : "main",
             AdminHotkey = adminHotkey.Checked,
             ConfigSource = configSource.Text.Trim().Trim('"'),
             ShowHelp = showHelp.Checked,

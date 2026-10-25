@@ -156,7 +156,7 @@ internal sealed class FidoSignIn : IDisposable
             if (!ValidEmbed(embed)) return new CardService.Response { Code = -2, Message = "Nieprawidłowe miejsce logowania kartą." };
             // Only the installed Kiosk (Program Files) may have programs started as the person who signs in.
             if (!SharedAccounts.IsInstalledKiosk(clientProgram))
-                return new CardService.Response { Code = -2, Message = "Logowanie kartą działa tylko dla Kiosku zainstalowanego w Program Files (Ctrl+Alt+U albo Install-KioskShell.ps1)." };
+                return new CardService.Response { Code = -2, Message = "Logowanie kartą działa tylko dla Kiosku zainstalowanego w Program Files (Install-KioskShell.ps1)." };
             var program = Path.Combine(AppContext.BaseDirectory, Folder, Program);
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + "). Zaktualizuj usługę Kiosk Card." };
             if (!OpenProcessToken(GetCurrentProcess(), 0x02000000, out var own)) throw new Win32Exception(); // MAXIMUM_ALLOWED

@@ -8,7 +8,6 @@
       "Url": "https://www.google.com"
     }
   ],
-  "AutoUpdate": false,
   "ShowHelp": true,
   "HelpCloseSeconds": 60,
   "CardRemovedSeconds": 3,

@@ -111,10 +111,9 @@ internal sealed record Config
     public Bookmark[] Bookmarks { get; init; } = [];
     /// <summary>When true the browser opens only bookmarked sites (and their subdomains) plus BrowserAllowedDomains.</summary>
     public bool EnableBrowser { get; init; } = true;
-    /// <summary>When Kiosk starts it installs a newer GitHub release by itself (Konfiguracja → Aktualizacja).</summary>
-    public bool AutoUpdate { get; init; } = true;
-    /// <summary>Konfiguracja → Aktualizacja → "Kanał": "main" (stabilne wydania) or "dev" (także wersje testowe).</summary>
-    public string UpdateChannel { get; init; } = "main";
+    // Read and discard obsolete update settings so existing strict JSON configurations still load.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? AutoUpdate { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? UpdateChannel { get; init; }
     /// <summary>Ctrl+Alt+K opens Konfiguracja (as a Windows administrator); off = only an administrator's session or card.</summary>
     public bool AdminHotkey { get; init; } = true;
     /// <summary>First start: ask whether this PC uses its own configuration or one from a server (FirstRunSetup).
@@ -249,11 +248,9 @@ internal sealed record Config
             ChangeUserAfterSeconds = IdleSeconds.HasValue ? Math.Max(ChangeUserAfterSeconds, IdleSeconds.Value * 2) : ChangeUserAfterSeconds,
             Applications = applications,
             EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
-            // Version 4: automatic update is on by default (build-66 saved it switched off without asking).
-            AutoUpdate = ConfigVersion < 4 || AutoUpdate,
             MenuCategories = MenuCategory.Complete(MenuCategories, HelpActions),
             ConfigVersion = CurrentVersion,
-            Server = null, Port = null, IdleSeconds = null
+            Server = null, Port = null, IdleSeconds = null, AutoUpdate = null, UpdateChannel = null
         };
     }
 
@@ -330,7 +327,6 @@ internal sealed record Config
         if (CardRemovedSeconds is < 1 or > 300) throw new InvalidDataException("Wylogowanie po zdjęciu karty: od 1 do 300 sekund.");
         if (NewsSeconds is < 3 or > 300) throw new InvalidDataException("Czas komunikatu: od 3 do 300 sekund.");
         if (StatsExportHours is < 0 or > 168) throw new InvalidDataException("Eksport statystyk: od 0 do 168 godzin.");
-        if (!Updater.ValidChannel(UpdateChannel)) throw new InvalidDataException("Kanał aktualizacji: main albo dev.");
         if (LogLimitMb is < 0 or > 100000) throw new InvalidDataException("Logi: od 0 do 100000 MB.");
         if (NewsRefreshMinutes is < 1 or > 1440) throw new InvalidDataException("Odświeżanie komunikatów: od 1 do 1440 minut.");
         if (BrandTitle == null || BrandSubtitle == null || BrandLogo == null) throw new InvalidDataException("Napis i logo pulpitu nie mogą być null.");

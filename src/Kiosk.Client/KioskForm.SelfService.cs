@@ -4,7 +4,7 @@ namespace Kiosk.Client;
 /// Punkt samoobsługowy (SessionMode.SelfService): the start screen with Szybka pomoc and Komunikaty, without Menu
 /// or taskbar. WindowsSession uses the person's existing Windows sign-in for SSO. The optional CardBroker path shows
 /// the card + PIN sign-in (<see cref="FidoSignIn"/>) inside the start screen and runs help pages as that person until
-/// the card is removed. Ctrl+Alt+K (Konfiguracja) and Ctrl+Alt+U (update) work in both paths.
+/// the card is removed. Ctrl+Alt+K (Konfiguracja) works in both paths.
 /// </summary>
 internal sealed partial class KioskForm
 {

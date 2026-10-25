@@ -92,7 +92,7 @@ internal static class CentralConfig
         await Task.WhenAll(machine, person, account ?? Task.FromResult(new CardService.Response()));
         // A service from before "testconfig" treats it as a card request and answers about the card.
         static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
-            (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – zaktualizuj Kiosk (Ctrl+Alt+U)" : r.Message);
+            (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – poproś administratora o wdrożenie nowej paczki" : r.Message);
         return "Komputer (usługa Kiosk Card): " + Line(machine.Result) +
             (account != null ? "\nKonto " + typed!.User.Trim() + " (zapisze się po Zapisz): " + Line(account.Result) : "") +
             "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
