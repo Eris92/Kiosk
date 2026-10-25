@@ -73,6 +73,8 @@ Karuzela komunikatów uruchamia timer obrotu tylko wtedy, gdy jest widoczna i ma
 
 Obrazy komunikatów z folderu i SharePointa są kopiowane do niezależnych bitmap. Strumień źródłowy oraz dekoder są zamykane po odczycie, zanim karuzela wyświetli obraz. Test komunikatów wczytuje plik PNG i rysuje go w pulpicie Kiosku.
 
+Logo pulpitu i podgląd obrazu w edytorze komunikatów są kopiowane do niezależnych bitmap; plik i dekoder są zamykane po odczycie. Edytor zwalnia także obraz przy zamknięciu. Test klienta rysuje logo po usunięciu pliku źródłowego. Osobny lokalny test edytora wczytał podgląd, narysował go po usunięciu pliku i sprawdził zwolnienie obrazu przy zamknięciu formularza. Zegary pulpitu i paska zadań zatrzymują sekundowe timery, gdy ich kontrolki są ukryte, i odświeżają czas po ponownym pokazaniu.
+
 Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI i lokalnie zainstalowany MSVC zbudowały natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
 
 Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną. Usługa pozostaje na wcześniej zainstalowanej wersji pliku EXE; pilot jest aktualizowany niezależnie. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.

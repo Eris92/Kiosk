@@ -132,7 +132,12 @@ internal sealed class Taskbar : Panel
         // A clean bar: Menu, windows and the clock. Lock, sign-out and close live in Menu → System.
         LockButton.Visible = LogoutButton.Visible = ExitButton.Visible = Status.Visible = false;
         clockTimer.Tick += (_, _) => UpdateClock();
-        clockTimer.Start();
+        VisibleChanged += (_, _) =>
+        {
+            if (Disposing || IsDisposed) return;
+            if (Visible) { UpdateClock(); clockTimer.Start(); }
+            else clockTimer.Stop();
+        };
         UpdateClock();
     }
 

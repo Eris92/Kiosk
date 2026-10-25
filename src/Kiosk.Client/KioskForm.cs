@@ -2254,7 +2254,6 @@ internal sealed partial class KioskForm : Form
         SettingsView.ScaleOverride = null;
     }
 
-    /// <summary>Self-test: a picture of the taskbar with the Start menu open (out\screenshots\shell.png), to check the look in CI.</summary>
     /// <summary>kiosk-news.json is read with its pictures, dates and actions; a picture of the desktop with the messages.</summary>
     private void NewsSmokeTest()
     {
@@ -2281,6 +2280,15 @@ internal sealed partial class KioskForm : Form
                 ]
                 """);
             var all = News.Load(folder);
+            var logoFile = Path.Combine(folder, "a.png");
+            desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, logoFile);
+            var loadedLogo = desktop.Controls.OfType<PictureBox>().FirstOrDefault(p => p.Image != null)?.Image;
+            if (loadedLogo == null) throw new InvalidOperationException("The configured logo was not decoded.");
+            File.Delete(logoFile);
+            using (var renderedLogo = new Bitmap(loadedLogo.Width, loadedLogo.Height))
+            using (var graphics = Graphics.FromImage(renderedLogo))
+                graphics.DrawImage(loadedLogo, 0, 0);
+            desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
             var items = all.Where(i => !i.IsBar).ToList();
             if (all.Count(i => i.IsBar) != 1 || News.ParseColor("red", Color.Empty).ToArgb() != Color.Red.ToArgb() ||
                 News.ParseColor("#00FF00", Color.Empty).ToArgb() != Color.Lime.ToArgb() || News.ParseColor("nic", Color.Blue) != Color.Blue)

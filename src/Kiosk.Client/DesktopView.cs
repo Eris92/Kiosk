@@ -243,7 +243,12 @@ internal sealed partial class DesktopView : UserControl
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         InitPortal();
         clockTimer.Tick += (_, _) => UpdateClock();
-        clockTimer.Start();
+        VisibleChanged += (_, _) =>
+        {
+            if (Disposing || IsDisposed) return;
+            if (Visible) { UpdateClock(); clockTimer.Start(); }
+            else clockTimer.Stop();
+        };
         UpdateClock();
         UpdateStatus("Witaj w Kiosku", "Przyłóż kartę, aby rozpocząć pracę.");
     }
@@ -404,11 +409,15 @@ internal sealed partial class DesktopView : UserControl
             var old = logo.Image;
             logo.Image = null;
             old?.Dispose();
-            // Read into memory, so the file is not kept locked; a missing or broken file simply shows no logo.
+            // The displayed bitmap owns its pixels; the source file can close after decoding.
             try
             {
-                if (logoFile.Length > 0 && File.Exists(logoFile)) logo.Image = Image.FromStream(new MemoryStream(File.ReadAllBytes(logoFile)));
-                else if (logoFile.Length > 0) Audit.Write("logo_missing", logoFile);
+                if (logoFile.Length > 0)
+                {
+                    using var stream = File.OpenRead(logoFile);
+                    using var decoded = Image.FromStream(stream);
+                    logo.Image = new Bitmap(decoded);
+                }
             }
             catch (Exception ex) { logo.Image = null; Audit.Write("logo_missing", logoFile + ": " + ex.Message); }
         }

@@ -348,9 +348,17 @@ internal sealed class MainForm : Form
         try
         {
             var path = Path.IsPathFullyQualified(e.Image) ? e.Image : Path.Combine(file.Folder, e.Image);
-            if (File.Exists(path)) previewImage = Image.FromStream(new MemoryStream(File.ReadAllBytes(path)));
+            using var stream = File.OpenRead(path);
+            using var decoded = Image.FromStream(stream);
+            previewImage = new Bitmap(decoded);
         }
         catch (Exception) { previewImage = null; }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { previewImage?.Dispose(); previewImage = null; }
+        base.Dispose(disposing);
     }
 
     /// <summary>Roughly how the kiosks show it: a coloured bar across the top, or a slide with its picture.</summary>
