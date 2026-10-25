@@ -18,6 +18,8 @@ Lokalnie zainstalowano Visual Studio Build Tools z obciążeniem C++. `scripts/B
 
 Klient nie pobiera już wydania GitHub i nie podmienia plików we własnym katalogu. Ta ścieżka nie odpowiadała obecnej paczce CI, a kopiowanie pojedynczych plików mogło zostawić mieszankę wersji. Usunięto również skrót `Ctrl+Alt+U` i operację `update` usługi. Dawne pola konfiguracji `AutoUpdate` i `UpdateChannel` są ignorowane przy odczycie; zapis aktualnej konfiguracji je usuwa. Nową paczkę weryfikuje `Verify-Package.ps1`, a administrator wdraża klienta i usługę osobno skryptami `Install-KioskShell.ps1` oraz `Install-KioskCardService.ps1` do katalogów wersjonowanych. Kandydat CI pozostaje niepodpisany i służy do testów; przed produkcją wymagany jest podpis organizacji.
 
+Instalator stanowiska administracyjnego `Install-KioskConfig.ps1` także odkłada teraz klienta do osobnego katalogu. Nie zatrzymuje procesu, nie nadpisuje działających plików i przy odinstalowaniu usuwa tylko własne skróty. Walidacja konfiguracji działa również podczas `-WhatIf` w PowerShell 5.1 i 7. W produkcyjnym kroku podpisu uwzględniono wszystkie siedem plików PE tworzonych w tym repozytorium: klienta, edytor konfiguracji, edytor komunikatów, broker FIDO i kafelek logowania. Paczka testowa pozostaje niepodpisana, ponieważ na tym komputerze nie ma certyfikatu organizacji; wymagany jest test podpisu i weryfikacji z tym certyfikatem.
+
 ## Granica tożsamości
 
 | Stanowisko | Tożsamość lokalnych procesów w `WindowsShell` | Profil RDP do sprawdzenia w środowisku |

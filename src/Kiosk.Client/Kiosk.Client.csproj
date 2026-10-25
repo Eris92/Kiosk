@@ -8,7 +8,7 @@
     <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
     <!-- Line numbers in logged errors without a separate Kiosk.Client.pdb. -->
     <DebugType>embedded</DebugType>
-    <!-- Uses the .NET 10 Desktop Runtime installed in Windows (scripts\Build.ps1 publishes without its own .NET). -->
+    <!-- Local dotnet build is framework-dependent; scripts\Build.ps1 publishes the client self-contained. -->
     <SelfContained>false</SelfContained>
     <!-- DOTNET_STARTUP_HOOKS cannot load foreign code into the Kiosk (the service trusts the installed Kiosk program). -->
     <StartupHookSupport>false</StartupHookSupport>

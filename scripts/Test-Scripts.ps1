@@ -141,9 +141,12 @@ $fixture = Join-Path $outRoot ('verify-fixture-' + [Guid]::NewGuid().ToString('N
 $verify = Join-Path $PSScriptRoot 'Verify-Package.ps1'
 try {
     $required = @(
-        'client\Kiosk.Client.exe', 'client\Kiosk.Client.dll', 'client\client.json',
+        'client\Kiosk.Client.exe', 'client\Kiosk.Client.dll', 'client\KioskKonfiguracje.exe',
+        'client\news-example\KioskKomunikaty.exe', 'client\news-example\KioskKomunikaty.dll',
+        'client\fido\FidoRun.exe', 'client\client.json',
         'credential-provider\KioskCredentialProvider.dll', 'config\client.json',
         'scripts\Install-KioskShell.ps1', 'scripts\Install-KioskCardService.ps1',
+        'scripts\Install-KioskConfig.ps1',
         'scripts\Install-KioskCredentialProvider.ps1', 'scripts\Set-KioskSignInScreen.ps1'
     )
     foreach ($name in $required) {

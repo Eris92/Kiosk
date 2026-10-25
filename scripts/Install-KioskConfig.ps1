@@ -1,106 +1,125 @@
-﻿<#
+#Requires -Version 5.1
+<#
 .SYNOPSIS
-Simple installation for preparing the configuration: the Kiosk in Program Files and its configuration, nothing else.
-
+Installs the configuration editor on an administrator's PC without changing its Windows shell.
 .DESCRIPTION
-For an administrator's PC where the configuration (client.json, Menu, Kategorie, news, logo) is prepared and tested.
-  * Copies the Kiosk build to -InstallPath and, when there is none yet, the configuration to -ConfigPath
-    (administrators: full control, users: read only). An existing configuration is kept as it is.
-  * Adds two shortcuts (Start menu and desktop):
-      "Kiosk - Konfiguracja" opens only Konfiguracja (as administrator);
-      "Kiosk" starts the Kiosk in a window of this account, to see the result.
-  * No Kiosk Card service, no shell change, no sign-in screen or registry settings, Explorer stays.
-    Card sign-in and updates without an administrator need the full installation (Install-KioskShell.ps1 and
-    Install-KioskCardService.ps1).
--Uninstall removes the shortcuts and the program folder; the configuration stays.
-Run as administrator. Supports -WhatIf.
-
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\scripts\Install-KioskConfig.ps1
+Stages each client version in a new directory, validates the selected configuration, and changes
+only the editor/preview shortcuts. An existing configuration and older payloads are retained.
+-Uninstall removes only shortcuts created by this installer; it retains the configuration and payloads.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$SourcePath = (Join-Path $PSScriptRoot '..\out\client'),
-    [string]$InstallPath = (Join-Path $env:ProgramFiles 'Kiosk'),
+    [string]$SourcePath = '',
+    [string]$InstallPath = (Join-Path $env:ProgramFiles 'Kiosk\ConfigEditor'),
     [string]$ConfigPath = (Join-Path $env:ProgramData 'Kiosk\client.json'),
-    [string]$SourceConfig = (Join-Path $PSScriptRoot '..\config\client.json'),
+    [string]$SourceConfig = '',
     [switch]$NoDesktopShortcuts,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
-# 32-bit PowerShell (some deployment tools) sees Program Files (x86) and the 32-bit registry: the Kiosk would land in the wrong place.
-if (-not [Environment]::Is64BitProcess) { throw 'Uruchom 64-bitowy PowerShell (C:\Windows\Sysnative\WindowsPowerShell\v1.0\powershell.exe).' }
-$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+Assert-KioskAdministrator
+if (-not $SourceConfig) { $SourceConfig = Join-Path $PSScriptRoot '..\config\client.json' }
+$InstallPath = Assert-KioskProgramPath $InstallPath
+$ConfigPath = Assert-KioskDataFilePath $ConfigPath '.json'
 
-$exe = Join-Path $InstallPath 'Kiosk.Client.exe'
-$folders = @([Environment]::GetFolderPath('CommonPrograms'))
-if (-not $NoDesktopShortcuts) { $folders += [Environment]::GetFolderPath('CommonDesktopDirectory') }
-$shortcuts = foreach ($folder in $folders) { (Join-Path $folder 'Kiosk - Konfiguracja.lnk'), (Join-Path $folder 'Kiosk.lnk') }
+# This tool must not take ownership of the shell or card-service directories.
+$sharedRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramFiles 'Kiosk')).TrimEnd('\')
+foreach ($reserved in @($sharedRoot, (Join-Path $sharedRoot 'ClientVersions'), (Join-Path $sharedRoot 'CardService'))) {
+    if ([string]::Equals($InstallPath, $reserved, [StringComparison]::OrdinalIgnoreCase) -or
+        (-not [string]::Equals($reserved, $sharedRoot, [StringComparison]::OrdinalIgnoreCase) -and
+         $InstallPath.StartsWith($reserved + '\', [StringComparison]::OrdinalIgnoreCase))) {
+        throw "Config editor InstallPath cannot use a shared Kiosk deployment directory: $InstallPath"
+    }
+}
+
+$links = @(
+    [pscustomobject]@{ Path = (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Kiosk - Edytor konfiguracji.lnk'); Admin = $true; Arguments = ('--settings "{0}"' -f $ConfigPath) },
+    [pscustomobject]@{ Path = (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Kiosk - Podglad.lnk'); Admin = $false; Arguments = ('"{0}"' -f $ConfigPath) },
+    [pscustomobject]@{ Path = (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Kiosk - Edytor konfiguracji.lnk'); Admin = $true; Arguments = ('--settings "{0}"' -f $ConfigPath) },
+    [pscustomobject]@{ Path = (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Kiosk - Podglad.lnk'); Admin = $false; Arguments = ('"{0}"' -f $ConfigPath) }
+)
+$shell = New-Object -ComObject WScript.Shell
+function Test-OwnedShortcut([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $target = $shell.CreateShortcut($Path).TargetPath
+    if (-not $target.StartsWith($InstallPath + '\', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return $target.Substring($InstallPath.Length + 1) -match '^release-[a-f0-9]{32}\\Kiosk\.Client\.exe$'
+}
 
 if ($Uninstall) {
-    foreach ($link in $shortcuts) { if ((Test-Path $link) -and $PSCmdlet.ShouldProcess($link, 'remove shortcut')) { Remove-Item $link -Force } }
-    if ((Test-Path $InstallPath) -and $PSCmdlet.ShouldProcess($InstallPath, 'remove Kiosk')) {
-        Get-Process Kiosk.Client -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$InstallPath\*" } | Stop-Process -Force
-        Remove-Item $InstallPath -Recurse -Force
+    foreach ($link in $links) {
+        if (-not (Test-Path -LiteralPath $link.Path -PathType Leaf)) { continue }
+        if (-not (Test-OwnedShortcut $link.Path)) { Write-Warning "Skipping a shortcut not owned by this installer: $($link.Path)"; continue }
+        if ($PSCmdlet.ShouldProcess($link.Path, 'remove configuration-editor shortcut')) {
+            Remove-Item -LiteralPath $link.Path -Force
+        }
     }
-    Write-Output "Kiosk removed. The configuration stays in $ConfigPath."
+    if ($WhatIfPreference) { Write-Output 'WhatIf: configuration-editor shortcuts would be removed; configuration and versioned program files retained.' }
+    else { Write-Output 'Configuration-editor shortcuts removed; configuration and versioned program files retained.' }
     return
 }
 
-# 1. Program for everyone.
-if (-not (Test-Path (Join-Path $SourcePath 'Kiosk.Client.exe'))) { throw "No Kiosk build in $SourcePath (unzip Kiosk-win-x64.zip or run scripts\Build.ps1)." }
-. (Join-Path $PSScriptRoot 'KioskRuntime.ps1')
-Assert-KioskRuntime $SourcePath
-if ($PSCmdlet.ShouldProcess($InstallPath, 'copy Kiosk')) {
-    Get-Process Kiosk.Client -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$InstallPath\*" } | Stop-Process -Force
-    New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
-    Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
-    Remove-KioskOldRuntime $SourcePath $InstallPath
+if (-not $SourcePath) { $SourcePath = Get-KioskClientSource }
+$source = (Resolve-Path -LiteralPath $SourcePath).ProviderPath
+$sourceExe = Join-Path $source 'Kiosk.Client.exe'
+if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf) -or
+    -not (Test-Path -LiteralPath (Join-Path $source 'hostfxr.dll') -PathType Leaf)) {
+    throw 'Install-KioskConfig requires a published self-contained Kiosk client.'
 }
-
-# 2. Configuration: copied only when there is none; writable by administrators only (Konfiguracja saves as one).
-if ($PSCmdlet.ShouldProcess($ConfigPath, 'write configuration when missing')) {
-    $directory = Split-Path $ConfigPath
-    New-Item -ItemType Directory -Force -Path $directory | Out-Null
-    if (Test-Path $ConfigPath) { Write-Output "Configuration kept: $ConfigPath" }
-    else {
-        Copy-Item $SourceConfig $ConfigPath
-        # The release package carries the example messages once, in out\client\news-example.
-        $news = @((Join-Path (Split-Path $SourceConfig) 'news'), (Join-Path $SourcePath 'news-example')) | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if ($news) { Copy-Item $news (Join-Path $directory 'news') -Recurse -Force }
-        Write-Output "Configuration copied: $ConfigPath"
-    }
-    # Owner: Administrators (a folder a user created first would stay theirs, with the right to change its permissions).
-    & icacls.exe $directory /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls /setowner failed for $directory" }
-    & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "icacls failed for $directory" }
-}
-
-# 3. Shortcuts.
-function New-Shortcut([string]$Path, [string]$Arguments, [string]$Description, [switch]$AsAdministrator) {
-    if (-not $PSCmdlet.ShouldProcess($Path, 'create shortcut')) { return }
-    New-Item -ItemType Directory -Force -Path (Split-Path $Path) | Out-Null
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($Path)
-    $link.TargetPath = $exe
-    $link.Arguments = $Arguments
-    $link.WorkingDirectory = $InstallPath
-    $link.IconLocation = "$exe,0"
-    $link.Description = $Description
-    $link.Save()
-    if ($AsAdministrator) {
-        # "Run as administrator" flag of a .lnk file (byte 0x15, bit 0x20).
-        $bytes = [IO.File]::ReadAllBytes($Path)
-        $bytes[0x15] = $bytes[0x15] -bor 0x20
-        [IO.File]::WriteAllBytes($Path, $bytes)
+$configDirectory = Split-Path -Parent $ConfigPath
+foreach ($path in @($configDirectory, $ConfigPath)) {
+    if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Configuration path contains a junction or symbolic link: $path"
     }
 }
-foreach ($folder in $folders) {
-    New-Shortcut (Join-Path $folder 'Kiosk - Konfiguracja.lnk') ('--settings "{0}"' -f $ConfigPath) 'Kiosk: Konfiguracja' -AsAdministrator
-    New-Shortcut (Join-Path $folder 'Kiosk.lnk') ('"{0}"' -f $ConfigPath) 'Kiosk'
+$selectedConfig = Get-KioskInstallConfigSource $ConfigPath $SourceConfig $false
+Assert-KioskClientConfig $sourceExe $selectedConfig
+$desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
+$installLinks = if ($NoDesktopShortcuts) { @($links | Where-Object { -not $_.Path.StartsWith($desktop + '\', [StringComparison]::OrdinalIgnoreCase) }) } else { $links }
+foreach ($link in $installLinks) {
+    if ((Test-Path -LiteralPath $link.Path -PathType Leaf) -and -not (Test-OwnedShortcut $link.Path)) {
+        throw "Shortcut belongs to another installation: $($link.Path)"
+    }
+}
+$release = 'release-' + [Guid]::NewGuid().ToString('N')
+$target = Join-Path $InstallPath $release
+if (-not $PSCmdlet.ShouldProcess($target, 'stage a verified client and update editor shortcuts')) { return }
+
+Set-KioskDirectoryAcl $InstallPath -UsersRead
+New-Item -ItemType Directory -Path $target | Out-Null
+Copy-KioskPayloadVerified $source $target
+$exe = Join-Path $target 'Kiosk.Client.exe'
+Assert-KioskClientConfig $exe $selectedConfig
+if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    Set-KioskDirectoryAcl $configDirectory -UsersRead
+    Set-KioskConfigAtomically $ConfigPath (Get-Content -LiteralPath $selectedConfig -Raw -Encoding UTF8)
+    Set-KioskFileAcl $ConfigPath -UsersRead
 }
 
-Write-Output "Done. Kiosk: $exe"
-Write-Output "Open 'Kiosk - Konfiguracja' from the Start menu or the desktop to edit $ConfigPath."
+$previous = @{}
+try {
+    foreach ($link in $installLinks) {
+        $path = $link.Path
+        $previous[$path] = if (Test-Path -LiteralPath $path -PathType Leaf) { [IO.File]::ReadAllBytes($path) } else { $null }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+        $shortcut = $shell.CreateShortcut($path)
+        $shortcut.TargetPath = $exe
+        $shortcut.Arguments = $link.Arguments
+        $shortcut.WorkingDirectory = $target
+        $shortcut.IconLocation = "$exe,0"
+        $shortcut.Save()
+        if ($link.Admin) {
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $bytes[0x15] = $bytes[0x15] -bor 0x20
+            [IO.File]::WriteAllBytes($path, $bytes)
+        }
+    }
+} catch {
+    foreach ($path in $previous.Keys) {
+        if ($null -eq $previous[$path]) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        else { [IO.File]::WriteAllBytes($path, $previous[$path]) }
+    }
+    throw
+}
+Write-Output "Configuration editor ready: $exe (configuration: $ConfigPath)"

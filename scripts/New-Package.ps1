@@ -59,7 +59,7 @@ try {
     $scripts = Join-Path $stage 'scripts'
     New-Item -ItemType Directory -Path $scripts | Out-Null
     foreach ($name in @('Deployment.Common.ps1','Install-KioskShell.ps1','Install-KioskCardService.ps1',
-        'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1','KioskRuntime.ps1',
+        'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1',
         'Set-KioskConfigSource.ps1','Set-KioskKeyboardLock.ps1','Set-KioskSharedAccount.ps1',
         'Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $scripts
@@ -68,6 +68,10 @@ try {
         $ownedFiles = @(
             (Join-Path $stage 'client\Kiosk.Client.exe'),
             (Join-Path $stage 'client\Kiosk.Client.dll'),
+            (Join-Path $stage 'client\KioskKonfiguracje.exe'),
+            (Join-Path $stage 'client\news-example\KioskKomunikaty.exe'),
+            (Join-Path $stage 'client\news-example\KioskKomunikaty.dll'),
+            (Join-Path $stage 'client\fido\FidoRun.exe'),
             (Join-Path $stage 'credential-provider\KioskCredentialProvider.dll')
         ) + @(Get-ChildItem -LiteralPath $scripts -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
         foreach ($file in $ownedFiles) {

@@ -35,7 +35,13 @@ function Assert-KioskCardServiceReady {
 function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath) {
     $report = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-validation-' + [Guid]::NewGuid().ToString('N') + '.txt')
     $arguments = '--validate-config "{0}" "{1}"' -f $ConfigPath, $report
-    $process = Start-Process -FilePath $Executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    # Validation only writes a temporary report; it must still run during an installer's -WhatIf preflight.
+    # Windows PowerShell 5.1 Start-Process has no -WhatIf parameter, so set the preference in this scope.
+    $previousWhatIf = $WhatIfPreference
+    try {
+        $WhatIfPreference = $false
+        $process = Start-Process -FilePath $Executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    } finally { $WhatIfPreference = $previousWhatIf }
     try {
         if (-not $process.WaitForExit(30000)) {
             $process.Kill()
@@ -46,7 +52,7 @@ function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath) {
         if ($process.ExitCode -ne 0 -or $detail -ne 'OK') { throw "Client configuration validation failed: $detail" }
     } finally {
         $process.Dispose()
-        if (Test-Path -LiteralPath $report) { Remove-Item -LiteralPath $report -Force }
+        if (Test-Path -LiteralPath $report) { [IO.File]::Delete($report) }
     }
 }
 

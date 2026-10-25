@@ -31,12 +31,12 @@ CI builds and verifies an unsigned deployment candidate on `main` and `codex/**`
 | Script | What it does |
 | --- | --- |
 | `Install-KioskShell.ps1` | Makes the PC a shared kiosk. The Kiosk becomes the Windows shell, in `C:\Program Files\Kiosk`, with its configuration in `C:\ProgramData\Kiosk\client.json`. `-Uninstall` reverts it. |
-| `Install-KioskCardService.ps1` | The **Kiosk Card** service (LocalSystem). It handles the card PIN, card sign-in, shared accounts, updates and the watchdog that restarts a crashed or hung Kiosk. |
+| `Install-KioskCardService.ps1` | The **Kiosk Card** service (LocalSystem). It handles the card PIN, card sign-in, shared accounts and the watchdog that restarts a crashed or hung Kiosk. |
 | `Set-KioskSignInScreen.ps1` | The Windows sign-in screen in the Kiosk look, with security key sign-in. It also removes the sign-in tile of old test builds. `-SecurityKeyOnly` hides the password tiles. |
 | `Set-KioskKeyboardLock.ps1` | Locks Ctrl+Alt+Del options and Windows shortcuts in Windows itself. No program can block Ctrl+Alt+Del. |
 | `Set-KioskConfigSource.ps1` | Konfiguracja z serwera: one configuration on a share for many PCs. |
 | `Set-KioskSharedAccount.ps1` | Shared accounts (`accounts.kiosk`) for pages and network folders. |
-| `Install-KioskConfig.ps1` | An administrator's PC for preparing the configuration. It adds Start menu shortcuts and leaves Explorer as the shell. |
+| `Install-KioskConfig.ps1` | An administrator's PC for preparing the configuration. It stages a verified client in a versioned directory and updates only its editor/preview shortcuts; Explorer remains the shell. `-Uninstall` removes those shortcuts and retains the configuration and binaries. |
 
 All scripts support `-WhatIf`.
 
@@ -90,17 +90,9 @@ Set-Location Kiosk
 `out\client\fido\FidoRun.exe` is the card + PIN sign-in. It is shown inside the Kiosk window and started by
 the Kiosk Card service.
 
-## Applications in an RDS session
-
-`scripts/Start-SessionLauncher.ps1` with `config/apps.json` is a small launcher for a Remote Desktop
-Session Host. It is not part of the kiosk package. Run it as the RDS user, without elevation:
-
-```powershell
-powershell.exe -NoProfile -STA -File C:\Kiosk\scripts\Start-SessionLauncher.ps1 -ConfigPath C:\Kiosk\config\apps.json
-```
-
 ## Rollback
 
 `Install-KioskShell.ps1 -Uninstall`, `Install-KioskCardService.ps1 -Uninstall` and
 `Set-KioskSignInScreen.ps1 -Uninstall` restore Windows' own shell, services and sign-in screen.
-An older Kiosk version can be installed from its release package (`build-N`).
+`Install-KioskConfig.ps1 -Uninstall` removes only its configuration-editor shortcuts. A previous verified
+package can be redeployed into a new versioned directory if an application rollback is needed.

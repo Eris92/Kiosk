@@ -34,7 +34,7 @@ foreach ($entry in $manifest.Files) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing package file: $($entry.Path)" }
     Assert-OrdinaryPackagePath $file
     if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Package hash mismatch: $($entry.Path)" }
-    $ownedFile = $entry.Path -match '^client/Kiosk\.Client\.(exe|dll)$|^credential-provider/KioskCredentialProvider\.dll$|^scripts/.*\.ps1$'
+    $ownedFile = $entry.Path -match '^client/Kiosk\.Client\.(exe|dll)$|^client/KioskKonfiguracje\.exe$|^client/news-example/KioskKomunikaty\.(exe|dll)$|^client/fido/FidoRun\.exe$|^credential-provider/KioskCredentialProvider\.dll$|^scripts/.*\.ps1$'
     if ($verifySignatures -and ($ownedFile -or $entry.Path -match '\.(exe|dll)$')) {
         $signature = Get-AuthenticodeSignature -LiteralPath $file
         if ($signature.Status -ne 'Valid') { throw "A trusted Authenticode signature is required: $($entry.Path)" }
@@ -65,7 +65,11 @@ foreach ($file in $listed) {
         throw "Unexpected top-level package file: $file"
     }
 }
-foreach ($required in @('client\Kiosk.Client.exe','client\Kiosk.Client.dll','client\client.json','credential-provider\KioskCredentialProvider.dll','config\client.json','scripts\Install-KioskShell.ps1','scripts\Install-KioskCardService.ps1','scripts\Install-KioskCredentialProvider.ps1','scripts\Set-KioskSignInScreen.ps1')) {
+foreach ($required in @('client\Kiosk.Client.exe','client\Kiosk.Client.dll','client\KioskKonfiguracje.exe',
+    'client\news-example\KioskKomunikaty.exe','client\news-example\KioskKomunikaty.dll','client\fido\FidoRun.exe',
+    'client\client.json','credential-provider\KioskCredentialProvider.dll','config\client.json',
+    'scripts\Install-KioskShell.ps1','scripts\Install-KioskCardService.ps1','scripts\Install-KioskConfig.ps1',
+    'scripts\Install-KioskCredentialProvider.ps1','scripts\Set-KioskSignInScreen.ps1')) {
     if ($listed -notcontains $required) { throw "Package lacks required file: $required" }
 }
 $allowedConfig = @('config\client.json','config\client.example.json','config\intune\ShellLauncher.xml')
@@ -73,7 +77,7 @@ foreach ($file in $listed | Where-Object { $_ -like 'config\*' }) {
     if ($allowedConfig -notcontains $file) { throw "Unexpected configuration file in production package: $file" }
 }
 $allowedScripts = @('Deployment.Common.ps1','Install-KioskShell.ps1','Install-KioskCardService.ps1',
-    'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1','KioskRuntime.ps1',
+    'Install-KioskCredentialProvider.ps1','Install-KioskConfig.ps1',
     'Set-KioskConfigSource.ps1','Set-KioskKeyboardLock.ps1','Set-KioskSharedAccount.ps1',
     'Set-KioskSignInScreen.ps1','Test-Prerequisites.ps1','Verify-Package.ps1')
 foreach ($file in $listed | Where-Object { $_ -like 'scripts\*' }) {
