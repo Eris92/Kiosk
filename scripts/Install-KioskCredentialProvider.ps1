@@ -131,5 +131,8 @@ if ($ReplaceWindowsSecurityKey) { $hide += $fido }
 if ($HideOtherOptions) { $hide += $others }
 Set-Excluded -Add $hide
 if ($MakeDefault) { Write-Setting $policy 'DefaultCredentialProvider' $clsid }
-Write-Output "Kiosk sign-in tile registered: $dll"
-Write-Output 'Sign out and select the Kiosk card tile in Sign-in options. Existing Windows options are retained unless explicitly hidden.'
+if ($WhatIfPreference) { Write-Output "WhatIf: Kiosk sign-in tile would be registered: $dll" }
+else {
+    Write-Output "Kiosk sign-in tile registered: $dll"
+    Write-Output 'Sign out and select the Kiosk card tile in Sign-in options. Existing Windows options are retained unless explicitly hidden.'
+}

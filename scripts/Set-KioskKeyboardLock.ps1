@@ -14,7 +14,7 @@ of the PC, not of the Kiosk. Run as administrator; the script picks what this ed
     any more: no Task Manager, no Lock, no Sign out, no Change password. Only "Przełącz użytkownika" (fast user
     switching, also in Konfiguracja) and Cancel remain. These policies are for the whole PC, administrators included.
 
--Uninstall turns the filter or the policies off again. Supports -WhatIf.
+-Uninstall unblocks the filter keys or restores recorded Pro policies. Supports -WhatIf.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -24,6 +24,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 # 32-bit PowerShell (some deployment tools) sees Program Files (x86) and the 32-bit registry: the Kiosk would land in the wrong place.
 if (-not [Environment]::Is64BitProcess) { throw 'Uruchom 64-bitowy PowerShell (C:\Windows\Sysnative\WindowsPowerShell\v1.0\powershell.exe).' }
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -44,7 +45,9 @@ function Get-KeyboardFilter {
     try { Get-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -ErrorAction Stop } catch { $null }
 }
 
-$feature = Get-KeyboardFilter
+$edition = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID).EditionID
+# The feature can be listed as Disabled on Pro even though that edition cannot use Keyboard Filter.
+$feature = if ($edition -match 'Enterprise|Education|IoT') { Get-KeyboardFilter } else { $null }
 if ($feature) {
     if (-not $Uninstall -and $feature.State -ne 'Enabled' -and $PSCmdlet.ShouldProcess('Client-KeyboardFilter', 'enable feature')) {
         $result = Enable-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -All -NoRestart
@@ -63,21 +66,28 @@ if ($feature) {
         Set-Service -Name MsKeyboardFilter -StartupType Automatic
         if (-not $Uninstall) { Start-Service -Name MsKeyboardFilter }
     }
-    Write-Host ($(if ($Uninstall) { 'Filtr klawiatury: skróty odblokowane.' } else { 'Filtr klawiatury: zablokowane ' + ($keys -join ', ') + ' (poza administratorami).' }))
+    if ($WhatIfPreference) { Write-Output 'WhatIf: ustawienia Filtra klawiatury nie zostaly zmienione.' }
+    else { Write-Host ($(if ($Uninstall) { 'Filtr klawiatury: skróty odblokowane.' } else { 'Filtr klawiatury: zablokowane ' + ($keys -join ', ') + ' (poza administratorami).' })) }
     return
 }
 
 # Windows Pro / Business: the Ctrl+Alt+Del screen with nothing on it.
 $all = $policies + $(if ($HideSwitchUser) { @(@{ Key = $system; Name = 'HideFastUserSwitching' }) } else { @() })
-foreach ($p in $all) {
-    if (-not $PSCmdlet.ShouldProcess("$($p.Key)\$($p.Name)", $(if ($Uninstall) { 'remove' } else { 'set 1' }))) { continue }
-    if ($Uninstall) {
-        if ($p.Name -eq 'HideFastUserSwitching') { New-ItemProperty -Path $p.Key -Name $p.Name -Value 0 -PropertyType DWord -Force | Out-Null }   # Install-KioskShell.ps1 keeps it on.
-        else { Remove-ItemProperty -Path $p.Key -Name $p.Name -ErrorAction SilentlyContinue }
-    } else {
-        if (-not (Test-Path $p.Key)) { New-Item -Path $p.Key -Force | Out-Null }
-        New-ItemProperty -Path $p.Key -Name $p.Name -Value 1 -PropertyType DWord -Force | Out-Null
+if ($Uninstall) {
+    $state = Join-Path $env:ProgramData 'Kiosk\DeploymentState\keyboard-lock.clixml'
+    if (-not (Test-Path -LiteralPath $state)) { throw 'No saved keyboard policy state exists; do not remove policies set by another administrator.' }
+    if ($PSCmdlet.ShouldProcess('Windows Pro keyboard policies', 'restore recorded values where unchanged')) {
+        $journal = Open-KioskRegistryJournal 'keyboard-lock'
+        Restore-KioskRegistryJournal $journal
+    }
+} else {
+    $journal = $null
+    foreach ($p in $all) {
+        if (-not $PSCmdlet.ShouldProcess("$($p.Key)\$($p.Name)", 'set 1 and record previous value')) { continue }
+        if (-not $journal) { $journal = Open-KioskRegistryJournal 'keyboard-lock' }
+        Set-KioskRegistryValue $journal $p.Key $p.Name 1 'DWord'
     }
 }
-Write-Host ($(if ($Uninstall) { 'Ekran Ctrl+Alt+Del: opcje przywrócone.' }
-    else { 'Ta edycja Windows nie ma Filtra klawiatury: Ctrl+Alt+Del otworzy ekran Windows, ale bez Menedżera zadań, blokady, wylogowania i zmiany hasła. Działa po ponownym zalogowaniu.' }))
+if ($WhatIfPreference) { Write-Output 'WhatIf: zasady Ctrl+Alt+Del nie zostaly zmienione.' }
+else { Write-Host ($(if ($Uninstall) { 'Ekran Ctrl+Alt+Del: zapisane wartosci przywrocone tam, gdzie nie zostaly zmienione pozniej.' }
+    else { 'Ta edycja Windows nie ma Filtra klawiatury: Ctrl+Alt+Del otworzy ekran Windows, ale bez Menedżera zadań, blokady, wylogowania i zmiany hasła. Działa po ponownym zalogowaniu.' })) }

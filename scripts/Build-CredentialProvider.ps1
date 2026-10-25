@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([string]$OutputPath = (Join-Path $PSScriptRoot '..\out\credential-provider'))
+param([string]$OutputPath = '')
 $ErrorActionPreference = 'Stop'
+if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot '..\out\credential-provider' }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Install Visual Studio Build Tools with the x64 C++ tools and Windows SDK.' }
 $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath

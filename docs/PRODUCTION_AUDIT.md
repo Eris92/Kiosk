@@ -20,6 +20,8 @@ Klient nie pobiera już wydania GitHub i nie podmienia plików we własnym katal
 
 Instalator stanowiska administracyjnego `Install-KioskConfig.ps1` także odkłada teraz klienta do osobnego katalogu. Nie zatrzymuje procesu, nie nadpisuje działających plików i przy odinstalowaniu usuwa tylko własne skróty. Walidacja konfiguracji działa również podczas `-WhatIf` w PowerShell 5.1 i 7. W produkcyjnym kroku podpisu uwzględniono wszystkie siedem plików PE tworzonych w tym repozytorium: klienta, edytor konfiguracji, edytor komunikatów, broker FIDO i kafelek logowania. Paczka testowa pozostaje niepodpisana, ponieważ na tym komputerze nie ma certyfikatu organizacji; wymagany jest test podpisu i weryfikacji z tym certyfikatem.
 
+Domyślne ścieżki skryptów budowy, pakowania, weryfikacji, diagnostyki i instalacji powłoki są obliczane po związaniu parametrów, aby działały także w Windows PowerShell 5.1. `Install-KioskShell.ps1 -WhatIf` przechodzi na tym komputerze w PowerShell 5.1 i 7 bez zmiany systemu. `Set-KioskKeyboardLock.ps1` rozróżnia edycję Windows przed wyborem Keyboard Filter: na Pro używa zasad Ctrl+Alt+Del i zapisuje ich poprzednie wartości do wycofania; `-Uninstall` nie usuwa polityk bez zapisanego stanu ani nie nadpisuje późniejszych zmian. Sprawdzono tylko `-WhatIf` na Windows Pro oraz ogólne testy dziennika rejestru; rzeczywiste zastosowanie i wycofanie polityk oraz gałąź Keyboard Filter wymagają próby na dedykowanym obrazie Windows.
+
 ## Granica tożsamości
 
 | Stanowisko | Tożsamość lokalnych procesów w `WindowsShell` | Profil RDP do sprawdzenia w środowisku |

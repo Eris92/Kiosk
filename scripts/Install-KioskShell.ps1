@@ -13,7 +13,7 @@ param(
     [string]$SourcePath = '',
     [string]$InstallPath = (Join-Path $env:ProgramFiles 'Kiosk'),
     [string]$ConfigPath = (Join-Path $env:ProgramData 'Kiosk\client.json'),
-    [string]$SourceConfig = (Join-Path $PSScriptRoot '..\config\client.json'),
+    [string]$SourceConfig = '',
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
     [switch]$Uninstall
@@ -21,6 +21,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 Assert-KioskAdministrator
+if (-not $SourceConfig) { $SourceConfig = Join-Path $PSScriptRoot '..\config\client.json' }
 $InstallPath = Assert-KioskProgramPath $InstallPath
 $ConfigPath = Assert-KioskDataFilePath $ConfigPath '.json'
 $journal = $null

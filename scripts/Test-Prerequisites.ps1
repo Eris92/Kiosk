@@ -1,11 +1,12 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot '..\config\client.json'),
+    [string]$ConfigPath = '',
     [switch]$CheckNetwork,
     [ValidateRange(1,30)][int]$TimeoutSeconds = 3
 )
 $ErrorActionPreference = 'Stop'
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\config\client.json' }
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $readers = Get-Service SCardSvr -ErrorAction SilentlyContinue
 $cardService = Get-Service KioskCard -ErrorAction SilentlyContinue

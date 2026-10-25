@@ -50,7 +50,8 @@ if ($Uninstall) {
         $journal = Open-KioskRegistryJournal 'signin-screen'
         Restore-KioskRegistryJournal $journal
     }
-    Write-Output 'Recorded sign-in policies restored where unchanged; image retained. Review policy-conflict warnings.'
+    if ($WhatIfPreference) { Write-Output 'WhatIf: recorded sign-in policies would be restored; image retained.' }
+    else { Write-Output 'Recorded sign-in policies restored where unchanged; image retained. Review policy-conflict warnings.' }
     return
 }
 # 1. Background image in the Kiosk colours. The sign-in tile sits in the middle, so the text goes above it.
@@ -107,5 +108,8 @@ if ($SecurityKeyOnly) {
     Set-Value $systemPolicy 'ExcludedCredentialProviders' ($providers -join ',') 'String' -CommaSet
 }
 
-Write-Output "Done. Background: $ImagePath"
-Write-Output 'Lock the PC (Win+L) or sign out to see the sign-in screen.'
+if ($WhatIfPreference) { Write-Output "WhatIf: sign-in background and policies would be configured: $ImagePath" }
+else {
+    Write-Output "Done. Background: $ImagePath"
+    Write-Output 'Lock the PC (Win+L) or sign out to see the sign-in screen.'
+}

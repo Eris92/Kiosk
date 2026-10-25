@@ -8,12 +8,13 @@ installed code-signing certificate; -RequireSigned rejects builds without one.
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot '..\out\package'),
+    [string]$OutputPath = '',
     [switch]$RequireSigned,
     [string]$SigningCertificateThumbprint = '',
     [string]$TimestampServer = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot '..\out\package' }
 $certificate = $null
 $thumbprint = ''
 if ($SigningCertificateThumbprint) {

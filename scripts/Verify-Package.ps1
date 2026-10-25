@@ -1,11 +1,12 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$PackagePath = (Join-Path $PSScriptRoot '..'),
+    [string]$PackagePath = '',
     [switch]$RequireSigned,
     [string]$TrustedSignerThumbprint = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $PackagePath) { $PackagePath = Join-Path $PSScriptRoot '..' }
 $thumbprint = ($TrustedSignerThumbprint -replace '\s', '').ToUpperInvariant()
 if ($thumbprint -and $thumbprint -notmatch '^[A-F0-9]{40}$') { throw 'TrustedSignerThumbprint must be a 40-character certificate thumbprint.' }
 $verifySignatures = [bool]$RequireSigned -or [bool]$thumbprint

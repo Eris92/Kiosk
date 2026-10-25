@@ -8,12 +8,14 @@ The publish is staged beside OutputPath; a failed publish leaves the previous bu
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot '..\out\client'),
-    [string]$ConfigPath = (Join-Path $PSScriptRoot '..\config\client.json'),
+    [string]$OutputPath = '',
+    [string]$ConfigPath = '',
     [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+if (-not $OutputPath) { $OutputPath = Join-Path $PSScriptRoot '..\out\client' }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\config\client.json' }
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install the .NET 10 SDK.' }
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $destination = [IO.Path]::GetFullPath($OutputPath).TrimEnd('\')
