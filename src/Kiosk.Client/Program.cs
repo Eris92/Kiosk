@@ -81,10 +81,11 @@ internal static class Program
                             SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "Other", "Kiosk.Client.exe")))
                             throw new InvalidOperationException("Installed client path verification failed.");
                         form.SmokeTest();
+                        await SharePointNewsSmokeTestAsync(form);
                         await form.EmbeddedSmokeTestAsync();
                         await form.ApplicationSmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, settings round-trip, owned application window, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, SharePoint news request ordering, settings round-trip, owned application window, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }
@@ -130,6 +131,57 @@ internal static class Program
             else MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
+    }
+
+    private static async Task SharePointNewsSmokeTestAsync(Control owner)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string>();
+        using var news = new SharePointNews(owner, async (url, count) =>
+        {
+            calls.Add(url + "|" + count);
+            if (calls.Count == 1)
+            {
+                started.SetResult();
+                await release.Task;
+            }
+            return [new NewsItem { Title = url }];
+        });
+        var first = news.GetAsync("https://first.example", 1, "first-account");
+        await started.Task;
+        if (!news.Matches("https://first.example", 1, "first-account") || news.Matches("https://second.example", 2, "second-account"))
+            throw new InvalidOperationException("SharePoint news accepted cache from a different configuration.");
+        var duplicate = news.GetAsync("https://first.example", 1, "first-account");
+        var changed = news.GetAsync("https://second.example", 2, "second-account");
+        await Task.Yield();
+        if (calls.Count != 1) throw new InvalidOperationException("SharePoint news requests overlapped in one WebView2 controller.");
+        release.SetResult();
+        var firstItems = await first;
+        var duplicateItems = await duplicate;
+        var changedItems = await changed;
+        if (calls.Count != 2 || calls[0] != "https://first.example|1" || calls[1] != "https://second.example|2" ||
+            !ReferenceEquals(firstItems, duplicateItems) || changedItems[0].Title != "https://second.example" ||
+            !ReferenceEquals(news.Cached, changedItems) || !news.Matches("https://second.example", 2, "second-account"))
+            throw new InvalidOperationException("SharePoint news cache did not follow the latest configuration.");
+
+        var startedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var closing = new SharePointNews(owner, async (_, _) =>
+        {
+            startedAgain.SetResult();
+            await finish.Task;
+            return [new NewsItem { Title = "obsolete" }];
+        });
+        var active = closing.GetAsync("https://old.example", 1);
+        await startedAgain.Task;
+        var waiting = closing.GetAsync("https://new.example", 1);
+        closing.Dispose();
+        if ((await waiting.WaitAsync(TimeSpan.FromSeconds(2))).Count != 0)
+            throw new InvalidOperationException("A disposed SharePoint source kept a waiting request.");
+        finish.SetResult();
+        if ((await active.WaitAsync(TimeSpan.FromSeconds(2))).Count != 0 || closing.Cached.Count != 0)
+            throw new InvalidOperationException("A disposed SharePoint source published an obsolete result.");
     }
 }
 

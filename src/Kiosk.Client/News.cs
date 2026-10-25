@@ -54,21 +54,35 @@ internal static class News
         if (!File.Exists(file)) return items;
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
         var list = JsonSerializer.Deserialize<NewsItem[]>(File.ReadAllText(file), options) ?? [];
-        var today = DateTime.Today;
-        foreach (var item in list)
+        var now = DateTime.Now;
+        try
         {
-            if (item == null || !item.Enabled || item.Title.Length == 0 && item.Text.Length == 0 && item.Image.Length == 0 && item.Video.Length == 0) continue;
-            if (!Shown(item, DateTime.Now)) continue;
-            Image? picture = null;
-            if (item.Image.Length > 0)
+            foreach (var item in list)
             {
-                var path = Path.IsPathFullyQualified(item.Image) ? item.Image : Path.Combine(folder, item.Image);
-                // Read into memory so the share's file is not kept open.
-                try { if (File.Exists(path)) picture = DecodePicture(File.ReadAllBytes(path)); }
-                catch (Exception) { picture = null; }
+                if (item == null || !item.Enabled) continue;
+                // JSON null is legal even for a nonnullable C# property. One bad field must not break the news feed.
+                var safe = item with
+                {
+                    Title = item.Title ?? "", Text = item.Text ?? "", Image = item.Image ?? "", Button = item.Button ?? "",
+                    Action = item.Action ?? "", From = item.From ?? "", Until = item.Until ?? "", Kind = item.Kind ?? "",
+                    Color = item.Color ?? "", TextColor = item.TextColor ?? "", Video = item.Video ?? ""
+                };
+                if (safe.Title.Length == 0 && safe.Text.Length == 0 && safe.Image.Length == 0 && safe.Video.Length == 0) continue;
+                if (!Shown(safe, now)) continue;
+                var action = ResolveAction(safe.Action, folder);
+                var video = VideoFor(safe.Video, folder);
+                Image? picture = null;
+                if (safe.Image.Length > 0)
+                {
+                    var path = Path.IsPathFullyQualified(safe.Image) ? safe.Image : Path.Combine(folder, safe.Image);
+                    // Read into memory so the share's file is not kept open.
+                    try { if (File.Exists(path)) picture = DecodePicture(File.ReadAllBytes(path)); }
+                    catch (Exception) { picture = null; }
+                }
+                items.Add(safe with { Picture = picture, Action = action, VideoSource = video });
             }
-            items.Add(item with { Picture = picture, Action = ResolveAction(item.Action, folder), VideoSource = VideoFor(item.Video, folder) });
         }
+        catch { DisposePictures(items); throw; }
         return items;
     }
 
@@ -78,6 +92,14 @@ internal static class News
         using var stream = new MemoryStream(bytes);
         using var decoded = Image.FromStream(stream);
         return new Bitmap(decoded);
+    }
+
+    internal static HashSet<Image> Pictures(IEnumerable<NewsItem> items) =>
+        new(items.Where(item => item.Picture != null).Select(item => item.Picture!), ReferenceEqualityComparer.Instance);
+
+    internal static void DisposePictures(IEnumerable<NewsItem> items)
+    {
+        foreach (var picture in Pictures(items)) picture.Dispose();
     }
 
     /// <summary>A film: https://… as it is, a file (next to the json or a full path) only when it exists.</summary>

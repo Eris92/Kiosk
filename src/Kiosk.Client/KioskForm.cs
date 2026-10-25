@@ -78,6 +78,8 @@ internal sealed partial class KioskForm : Form
     private string screenBarsReported = "";
     // Komunikaty → "Ekrany wygaszacza": the bars also shown on the screens' content (empty = off).
     private List<NewsItem> screenBars = [];
+    private HashSet<Image> displayedNewsPictures = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Image> retiredNewsPictures = new(ReferenceEqualityComparer.Instance);
     private SharePointNews? sharePointNews;
     private readonly CardReader reader = new();
     private Func<CardIdentity?> identifyCard;
@@ -150,7 +152,17 @@ internal sealed partial class KioskForm : Form
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
             timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
         };
-        FormClosed += (_, _) => { newsTimer.Dispose(); updateTimer.Dispose(); sharePointNews?.Dispose(); menu.Dispose(); StopIdleScreens(); foreach (var host in hosts.Values) host.Dispose(); };
+        FormClosed += (_, _) =>
+        {
+            timer.Dispose(); newsTimer.Dispose(); updateTimer.Dispose(); screenRefresh.Dispose(); menu.Dispose();
+            StopIdleScreens();
+            NewsSlides.Publish([], config.NewsSeconds);
+            desktop.SetNews([], config.NewsSeconds);
+            screenBars = [];
+            sharePointNews?.Dispose();
+            ReplaceDisplayedNewsPictures([]);
+            foreach (var host in hosts.Values) host.Dispose();
+        };
         if (WindowsSessionMode) StartWindowsSession();
         RefreshChrome();
     }
@@ -1476,6 +1488,32 @@ internal sealed partial class KioskForm : Form
         finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
     }
 
+    private void RetireNewsPictures(IReadOnlyList<NewsItem> items)
+    {
+        retiredNewsPictures.UnionWith(News.Pictures(items));
+        ReleaseRetiredNewsPictures();
+    }
+
+    private void ReplaceDisplayedNewsPictures(IEnumerable<NewsItem> items)
+    {
+        var previous = displayedNewsPictures;
+        displayedNewsPictures = News.Pictures(items);
+        retiredNewsPictures.UnionWith(previous);
+        ReleaseRetiredNewsPictures();
+    }
+
+    private void ReleaseRetiredNewsPictures()
+    {
+        var cached = sharePointNews is { } source ? News.Pictures(source.Cached) : [];
+        var bars = News.Pictures(screenBars);
+        foreach (var picture in retiredNewsPictures.ToArray())
+            if (!displayedNewsPictures.Contains(picture) && !cached.Contains(picture) && !bars.Contains(picture))
+            {
+                retiredNewsPictures.Remove(picture);
+                picture.Dispose();
+            }
+    }
+
     /// <summary>Company messages from Konfiguracja → Komunikaty (kiosk-news.json in a folder or on a share).</summary>
     private async Task LoadNewsAsync()
     {
@@ -1485,10 +1523,10 @@ internal sealed partial class KioskForm : Form
         int every = Math.Clamp(config.NewsRefreshMinutes, 1, 1440) * 60_000;
         if (newsTimer.Interval != every) newsTimer.Interval = every;
         var folder = config.NewsFolder;
+        List<NewsItem> mine = [];
         try
         {
             var show = config.NewsShow;
-            List<NewsItem> mine = [];
             // First load: the last copy of the share at once, the share itself may take a while (or be away).
             if (show != NewsDisplay.Off && !newsShown)
                 try
@@ -1496,18 +1534,28 @@ internal sealed partial class KioskForm : Form
                     var early = await Task.Run(() => CentralConfig.NewsCopy(folder) is { } copy ? News.Load(copy) : []);
                     if (early.Count > 0 && !IsDisposed && load == newsLoad)
                     {
-                        if (show == NewsDisplay.BarsOnly) early = early.Where(n => n.IsBar).ToList();
+                        if (show == NewsDisplay.BarsOnly)
+                        {
+                            News.DisposePictures(early.Where(n => !n.IsBar));
+                            early = early.Where(n => n.IsBar).ToList();
+                        }
                         NewsSlides.Publish(early, config.NewsSeconds);
                         desktop.SetNews(early, config.NewsSeconds, config.NewsSize);
+                        ReplaceDisplayedNewsPictures(early);
                     }
+                    else News.DisposePictures(early);
                 }
                 catch (Exception ex) { Audit.Write("news_failed", "kopia: " + ex.Message); }
             newsShown = true;
             if (show != NewsDisplay.Off)
                 try { mine = await Task.Run(() => News.Load(CentralConfig.NewsFolderFor(folder))); }   // A share: through the Kiosk Card service.
                 catch (Exception ex) { Audit.Write("news_failed", ex.Message); }
-            if (show == NewsDisplay.BarsOnly) mine = mine.Where(n => n.IsBar).ToList();
-            if (IsDisposed || load != newsLoad) return;
+            if (show == NewsDisplay.BarsOnly)
+            {
+                News.DisposePictures(mine.Where(n => !n.IsBar));
+                mine = mine.Where(n => n.IsBar).ToList();
+            }
+            if (IsDisposed || load != newsLoad) { News.DisposePictures(mine); return; }
             void Show(List<NewsItem> other)
             {
                 var all = News.Merge(mine, other, config.NewsOrder);
@@ -1515,24 +1563,42 @@ internal sealed partial class KioskForm : Form
                 desktop.SetNews(all, config.NewsSeconds, config.NewsSize);
                 screenBars = config.NewsBarsOnScreens ? mine.Where(n => n.IsBar).Take(3).ToList() : [];
                 foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars(screenBars);
+                ReplaceDisplayedNewsPictures(all);
                 // For the log: bars on the screensaver screens (Komunikaty → "Ekrany wygaszacza"), once per change.
                 var report = "opcja " + config.NewsBarsOnScreens + ", pasków " + mine.Count(n => n.IsBar) + ", na ekranach " + screenBars.Count + ", ekranów wygaszacza " + idleScreens.Count;
                 if (report != screenBarsReported) { screenBarsReported = report; Audit.Write("screen_bars", report); }
             }
             bool sharePoint = show == NewsDisplay.All && config.NewsSharePoint.Length > 0 && IsHandleCreated;
+            if (sharePointNews != null && (!sharePoint ||
+                !sharePointNews.Matches(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount)))
+            {
+                // A changed site or account gets its own controller immediately. Old news must not appear
+                // under the new configuration while the old navigation is still finishing.
+                sharePointNews.Dispose();
+                sharePointNews = null;
+            }
             // The folder's messages at once; SharePoint (its sign-in can take a while) joins them when it answers.
             Show(sharePoint && sharePointNews != null ? sharePointNews.Cached : []);
             if (!sharePoint) return;
-            var other = await (sharePointNews ??= new SharePointNews(this)).GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
+            if (sharePointNews == null)
+            {
+                sharePointNews = new SharePointNews(this);
+                sharePointNews.CacheReplaced += RetireNewsPictures;
+            }
+            var other = await sharePointNews.GetAsync(config.NewsSharePoint, config.NewsSharePointCount, config.NewsSharePointAccount);
             if (IsDisposed || load != newsLoad) return;
             Show(other);
         }
         catch (Exception ex)
         {
             Audit.Write("news_failed", ex.Message);
-            if (load != newsLoad) return;
+            if (load != newsLoad || IsDisposed) { RetireNewsPictures(mine); return; }
             NewsSlides.Publish([], config.NewsSeconds);
-            if (!IsDisposed) desktop.SetNews([], config.NewsSeconds);
+            desktop.SetNews([], config.NewsSeconds);
+            screenBars = [];
+            foreach (var screen in idleScreens) if (!screen.IsDisposed) screen.SetBars([]);
+            RetireNewsPictures(mine);
+            ReplaceDisplayedNewsPictures([]);
         }
     }
 
@@ -2319,6 +2385,7 @@ internal sealed partial class KioskForm : Form
                 throw new InvalidOperationException("SharePoint news were not merged with the folder's messages.");
             if (desktop.Help.Count != HelpAction.Defaults.Length) throw new InvalidOperationException("Menu is not on the desktop.");
             desktop.SetNews(all, 8);
+            ReplaceDisplayedNewsPictures(all);
             if (desktop.News.Count != 2 || desktop.BarCount != 1) throw new InvalidOperationException("Company messages are not on the desktop.");
             var screenshots = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "screenshots"));
             Directory.CreateDirectory(screenshots);
@@ -2329,12 +2396,24 @@ internal sealed partial class KioskForm : Form
                 shot.Save(Path.Combine(screenshots, "desktop.png"), System.Drawing.Imaging.ImageFormat.Png);
                 int standard = desktop.News.Height;
                 desktop.SetNews(merged, 8, NewsBanner.Large);
+                ReplaceDisplayedNewsPictures(merged);
+                if (items[0].Picture is not { Width: > 0 }) throw new InvalidOperationException("A picture shared by successive news lists was released too early.");
                 using var large = new Bitmap(desktop.Width, desktop.Height);
                 desktop.DrawToBitmap(large, new Rectangle(Point.Empty, desktop.Size));
                 large.Save(Path.Combine(screenshots, "desktop-large.png"), System.Drawing.Imaging.ImageFormat.Png);
                 if (desktop.News.Visible && desktop.News.Height < standard) throw new InvalidOperationException("The large banner is smaller.");
             }
             desktop.SetNews([], 8);
+            ReplaceDisplayedNewsPictures([]);
+            bool released = false;
+            try { _ = items[0].Picture!.Width; }
+            catch (ArgumentException) { released = true; }
+            catch (ObjectDisposedException) { released = true; }
+            if (!released) throw new InvalidOperationException("A replaced news picture was not released.");
+            File.WriteAllText(Path.Combine(folder, News.FileName), """[{"Title":null,"Text":"Działa","Image":null,"Action":null,"Kind":null,"Video":null}]""");
+            var nullable = News.Load(folder);
+            if (nullable.Count != 1 || nullable[0].Title != "" || nullable[0].Text != "Działa" || nullable[0].IsBar || nullable[0].Action != "")
+                throw new InvalidOperationException("Null fields in a news entry were not normalized.");
         }
         finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
     }
@@ -2734,14 +2813,26 @@ internal sealed partial class KioskForm : Form
                 """);
             RunCommand(new CommandEntry { Name = "Command fixture", Path = script,
                 Arguments = "-Marker \"" + marker + "\"" });
-            until = DateTime.UtcNow.AddSeconds(15);
-            while ((!File.Exists(marker + ".parent") || !File.Exists(marker + ".child")) && DateTime.UtcNow < until)
-                await Task.Delay(50);
-            if (!File.Exists(marker + ".parent") || !File.Exists(marker + ".child"))
-                throw new InvalidOperationException("Background command or its child did not start.");
-            try { parent = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(marker + ".parent"))); }
+            // Existence alone is not enough: Set-Content can still hold the newly created file open.
+            var markerDeadline = Environment.TickCount64 + 15_000;
+            static async Task<int> ReadPidAsync(string path, long deadline)
+            {
+                while (Environment.TickCount64 < deadline)
+                {
+                    try
+                    {
+                        if (int.TryParse(File.ReadAllText(path), out var pid) && pid > 0) return pid;
+                    }
+                    catch (IOException) { } // The file is not ready or the fixture still has it open.
+                    await Task.Delay(50);
+                }
+                throw new InvalidOperationException("Background command did not write a readable process marker: " + Path.GetFileName(path));
+            }
+            var parentPid = await ReadPidAsync(marker + ".parent", markerDeadline);
+            var childPid = await ReadPidAsync(marker + ".child", markerDeadline);
+            try { parent = System.Diagnostics.Process.GetProcessById(parentPid); }
             catch (ArgumentException) { } // The short wrapper already exited.
-            child = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(marker + ".child")));
+            child = System.Diagnostics.Process.GetProcessById(childPid);
             if (parent != null) await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
             if (child.HasExited || !session.HasWork)
                 throw new InvalidOperationException("A child process did not remain in its session after its parent exited.");

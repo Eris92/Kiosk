@@ -14,41 +14,87 @@ internal sealed class SharePointNews : IDisposable
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
 
     private readonly Control owner;
+    private readonly Func<string, int, Task<List<NewsItem>>> fetch;
+    // WebView2 has one navigation and one message listener. A timer tick or settings save must not
+    // start another request until the current navigation and its handlers have finished.
+    private readonly SemaphoreSlim fetchGate = new(1, 1);
+    private readonly CancellationTokenSource stopped = new();
     private CoreWebView2Controller? controller;
-    private string key = "";
+    private (string Url, int Count, string Account)? request;
     private string account = "";
     private bool signInAttached;
     private List<NewsItem> cached = [];
     /// <summary>The last answer (shown while the next one is fetched).</summary>
     internal List<NewsItem> Cached => cached;
+    /// <summary>The owner releases old pictures after all desktop and screen controls stop using them.</summary>
+    internal event Action<IReadOnlyList<NewsItem>>? CacheReplaced;
     private DateTime fetchedAt = DateTime.MinValue;
+    private bool disposed;
 
     internal string LastError { get; private set; } = "";
 
-    internal SharePointNews(Control owner) => this.owner = owner;
+    internal SharePointNews(Control owner, Func<string, int, Task<List<NewsItem>>>? fetch = null)
+    {
+        this.owner = owner;
+        this.fetch = fetch ?? FetchAsync;
+    }
 
-    /// <summary>The site's latest news; read again every 10 minutes, otherwise (also after an error) the last result.</summary>
+    internal bool Matches(string url, int count, string accountName) =>
+        !disposed && request is { } current && current == (url, count, accountName.Trim());
+
+    /// <summary>The site's latest news; read again after the minimum refresh interval, otherwise return the last result.</summary>
     /// <param name="accountName">Konfiguracja → Komunikaty "Konto do SharePointa": a shared account (accounts.kiosk) that signs in
     /// on Microsoft's page when the Kiosk's Windows account has no access (a local kiosk account has none).</param>
     internal async Task<List<NewsItem>> GetAsync(string url, int count, string accountName = "")
     {
-        account = accountName.Trim();
-        var wanted = url + "|" + count + "|" + account;
-        if (wanted != key) { key = wanted; cached = []; fetchedAt = DateTime.MinValue; }
-        if (url.Length == 0 || DateTime.UtcNow - fetchedAt < Refresh) return cached;
-        fetchedAt = DateTime.UtcNow; // One attempt per period, also when it fails.
-        try { cached = await FetchAsync(url, count); LastError = ""; }
-        catch (Exception ex) { LastError = ex.Message; Audit.Write("sharepoint_news_failed", ex.Message); }
-        return cached;
+        try { await fetchGate.WaitAsync(stopped.Token); }
+        catch (OperationCanceledException) when (disposed) { return []; }
+        try
+        {
+            if (disposed) return [];
+            account = accountName.Trim();
+            var wanted = (Url: url, Count: count, Account: account);
+            if (request != wanted) { request = wanted; ReplaceCache([]); fetchedAt = DateTime.MinValue; }
+            if (url.Length == 0 || DateTime.UtcNow - fetchedAt < Refresh) return cached;
+            fetchedAt = DateTime.UtcNow; // One attempt per period, also when it fails.
+            try
+            {
+                var latest = await fetch(url, count);
+                if (disposed) { News.DisposePictures(latest); return []; }
+                ReplaceCache(latest);
+                LastError = "";
+            }
+            catch (Exception ex)
+            {
+                if (disposed) return [];
+                LastError = ex.Message;
+                Audit.Write("sharepoint_news_failed", ex.Message);
+            }
+            return cached;
+        }
+        finally { fetchGate.Release(); }
+    }
+
+    private void ReplaceCache(List<NewsItem> next)
+    {
+        var previous = cached;
+        cached = next;
+        if (previous.Count == 0 || ReferenceEquals(previous, next)) return;
+        if (CacheReplaced is { } release) release(previous);
+        else News.DisposePictures(previous);
     }
 
     private async Task<List<NewsItem>> FetchAsync(string url, int count)
     {
+        stopped.Token.ThrowIfCancellationRequested();
         if (controller == null)
         {
             var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "SharePointNews");
             var environment = await CoreWebView2Environment.CreateAsync(null, folder, new CoreWebView2EnvironmentOptions { AllowSingleSignOnUsingOSPrimaryAccount = true });
-            controller = await environment.CreateCoreWebView2ControllerAsync(owner.Handle);
+            stopped.Token.ThrowIfCancellationRequested();
+            var created = await environment.CreateCoreWebView2ControllerAsync(owner.Handle);
+            if (disposed) { created.Close(); throw new OperationCanceledException(stopped.Token); }
+            controller = created;
             controller.IsVisible = false;
             controller.CoreWebView2.Settings.AreDevToolsEnabled = false;
             controller.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = false;
@@ -68,6 +114,7 @@ internal sealed class SharePointNews : IDisposable
                     // A shared account named in Konfiguracja, else the login and password saved on this PC.
                     var name = account;
                     var shared = await Task.Run(() => name.Length > 0 ? SharedAccounts.TryGetCached(name) : NewsAccount.TryGet());
+                    if (disposed) return;
                     if (shared == null) { Audit.Write("sharepoint_news_account_missing", name.Length > 0 ? name : "login i hasło"); return; }
                     await core.ExecuteScriptAsync(PageScripts.SignIn(shared));
                     Audit.Write("sharepoint_news_sign_in", shared.User);
@@ -88,11 +135,14 @@ internal sealed class SharePointNews : IDisposable
             try
             {
                 core.Navigate(site.AbsoluteUri);
-                if (await Task.WhenAny(arrived.Task, Task.Delay(Limit)) != arrived.Task)
+                try { await arrived.Task.WaitAsync(Limit, stopped.Token); }
+                catch (TimeoutException)
+                {
                     throw new InvalidOperationException(core.Source.Contains("login.", StringComparison.OrdinalIgnoreCase)
                         ? account.Length > 0 || NewsAccount.Saved ? "SharePoint wymaga logowania, a zapisane konto nie zalogowało się (hasło, MFA albo dostęp do witryny)."
                             : "SharePoint wymaga logowania: konto Windows, na którym działa Kiosk, nie ma dostępu do tej strony – podaj konto w Konfiguracji → Komunikaty."
                         : "SharePoint nie odpowiedział w 60 s.");
+                }
             }
             finally { core.NavigationCompleted -= Completed; }
 
@@ -102,7 +152,7 @@ internal sealed class SharePointNews : IDisposable
             try
             {
                 await core.ExecuteScriptAsync(Script(site, count));
-                if (await Task.WhenAny(answer.Task, Task.Delay(Limit)) != answer.Task) throw new TimeoutException("SharePoint nie odpowiedział w 60 s.");
+                await answer.Task.WaitAsync(Limit, stopped.Token);
             }
             finally { core.WebMessageReceived -= Received; }
             return Parse(answer.Task.Result);
@@ -145,20 +195,32 @@ internal sealed class SharePointNews : IDisposable
         var root = document.RootElement;
         if (!root.GetProperty("ok").GetBoolean()) throw new InvalidOperationException(root.GetProperty("error").GetString());
         var items = new List<NewsItem>();
-        foreach (var p in root.GetProperty("items").EnumerateArray())
+        try
         {
-            string title = p.GetProperty("title").GetString() ?? "", text = p.GetProperty("text").GetString() ?? "";
-            string url = p.GetProperty("url").GetString() ?? "", image = p.GetProperty("image").GetString() ?? "";
-            if (title.Length == 0 && text.Length == 0) continue;
-            Image? picture = null;
-            int comma = image.IndexOf(',');
-            if (image.StartsWith("data:image/", StringComparison.Ordinal) && comma > 0)
-                try { picture = News.DecodePicture(Convert.FromBase64String(image[(comma + 1)..])); }
-                catch (Exception) { picture = null; } // e.g. WebP, which Windows Forms cannot draw.
-            items.Add(new NewsItem { Title = title, Text = text, Button = "Czytaj", Action = url, Picture = picture });
+            foreach (var p in root.GetProperty("items").EnumerateArray())
+            {
+                string title = p.GetProperty("title").GetString() ?? "", text = p.GetProperty("text").GetString() ?? "";
+                string url = p.GetProperty("url").GetString() ?? "", image = p.GetProperty("image").GetString() ?? "";
+                if (title.Length == 0 && text.Length == 0) continue;
+                Image? picture = null;
+                int comma = image.IndexOf(',');
+                if (image.StartsWith("data:image/", StringComparison.Ordinal) && comma > 0)
+                    try { picture = News.DecodePicture(Convert.FromBase64String(image[(comma + 1)..])); }
+                    catch (Exception) { picture = null; } // e.g. WebP, which Windows Forms cannot draw.
+                items.Add(new NewsItem { Title = title, Text = text, Button = "Czytaj", Action = url, Picture = picture });
+            }
         }
+        catch { News.DisposePictures(items); throw; }
         return items;
     }
 
-    public void Dispose() { controller?.Close(); controller = null; }
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        stopped.Cancel();
+        ReplaceCache([]);
+        controller?.Close();
+        controller = null;
+    }
 }
