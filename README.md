@@ -78,7 +78,7 @@ elevated. Saving reloads the running Kiosk.
 
 ## Build
 
-Requires Windows x64 and the .NET 10 SDK:
+Requires Windows x64 and .NET SDK 10.0.402 (pinned in `global.json`):
 
 ```powershell
 git clone https://github.com/Eris92/Kiosk.git

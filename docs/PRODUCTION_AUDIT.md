@@ -22,6 +22,8 @@ Instalator stanowiska administracyjnego `Install-KioskConfig.ps1` także odkład
 
 Domyślne ścieżki skryptów budowy, pakowania, weryfikacji, diagnostyki i instalacji powłoki są obliczane po związaniu parametrów, aby działały także w Windows PowerShell 5.1. `Install-KioskShell.ps1 -WhatIf` przechodzi na tym komputerze w PowerShell 5.1 i 7 bez zmiany systemu. `Set-KioskKeyboardLock.ps1` rozróżnia edycję Windows przed wyborem Keyboard Filter: na Pro używa zasad Ctrl+Alt+Del i zapisuje ich poprzednie wartości do wycofania; `-Uninstall` nie usuwa polityk bez zapisanego stanu ani nie nadpisuje późniejszych zmian. Sprawdzono tylko `-WhatIf` na Windows Pro oraz ogólne testy dziennika rejestru; rzeczywiste zastosowanie i wycofanie polityk oraz gałąź Keyboard Filter wymagają próby na dedykowanym obrazie Windows.
 
+CI z `dotnet-version: 10.0.x` przerwało jeden przebieg przed testami, próbując pobrać jeszcze niedostępny pakiet SDK 10.0.403 (HTTP 409). Repozytorium i workflow wskazują teraz dokładnie SDK 10.0.402 przez `global.json` i `setup-dotnet`; aktualizacja SDK wymaga jawnej zmiany obu miejsc oraz ponownej weryfikacji.
+
 ## Granica tożsamości
 
 | Stanowisko | Tożsamość lokalnych procesów w `WindowsShell` | Profil RDP do sprawdzenia w środowisku |

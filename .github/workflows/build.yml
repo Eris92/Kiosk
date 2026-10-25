@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '10.0.402'
       - name: Validate scripts and run separate embedded UI self-tests
         shell: pwsh
         run: ./scripts/Test.ps1
