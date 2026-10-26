@@ -416,7 +416,9 @@ internal static class Native
         var idle = unchecked((uint)Environment.TickCount - input.Time);
         // A film in the messages keeps the display awake, which also restarts Windows' input clock:
         // while one plays, the time since the last real key or mouse/touch input is counted instead.
-        if (!NewsVideo.AnyPlaying || !InputWatch.Running) return idle;
+        if (!NewsVideo.AnyPlaying) return idle;
+        // If input hooks could not start, retain the last trusted idle baseline. A film must
+        // not reset the lock timer merely because Windows reports synthetic activity.
         InputWatch.Compare(idle);
         return Math.Max(idle, InputWatch.IdleMilliseconds);
     }

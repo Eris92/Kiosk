@@ -12,7 +12,7 @@ namespace Kiosk.Client;
 /// </summary>
 internal static class InputWatch
 {
-    private const int KeyboardHook = 13, MouseHook = 14, WmTimer = 0x0113, PollMilliseconds = 150;
+    private const int KeyboardHook = 13, MouseHook = 14, WmTimer = 0x0113, PollMilliseconds = 250;
     private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
     private static readonly HookProc Proc = OnInput;   // Kept alive for as long as the hooks are.
     private static long lastInput = Environment.TickCount64;
@@ -22,15 +22,17 @@ internal static class InputWatch
     internal static uint IdleMilliseconds => (uint)Math.Min(uint.MaxValue, Math.Max(0, Environment.TickCount64 - Interlocked.Read(ref lastInput)));
 
     /// <summary>Starts once (the first film); the hooks then stay until the Kiosk closes.</summary>
-    internal static void Start()
+    internal static void Start(uint initialIdleMilliseconds)
     {
         if (Interlocked.Exchange(ref started, 1) == 1) return;
+        // Keep the time already spent idle before the first film. Starting at "now" would give an
+        // unattended station a fresh lock timeout just because a video appeared in the messages.
+        Interlocked.Exchange(ref lastInput, Environment.TickCount64 - initialIdleMilliseconds);
         var thread = new Thread(() =>
         {
             var module = GetModuleHandle(null);
             var keyboard = SetWindowsHookEx(KeyboardHook, Proc, module, 0);
             var mouse = SetWindowsHookEx(MouseHook, Proc, module, 0);
-            SetTimer(IntPtr.Zero, IntPtr.Zero, PollMilliseconds, IntPtr.Zero);   // WM_TIMER on this thread's queue.
             if (keyboard == IntPtr.Zero || mouse == IntPtr.Zero)
             {
                 Audit.Write("input_watch_failed", Marshal.GetLastWin32Error().ToString());
@@ -38,7 +40,14 @@ internal static class InputWatch
                 if (mouse != IntPtr.Zero) UnhookWindowsHookEx(mouse);
                 return;
             }
-            Interlocked.Exchange(ref lastInput, Environment.TickCount64);
+            var timer = SetTimer(IntPtr.Zero, IntPtr.Zero, PollMilliseconds, IntPtr.Zero);   // WM_TIMER on this thread's queue.
+            if (timer == IntPtr.Zero)
+            {
+                Audit.Write("input_watch_failed", Marshal.GetLastWin32Error().ToString());
+                UnhookWindowsHookEx(keyboard);
+                UnhookWindowsHookEx(mouse);
+                return;
+            }
             Running = true;
             GetCursorPos(out var pointer);
             int ticks = 0;
@@ -62,6 +71,9 @@ internal static class InputWatch
                 TranslateMessage(ref message); DispatchMessage(ref message);
             }
             Running = false;
+            KillTimer(IntPtr.Zero, timer);
+            UnhookWindowsHookEx(keyboard);
+            UnhookWindowsHookEx(mouse);
         }) { IsBackground = true, Name = "Kiosk input watch" };
         thread.Start();
     }
@@ -105,4 +117,5 @@ internal static class InputWatch
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] private static extern IntPtr SetTimer(IntPtr window, IntPtr id, uint milliseconds, IntPtr callback);
+    [DllImport("user32.dll")] private static extern bool KillTimer(IntPtr window, IntPtr id);
 }

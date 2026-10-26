@@ -88,6 +88,8 @@ To test pojedynczych ścieżek, nie całej aplikacji; buildy różnią się rów
 
 Karuzela komunikatów uruchamia timer obrotu tylko wtedy, gdy jest widoczna i ma co najmniej dwa slajdy. Gdy lista jest pusta, ma jeden slajd lub ekran został ukryty, nie wywołuje już co 250 ms pustego sprawdzenia. Po ponownym pokazaniu zachowuje dotychczasową synchronizację między ekranami.
 
+Pierwszy film w komunikatach rozpoczyna obserwację prawdziwego wejścia od czasu bezczynności Windows sprzed startu filmu. Sam film nie daje więc stanowisku nowego okresu przed blokadą. Przy niedostępnych hakach wejścia licznik zachowuje ten ostatni wiarygodny punkt odniesienia, zamiast ufać zegarowi Windows pobudzanemu przez film. Awaryjne odpytywanie klawiatury i wskaźnika działa co 250 ms (wcześniej 150 ms); rzeczywiste zachowanie na ekranie logowania oraz w trakcie filmu pozostaje do próby na docelowym urządzeniu.
+
 Obrazy komunikatów z folderu i SharePointa są kopiowane do niezależnych bitmap. Strumień źródłowy oraz dekoder są zamykane po odczycie, zanim karuzela wyświetli obraz. Test komunikatów wczytuje plik PNG i rysuje go w pulpicie Kiosku.
 
 Logo pulpitu i podgląd obrazu w edytorze komunikatów są kopiowane do niezależnych bitmap; plik i dekoder są zamykane po odczycie. Edytor zwalnia także obraz przy zamknięciu. Test klienta rysuje logo po usunięciu pliku źródłowego. Osobny lokalny test edytora wczytał podgląd, narysował go po usunięciu pliku i sprawdził zwolnienie obrazu przy zamknięciu formularza. Zegary pulpitu i paska zadań zatrzymują sekundowe timery, gdy ich kontrolki są ukryte, i odświeżają czas po ponownym pokazaniu.

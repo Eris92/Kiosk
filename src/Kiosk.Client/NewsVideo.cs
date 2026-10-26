@@ -55,8 +55,10 @@ internal sealed class NewsVideo : IDisposable
                 View.CoreWebView2.SetVirtualHostNameToFolderMapping(Host, Path.GetDirectoryName(source)!, CoreWebView2HostResourceAccessKind.Allow);
                 address = "https://" + Host + "/" + Uri.EscapeDataString(Path.GetFileName(source));
             }
+            // Capture Windows' idle time before the video can keep its input clock awake.
+            var initialIdle = Native.IdleMilliseconds();
             View.CoreWebView2.NavigateToString(Page(address, sound, loop));
-            InputWatch.Start();
+            InputWatch.Start(initialIdle);
             Count(true);
             return true;
         }
