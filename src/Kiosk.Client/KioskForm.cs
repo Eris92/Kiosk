@@ -2378,6 +2378,7 @@ internal sealed partial class KioskForm : Form
     internal void SmokeTest()
     {
         timer.Stop();
+        BrowserProfileCleanupSmokeTest();
         if (Marshal.SizeOf<Native.ReaderState>() != 64 ||
             Marshal.OffsetOf<Native.ReaderState>(nameof(Native.ReaderState.EventState)).ToInt32() != 20)
             throw new InvalidOperationException("Unexpected PCSC x64 structure layout.");
@@ -2450,6 +2451,32 @@ internal sealed partial class KioskForm : Form
             try { if ((int)host.Client.Connected != 0) throw new InvalidOperationException("Unexpected connection in smoke test."); }
             finally { surface.Controls.Remove(host); host.Dispose(); }
         }
+    }
+
+    private static void BrowserProfileCleanupSmokeTest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "kiosk-browser-cleanup-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var live = BrowserProfileCleanup.Create(root);
+            string staleFolder;
+            using (var stale = BrowserProfileCleanup.Create(root))
+            {
+                staleFolder = stale.Folder;
+                File.WriteAllText(Path.Combine(staleFolder, "WebView2.data"), "old");
+            }
+            var unowned = Path.Combine(root, "123-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(unowned);
+            File.WriteAllText(Path.Combine(unowned, "WebView2.data"), "foreign");
+            var legacy = Path.Combine(root, "456");
+            Directory.CreateDirectory(legacy);
+            BrowserProfileCleanup.RemoveStale(root);
+            if (!Directory.Exists(live.Folder) || Directory.Exists(staleFolder) ||
+                !Directory.Exists(unowned) || !Directory.Exists(legacy))
+                throw new InvalidOperationException("Temporary browser profile ownership cleanup failed.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     internal async Task EmbeddedSmokeTestAsync()

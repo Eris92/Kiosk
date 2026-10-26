@@ -25,6 +25,9 @@ internal sealed class BrowserView : UserControl
     /// profile: a page opens without starting a whole Edge each time, and still keeps nothing from another page.
     /// </summary>
     private static Task<CoreWebView2Environment>? sharedEnvironment;
+    private static BrowserProfileCleanup.OwnedProfile? sharedProfile;
+    private static int sharedGeneration;
+    private static readonly object sharedGate = new();
     private bool shared;
     private static readonly HashSet<string> AllowedMenuItems = new(StringComparer.Ordinal)
     {
@@ -104,7 +107,7 @@ internal sealed class BrowserView : UserControl
         shared = profileFolder == null && !windowsAccount;
         userDataFolder = profileFolder ?? (windowsAccount
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Browser")
-            : SharedFolder);
+            : ""); // The shared profile is created and leased when its environment starts.
         profileName = shared ? "page-" + Guid.NewGuid().ToString("N") : "kiosk";
         this.cardCertificates = cardCertificates ?? (() => []);
         this.expectedCertificateUpn = expectedCertificateUpn;
@@ -531,49 +534,29 @@ internal sealed class BrowserView : UserControl
         else message.Text = "Podaj adres http:// lub https://.";
     }
 
-    private static string SharedFolder => Path.Combine(Path.GetTempPath(), "KioskBrowser", Environment.ProcessId.ToString());
-
     /// <summary>The shared InPrivate browser; started again after its processes ended (crash, update of Edge).</summary>
     private static Task<CoreWebView2Environment> SharedEnvironmentAsync()
     {
-        if (sharedEnvironment is { IsFaulted: false, IsCanceled: false } ready) return ready;
-        RemoveOldFolders();
-        sharedEnvironment = CreateShared();
-        return sharedEnvironment;
-
-        static async Task<CoreWebView2Environment> CreateShared()
+        lock (sharedGate)
         {
-            var created = await CoreWebView2Environment.CreateAsync(null, SharedFolder, new CoreWebView2EnvironmentOptions());
-            created.BrowserProcessExited += (_, _) => sharedEnvironment = null;
-            return created;
+            if (sharedEnvironment is { IsFaulted: false, IsCanceled: false } ready) return ready;
+            var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
+            sharedProfile ??= BrowserProfileCleanup.Create(root);
+            _ = Task.Run(() => BrowserProfileCleanup.RemoveStale(root));
+            var generation = ++sharedGeneration;
+            sharedEnvironment = CreateShared(sharedProfile.Folder, generation);
+            return sharedEnvironment;
         }
     }
 
-    /// <summary>Folders of earlier Kiosk processes (InPrivate pages keep nothing there, but Edge's own files stay behind).</summary>
-    private static void RemoveOldFolders()
+    private static async Task<CoreWebView2Environment> CreateShared(string folder, int generation)
     {
-        var root = Path.Combine(Path.GetTempPath(), "KioskBrowser");
-        _ = Task.Run(() =>
+        var created = await CoreWebView2Environment.CreateAsync(null, folder, new CoreWebView2EnvironmentOptions());
+        created.BrowserProcessExited += (_, _) =>
         {
-            try
-            {
-                foreach (var folder in Directory.GetDirectories(root))
-                {
-                    var name = Path.GetFileName(folder);
-                    if (int.TryParse(name, out var pid) && Running(pid)) continue;
-                    try { Directory.Delete(folder, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-                }
-            }
-            catch (DirectoryNotFoundException) { }
-            catch (IOException) { }
-        });
-
-        static bool Running(int pid)
-        {
-            try { using var process = System.Diagnostics.Process.GetProcessById(pid); return process.ProcessName.Equals("Kiosk.Client", StringComparison.OrdinalIgnoreCase); }
-            catch (ArgumentException) { return false; }
-            catch (InvalidOperationException) { return false; }
-        }
+            lock (sharedGate) if (generation == sharedGeneration) sharedEnvironment = null;
+        };
+        return created;
     }
 }
 
