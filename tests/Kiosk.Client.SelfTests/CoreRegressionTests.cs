@@ -60,5 +60,28 @@ internal sealed partial class KioskForm
         for (int i = 0; i < 10; i++)
             if (probe.Snapshot("Kiosk self-test missing reader") != first)
                 throw new InvalidOperationException("Unchanged reader state changed between polls.");
+
+        // A large banner is stored at display size, and an oversized file on a share leaves its
+        // message visible without making the client read the whole file into memory.
+        using (var source = new Bitmap(3000, 1000))
+        using (var encoded = new MemoryStream())
+        {
+            using (var graphics = Graphics.FromImage(source)) graphics.Clear(Color.Crimson);
+            source.Save(encoded, System.Drawing.Imaging.ImageFormat.Png);
+            using var picture = News.DecodePicture(encoded.ToArray());
+            if (picture.Width != 1920 || picture.Height != 640 || ((Bitmap)picture).GetPixel(0, 0).ToArgb() != Color.Crimson.ToArgb())
+                throw new InvalidOperationException("News image was not bounded and rendered correctly.");
+        }
+        var newsFolder = Path.Combine(Path.GetTempPath(), "KioskNewsLimit-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(newsFolder);
+        try
+        {
+            File.WriteAllText(Path.Combine(newsFolder, News.FileName), "[{\"Title\":\"Large image\",\"Image\":\"large.png\"}]");
+            using (var large = File.Create(Path.Combine(newsFolder, "large.png"))) large.SetLength(News.MaxPictureBytes + 1L);
+            var news = News.Load(newsFolder);
+            if (news.Count != 1 || news[0].Picture != null)
+                throw new InvalidOperationException("Oversized news picture hid the message or was decoded.");
+        }
+        finally { Directory.Delete(newsFolder, recursive: true); }
     }
 }

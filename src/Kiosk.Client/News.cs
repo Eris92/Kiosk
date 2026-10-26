@@ -44,6 +44,9 @@ internal sealed record NewsItem
 internal static class News
 {
     internal const string FileName = "kiosk-news.json";
+    internal const int MaxPictureBytes = 8 * 1024 * 1024;
+    internal const long MaxPicturePixels = 16_000_000;
+    internal const int PictureWidth = 1920, PictureHeight = 1080;
 
     /// <summary>The current messages; a missing folder or file gives none. Runs off the UI thread (shares can be slow).</summary>
     internal static List<NewsItem> Load(string folder)
@@ -75,8 +78,9 @@ internal static class News
                 if (safe.Image.Length > 0)
                 {
                     var path = Path.IsPathFullyQualified(safe.Image) ? safe.Image : Path.Combine(folder, safe.Image);
-                    // Read into memory so the share's file is not kept open.
-                    try { if (File.Exists(path)) picture = DecodePicture(File.ReadAllBytes(path)); }
+                    // Read into memory so the share's file is not kept open. Bound the read even if
+                    // the source is replaced or grows while the messages are being refreshed.
+                    try { if (File.Exists(path)) picture = DecodePictureFile(path); }
                     catch (Exception) { picture = null; }
                 }
                 items.Add(safe with { Picture = picture, Action = action, VideoSource = video });
@@ -86,12 +90,34 @@ internal static class News
         return items;
     }
 
-    /// <summary>Copy the decoded pixels so the source stream can close before the slide is displayed.</summary>
+    private static Image DecodePictureFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        if (stream.Length > MaxPictureBytes) throw new InvalidDataException("Obraz komunikatu jest za duży.");
+        var bytes = new byte[(int)stream.Length];
+        stream.ReadExactly(bytes);
+        return DecodePicture(bytes);
+    }
+
+    /// <summary>Copy a bounded display bitmap so a large source does not remain in memory for every slide.</summary>
     internal static Image DecodePicture(byte[] bytes)
     {
+        if (bytes.Length > MaxPictureBytes) throw new InvalidDataException("Obraz komunikatu jest za duży.");
         using var stream = new MemoryStream(bytes);
         using var decoded = Image.FromStream(stream);
-        return new Bitmap(decoded);
+        if ((long)decoded.Width * decoded.Height > MaxPicturePixels)
+            throw new InvalidDataException("Obraz komunikatu ma za dużą rozdzielczość.");
+        var scale = Math.Min(1d, Math.Min((double)PictureWidth / decoded.Width, (double)PictureHeight / decoded.Height));
+        if (scale == 1d) return new Bitmap(decoded);
+        var result = new Bitmap(Math.Max(1, (int)Math.Round(decoded.Width * scale)), Math.Max(1, (int)Math.Round(decoded.Height * scale)));
+        try
+        {
+            using var graphics = Graphics.FromImage(result);
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(decoded, new Rectangle(0, 0, result.Width, result.Height));
+            return result;
+        }
+        catch { result.Dispose(); throw; }
     }
 
     internal static HashSet<Image> Pictures(IEnumerable<NewsItem> items) =>

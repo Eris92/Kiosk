@@ -204,7 +204,8 @@ internal sealed class SharePointNews : IDisposable
                 if (title.Length == 0 && text.Length == 0) continue;
                 Image? picture = null;
                 int comma = image.IndexOf(',');
-                if (image.StartsWith("data:image/", StringComparison.Ordinal) && comma > 0)
+                if (image.StartsWith("data:image/", StringComparison.Ordinal) && comma > 0 &&
+                    image.Length <= News.MaxPictureBytes * 4L / 3 + 256)
                     try { picture = News.DecodePicture(Convert.FromBase64String(image[(comma + 1)..])); }
                     catch (Exception) { picture = null; } // e.g. WebP, which Windows Forms cannot draw.
                 items.Add(new NewsItem { Title = title, Text = text, Button = "Czytaj", Action = url, Picture = picture });

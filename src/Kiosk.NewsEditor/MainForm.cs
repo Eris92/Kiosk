@@ -5,6 +5,10 @@ namespace Kiosk.NewsEditor;
 /// <summary>Komunikaty (list on the left, the chosen message on the right, a preview) and Statystyki.</summary>
 internal sealed class MainForm : Form
 {
+    // Keep in step with the Kiosk client's picture limits. The editor is a separate program.
+    private const int MaxPictureBytes = 8 * 1024 * 1024;
+    private const long MaxPicturePixels = 16_000_000;
+    private const int PictureWidth = 1920, PictureHeight = 1080;
     private readonly EditorSettings settings;
     private NewsFile file;
     private bool dirty, loading;
@@ -298,6 +302,7 @@ internal sealed class MainForm : Form
         var destination = Path.Combine(file.Folder, name);
         try
         {
+            if (target == image) using (ReadPreviewImage(source)) { }
             if (!string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
             {
                 if (File.Exists(destination) && MessageBox.Show(this, "W folderze jest już " + name + ". Zastąpić go?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
@@ -348,11 +353,29 @@ internal sealed class MainForm : Form
         try
         {
             var path = Path.IsPathFullyQualified(e.Image) ? e.Image : Path.Combine(file.Folder, e.Image);
-            using var stream = File.OpenRead(path);
-            using var decoded = Image.FromStream(stream);
-            previewImage = new Bitmap(decoded);
+            previewImage = ReadPreviewImage(path);
         }
-        catch (Exception) { previewImage = null; }
+        catch (Exception ex) { previewImage = null; Status("Nie można wyświetlić obrazu: " + ex.Message); }
+    }
+
+    private static Image ReadPreviewImage(string path)
+    {
+        using var stream = File.OpenRead(path);
+        if (stream.Length > MaxPictureBytes) throw new InvalidDataException("plik ma ponad 8 MB.");
+        using var decoded = Image.FromStream(stream);
+        if ((long)decoded.Width * decoded.Height > MaxPicturePixels)
+            throw new InvalidDataException("obraz ma za dużą rozdzielczość.");
+        var scale = Math.Min(1d, Math.Min((double)PictureWidth / decoded.Width, (double)PictureHeight / decoded.Height));
+        if (scale == 1d) return new Bitmap(decoded);
+        var result = new Bitmap(Math.Max(1, (int)Math.Round(decoded.Width * scale)), Math.Max(1, (int)Math.Round(decoded.Height * scale)));
+        try
+        {
+            using var graphics = Graphics.FromImage(result);
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(decoded, new Rectangle(0, 0, result.Width, result.Height));
+            return result;
+        }
+        catch { result.Dispose(); throw; }
     }
 
     protected override void Dispose(bool disposing)
