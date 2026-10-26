@@ -67,28 +67,59 @@ internal sealed class CtapCard : IDisposable
     /// <summary>Checks the PIN on the card and keeps a PIN token for the next commands.</summary>
     internal void UsePin(string pin)
     {
+        PrepareSharedSecret();
+        var pinHash = PinHash(pin);
+        Dictionary<object, object> reply;
+        try
+        {
+            try
+            {
+                // CTAP 2.1: a token limited to this relying party, allowed to create (mc) and use (ga) its credential.
+                // Cards that implement 2.1 reject the older token for makeCredential (PIN_AUTH_INVALID).
+                reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 9L), (3L, PlatformCose()), (6L, Encrypt(pinHash)), (9L, 0x03L), (10L, RelyingParty)));
+            }
+            catch (CtapException ex) when (ex.Code is 0x01 or 0x02 or 0x11 or 0x2B)
+            {
+                // CTAP 2.0 card without that subcommand: the classic PIN token (0x05).
+                reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
+            }
+        }
+        finally { CryptographicOperations.ZeroMemory(pinHash); }
+        pinToken = Decrypt((byte[])reply[2L]);
+    }
+
+    private void PrepareSharedSecret()
+    {
         var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
-        var cardKey = ECDiffieHellman.Create(new ECParameters
+        using var cardKey = ECDiffieHellman.Create(new ECParameters
         {
             Curve = ECCurve.NamedCurves.nistP256,
             Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
         });
-        platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
-        var pinHash = SHA256.HashData(Encoding.UTF8.GetBytes(pin)).AsSpan(0, 16).ToArray();
-        Dictionary<object, object> reply;
+        var nextPlatformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        byte[] nextShared;
         try
         {
-            // CTAP 2.1: a token limited to this relying party, allowed to create (mc) and use (ga) its credential.
-            // Cards that implement 2.1 reject the older token for makeCredential (PIN_AUTH_INVALID).
-            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 9L), (3L, PlatformCose()), (6L, Encrypt(pinHash)), (9L, 0x03L), (10L, RelyingParty)));
+            using var publicKey = cardKey.PublicKey;
+            nextShared = nextPlatformKey.DeriveKeyFromHash(publicKey, HashAlgorithmName.SHA256);
         }
-        catch (CtapException ex) when (ex.Code is 0x01 or 0x02 or 0x11 or 0x2B)
+        catch { nextPlatformKey.Dispose(); throw; }
+        platformKey?.Dispose();
+        if (shared != null) CryptographicOperations.ZeroMemory(shared);
+        platformKey = nextPlatformKey;
+        shared = nextShared;
+    }
+
+    private static byte[] PinHash(string pin)
+    {
+        var bytes = Encoding.UTF8.GetBytes(pin);
+        try
         {
-            // CTAP 2.0 card without that subcommand: the classic PIN token (0x05).
-            reply = Command(0x06, Cbor.Map((1L, 1L), (2L, 5L), (3L, PlatformCose()), (6L, Encrypt(pinHash))));
+            var digest = SHA256.HashData(bytes);
+            try { return digest.AsSpan(0, 16).ToArray(); }
+            finally { CryptographicOperations.ZeroMemory(digest); }
         }
-        pinToken = Decrypt((byte[])reply[2L]);
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
     /// <summary>Whether the card already has a FIDO2 PIN (authenticatorGetInfo options.clientPin).</summary>
@@ -102,21 +133,17 @@ internal sealed class CtapCard : IDisposable
     internal void SetPin(string pin)
     {
         var bytes = Encoding.UTF8.GetBytes(pin);
-        if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
-        var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
-        var cardKey = ECDiffieHellman.Create(new ECParameters
-        {
-            Curve = ECCurve.NamedCurves.nistP256,
-            Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
-        });
-        platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
         var padded = new byte[64];
-        bytes.CopyTo(padded, 0);
-        var newPinEnc = Encrypt(padded);
-        Array.Clear(padded);
-        Array.Clear(bytes);
-        var pinAuth = HMACSHA256.HashData(shared, newPinEnc).AsSpan(0, 16).ToArray();
+        byte[] newPinEnc;
+        try
+        {
+            if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
+            PrepareSharedSecret();
+            bytes.CopyTo(padded, 0);
+            newPinEnc = Encrypt(padded);
+        }
+        finally { CryptographicOperations.ZeroMemory(padded); CryptographicOperations.ZeroMemory(bytes); }
+        var pinAuth = HMACSHA256.HashData(shared!, newPinEnc).AsSpan(0, 16).ToArray();
         Command(0x06, Cbor.Map((1L, 1L), (2L, 3L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc)));
     }
 
@@ -124,22 +151,20 @@ internal sealed class CtapCard : IDisposable
     internal void ChangePin(string currentPin, string newPin)
     {
         var bytes = Encoding.UTF8.GetBytes(newPin);
-        if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
-        var keyAgreement = (Dictionary<object, object>)Command(0x06, Cbor.Map((1L, 1L), (2L, 2L)))[1L];
-        var cardKey = ECDiffieHellman.Create(new ECParameters
-        {
-            Curve = ECCurve.NamedCurves.nistP256,
-            Q = new ECPoint { X = (byte[])keyAgreement[-2L], Y = (byte[])keyAgreement[-3L] }
-        });
-        platformKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        shared = platformKey.DeriveKeyFromHash(cardKey.PublicKey, HashAlgorithmName.SHA256);
         var padded = new byte[64];
-        bytes.CopyTo(padded, 0);
-        var newPinEnc = Encrypt(padded);
-        var pinHashEnc = Encrypt(SHA256.HashData(Encoding.UTF8.GetBytes(currentPin)).AsSpan(0, 16).ToArray());
-        Array.Clear(padded);
-        Array.Clear(bytes);
-        var pinAuth = HMACSHA256.HashData(shared, newPinEnc.Concat(pinHashEnc).ToArray()).AsSpan(0, 16).ToArray();
+        byte[] newPinEnc, pinHashEnc;
+        try
+        {
+            if (bytes.Length is < 4 or > 63) throw new CtapException(0x37, "PIN musi mieć od 4 do 63 znaków.");
+            PrepareSharedSecret();
+            bytes.CopyTo(padded, 0);
+            newPinEnc = Encrypt(padded);
+            var pinHash = PinHash(currentPin);
+            try { pinHashEnc = Encrypt(pinHash); }
+            finally { CryptographicOperations.ZeroMemory(pinHash); }
+        }
+        finally { CryptographicOperations.ZeroMemory(padded); CryptographicOperations.ZeroMemory(bytes); }
+        var pinAuth = HMACSHA256.HashData(shared!, newPinEnc.Concat(pinHashEnc).ToArray()).AsSpan(0, 16).ToArray();
         Command(0x06, Cbor.Map((1L, 1L), (2L, 4L), (3L, PlatformCose()), (4L, pinAuth), (5L, newPinEnc), (6L, pinHashEnc)));
     }
 
