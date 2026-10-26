@@ -139,11 +139,11 @@ internal sealed record Config
     public bool SignInAsUser { get; init; }
     /// <summary>Kiosk: one Windows account, the Kiosk switches people by card. WindowsShell: every person signs in to
     /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.
-    /// SelfService (Punkt samoobsługowy): only the start screen with Szybka pomoc and Komunikaty, no Menu or sessions;
-    /// a card on the reader signs in once (FIDO2 on the web) for every Szybka pomoc page until it is taken away.</summary>
+    /// SelfService (Punkt samoobsługowy): Szybka pomoc and Komunikaty without the application Menu;
+    /// WindowsSession uses the Windows account, while the legacy CardBroker signs in inside Kiosk.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
-    public SelfServiceAuthentication SelfServiceAuthentication { get; init; } = SelfServiceAuthentication.CardBroker;
-    /// <summary>Punkt samoobsługowy: the page opened when a card is put on the reader, to sign in with it (FIDO2). Empty = none.</summary>
+    public SelfServiceAuthentication SelfServiceAuthentication { get; init; } = SelfServiceAuthentication.WindowsSession;
+    /// <summary>Legacy CardBroker: the page opened for FIDO2 sign-in when a card is put on the reader. Empty = none.</summary>
     public string SelfServiceSignInUrl { get; init; } = "https://myaccount.microsoft.com";
     /// <summary>Punkt samoobsługowy: after a new PIN was set on the card, this page links the card to the person's account.</summary>
     public string SelfServiceLinkUrl { get; init; } = "https://mysignins.microsoft.com/security-info";

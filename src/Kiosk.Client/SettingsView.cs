@@ -36,7 +36,7 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
     private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Stanowisko: karta i aplikacje w Kiosku", "Powłoka Windows: aplikacje na koncie zalogowanym do Windows", "Punkt samoobsługowy: Szybka pomoc i komunikaty, bez menu aplikacji" } };
-    private readonly ComboBox selfServiceAuthentication = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Karta w oknie Kiosku (starsza metoda, zależna od wersji Windows)", "Logowanie Windows / Entra przed otwarciem Kiosku (SSO na stronach)" } };
+    private readonly ComboBox selfServiceAuthentication = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Karta w oknie Kiosku (starsza metoda, zależna od wersji Windows)", "Windows / Entra przed Kioskiem (SSO, zalecane)" } };
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };

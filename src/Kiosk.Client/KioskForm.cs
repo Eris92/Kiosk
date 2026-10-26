@@ -2693,6 +2693,19 @@ internal sealed partial class KioskForm : Form
         if (CardPin.ReadIdentity("Kiosk self-test missing reader") != null) throw new InvalidOperationException("Identity read from a missing reader.");
 
         var entry = new ApplicationEntry { Name = "Test", Path = Environment.ProcessPath!, Arguments = "--app-host-fixture" };
+        if (new Config().SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession)
+            throw new InvalidOperationException("New self-service configuration did not select Windows SSO.");
+        var legacyAuthFile = Path.Combine(AppContext.BaseDirectory, "self-test-legacy-auth.json");
+        try
+        {
+            File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"SelfService"}""");
+            if (Configuration.Load(legacyAuthFile).SelfServiceAuthentication != SelfServiceAuthentication.CardBroker)
+                throw new InvalidOperationException("Existing self-service configuration changed its sign-in method.");
+            File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"Kiosk"}""");
+            if (Configuration.Load(legacyAuthFile).SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession)
+                throw new InvalidOperationException("An application-station configuration did not offer Windows SSO when switched to self-service.");
+        }
+        finally { File.Delete(legacyAuthFile); }
         var testConfig = config with
         {
             Applications = [entry],

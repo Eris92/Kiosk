@@ -230,10 +230,16 @@ internal static class Configuration
 {
     internal static Config Load(string path, string? logicalPath = null)
     {
-        var config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path), new JsonSerializerOptions
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var config = document.RootElement.Deserialize<Config>(new JsonSerializerOptions
         {
             UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
         }) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
+        // Files written before WindowsSession was the default omitted this property. Preserve their
+        // CardBroker behavior; new Config instances serialize an explicit WindowsSession choice.
+        if (config.SessionMode == SessionMode.SelfService && document.RootElement.ValueKind == JsonValueKind.Object &&
+            !document.RootElement.TryGetProperty(nameof(Config.SelfServiceAuthentication), out _))
+            config = config with { SelfServiceAuthentication = SelfServiceAuthentication.CardBroker };
         config = config.Migrate();
         // Logo and messages folder may be given relative to the configuration's folder (Konfiguracja z serwera).
         var folder = Path.GetDirectoryName(Path.GetFullPath(logicalPath ?? path))!;
