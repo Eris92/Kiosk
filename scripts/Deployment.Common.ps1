@@ -32,9 +32,10 @@ function Assert-KioskCardServiceReady {
     }
 }
 
-function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath) {
+function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath, [string]$LogicalPath = '') {
     $report = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-validation-' + [Guid]::NewGuid().ToString('N') + '.txt')
     $arguments = '--validate-config "{0}" "{1}"' -f $ConfigPath, $report
+    if ($LogicalPath) { $arguments += ' "{0}"' -f $LogicalPath }
     # Validation only writes a temporary report; it must still run during an installer's -WhatIf preflight.
     # Windows PowerShell 5.1 Start-Process has no -WhatIf parameter, so set the preference in this scope.
     $previousWhatIf = $WhatIfPreference
@@ -53,6 +54,16 @@ function Assert-KioskClientConfig([string]$Executable, [string]$ConfigPath) {
     } finally {
         $process.Dispose()
         if (Test-Path -LiteralPath $report) { [IO.File]::Delete($report) }
+    }
+}
+
+function Assert-KioskClientConfigContent([string]$Executable, [string]$Content, [string]$LogicalPath) {
+    $snapshot = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-config-snapshot-' + [Guid]::NewGuid().ToString('N') + '.json')
+    try {
+        [IO.File]::WriteAllText($snapshot, $Content, [Text.UTF8Encoding]::new($false))
+        Assert-KioskClientConfig $Executable $snapshot $LogicalPath
+    } finally {
+        if ([IO.File]::Exists($snapshot)) { [IO.File]::Delete($snapshot) }
     }
 }
 

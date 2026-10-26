@@ -46,6 +46,8 @@ Keyboard Filter needs a restart after the Windows feature is first enabled; run 
 
 `Install-KioskShell.ps1` keeps an existing `%ProgramData%\Kiosk\client.json` during an ordinary upgrade. To replace it deliberately, pass `-SourceConfig` with the prepared JSON file; this takes precedence even when the installed configuration exists. For a SelfService migration to Windows sign-in, check that the selected file sets `SessionMode=SelfService` and `SelfServiceAuthentication=WindowsSession`, then run the installer with that explicit source. The installer reports its selected source and validates the resulting configuration before changing the shell. Use `-WhatIf` to check source selection without applying the installation.
 
+`Install-KioskConfig.ps1` preserves an existing configuration on an ordinary editor upgrade. Pass `-SourceConfig <client.json>` to replace it deliberately. The installer validates one captured copy using the destination configuration directory for relative logo and news paths, then writes that same copy atomically; it stops if the existing file changes during staging.
+
 Intune: `config/intune/ShellLauncher.xml` (Shell Launcher CSP, Enterprise/Education) plus the Kiosk as a
 Win32 app. Replace its versioned client path with the installed release path before assigning it. Verify it on a test device first. On Windows Pro, the installer can set a shell for future user profiles, but it does not change an existing profile's current Explorer session.
 

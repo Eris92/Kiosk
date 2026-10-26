@@ -9,11 +9,11 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length == 3 && args[0] == "--validate-config")
+        if (args.Length is 3 or 4 && args[0] == "--validate-config")
         {
             try
             {
-                Configuration.Load(args[1]);
+                Configuration.Load(args[1], args.Length == 4 ? args[3] : null);
                 File.WriteAllText(args[2], "OK");
                 return 0;
             }
@@ -55,6 +55,19 @@ internal static class Program
                 if (CardService.Handle(new CardService.Request { Op = "update" }).Code != -2 ||
                     CardService.Handle(new CardService.Request { Op = "dotnet" }).Code != -2)
                     throw new InvalidOperationException("Removed service update commands must be rejected before opening a card reader.");
+                var configSnapshot = Path.Combine(Path.GetTempPath(), "kiosk-config-test-" + Guid.NewGuid().ToString("N") + ".json");
+                try
+                {
+                    var sample = JsonSerializer.Deserialize<Config>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "client.json")))
+                        ?? throw new InvalidOperationException("Self-test configuration is missing.");
+                    File.WriteAllText(configSnapshot, JsonSerializer.Serialize(sample with { NewsFolder = "news" }));
+                    var logicalPath = Path.Combine(Path.GetTempPath(), "kiosk-config-target-" + Guid.NewGuid().ToString("N"), "client.json");
+                    var expectedFolder = Path.GetDirectoryName(Path.GetFullPath(logicalPath))!;
+                    var resolved = Configuration.Load(configSnapshot, logicalPath);
+                    if (resolved.Folder != expectedFolder || resolved.NewsFolder != Path.Combine(expectedFolder, "news"))
+                        throw new InvalidOperationException("Configuration snapshot did not resolve relative paths at its destination.");
+                }
+                finally { if (File.Exists(configSnapshot)) File.Delete(configSnapshot); }
                 if (!WindowsSession.RetentionExpired(1_000, 31_000, 30) ||
                     WindowsSession.RetentionExpired(1_000, 30_999, 30) ||
                     WindowsSession.CanResume(WindowsSession.Availability.Active, false, true) ||

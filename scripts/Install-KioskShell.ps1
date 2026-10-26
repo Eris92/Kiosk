@@ -23,6 +23,9 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 Assert-KioskAdministrator
+if ($PSBoundParameters.ContainsKey('SourceConfig') -and [string]::IsNullOrWhiteSpace($SourceConfig)) {
+    throw 'SourceConfig must name a JSON file when explicitly supplied.'
+}
 if (-not $SourceConfig) { $SourceConfig = Join-Path $PSScriptRoot '..\config\client.json' }
 $InstallPath = Assert-KioskProgramPath $InstallPath
 $ConfigPath = Assert-KioskDataFilePath $ConfigPath '.json'
@@ -130,7 +133,7 @@ if (-not $PSCmdlet.ShouldProcess($InstallPath, 'copy an isolated client version 
 $candidate = Join-Path ([IO.Path]::GetTempPath()) ('kiosk-shell-config-' + [Guid]::NewGuid().ToString('N') + '.json')
 try {
     [IO.File]::WriteAllText($candidate, $candidateJson, [Text.UTF8Encoding]::new($false))
-    Assert-KioskClientConfig $sourceExe $candidate
+    Assert-KioskClientConfig $sourceExe $candidate $ConfigPath
 } finally {
     if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
 }

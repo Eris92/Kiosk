@@ -4,7 +4,8 @@
 Installs the configuration editor on an administrator's PC without changing its Windows shell.
 .DESCRIPTION
 Stages each client version in a new directory, validates the selected configuration, and changes
-only the editor/preview shortcuts. An existing configuration and older payloads are retained.
+only the editor/preview shortcuts. An existing configuration is retained unless -SourceConfig
+explicitly replaces it; older payloads are retained.
 -Uninstall removes only shortcuts created by this installer; it retains the configuration and payloads.
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -21,6 +22,9 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 Assert-KioskAdministrator
+if ($PSBoundParameters.ContainsKey('SourceConfig') -and [string]::IsNullOrWhiteSpace($SourceConfig)) {
+    throw 'SourceConfig must name a JSON file when explicitly supplied.'
+}
 if (-not $SourceConfig) { $SourceConfig = Join-Path $PSScriptRoot '..\config\client.json' }
 $InstallPath = Assert-KioskProgramPath $InstallPath
 $ConfigPath = Assert-KioskDataFilePath $ConfigPath '.json'
@@ -76,8 +80,13 @@ foreach ($path in @($configDirectory, $ConfigPath)) {
         throw "Configuration path contains a junction or symbolic link: $path"
     }
 }
-$selectedConfig = Get-KioskInstallConfigSource $ConfigPath $SourceConfig $false
-Assert-KioskClientConfig $sourceExe $selectedConfig
+$configExisted = Test-Path -LiteralPath $ConfigPath -PathType Leaf
+$originalConfig = if ($configExisted) { Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 } else { $null }
+$explicitConfig = $PSBoundParameters.ContainsKey('SourceConfig')
+$selectedConfig = Get-KioskInstallConfigSource $ConfigPath $SourceConfig $explicitConfig
+$configContent = Get-Content -LiteralPath $selectedConfig -Raw -Encoding UTF8
+Assert-KioskClientConfigContent $sourceExe $configContent $ConfigPath
+Write-Output "Configuration source: $selectedConfig"
 $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
 $installLinks = if ($NoDesktopShortcuts) { @($links | Where-Object { -not $_.Path.StartsWith($desktop + '\', [StringComparison]::OrdinalIgnoreCase) }) } else { $links }
 foreach ($link in $installLinks) {
@@ -93,10 +102,19 @@ Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Path $target | Out-Null
 Copy-KioskPayloadVerified $source $target $packageHashes
 $exe = Join-Path $target 'Kiosk.Client.exe'
-Assert-KioskClientConfig $exe $selectedConfig
-if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+Assert-KioskClientConfigContent $exe $configContent $ConfigPath
+if ($configExisted) {
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf) -or
+        ((Get-Item -LiteralPath $ConfigPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        (Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8) -cne $originalConfig) {
+        throw 'Installed configuration changed during staging; refusing to overwrite or use an unvalidated file.'
+    }
+} elseif (Test-Path -LiteralPath $ConfigPath) {
+    throw 'Configuration appeared during staging; refusing to use an unvalidated file.'
+}
+if ($explicitConfig -or -not $configExisted) {
     Set-KioskDirectoryAcl $configDirectory -UsersRead
-    Set-KioskConfigAtomically $ConfigPath (Get-Content -LiteralPath $selectedConfig -Raw -Encoding UTF8)
+    Set-KioskConfigAtomically $ConfigPath $configContent
     Set-KioskFileAcl $ConfigPath -UsersRead
 }
 
