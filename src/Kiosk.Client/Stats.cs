@@ -54,7 +54,7 @@ internal static class Stats
             {
                 entry = entry with { Time = DateTimeOffset.Now, Pc = Environment.MachineName, Who = entry.Who.Length > 0 ? Code(entry.Who) : "" };
                 File.AppendAllText(Path.Combine(Folder, entry.Time.ToString("yyyy-MM") + ".jsonl"), JsonSerializer.Serialize(entry) + Environment.NewLine);
-                Prune();
+                PruneIfDue(entry.Time.LocalDateTime);
             }
             return new CardService.Response();
         }
@@ -62,6 +62,7 @@ internal static class Stats
     }
 
     private static readonly object Lock = new();
+    private static DateOnly lastPrunedOn;
 
     /// <summary>12 hex characters of an HMAC with this computer's secret: the same person, the same code; no way back to the name.</summary>
     private static string Code(string person)
@@ -73,11 +74,22 @@ internal static class Stats
         finally { Array.Clear(key); }
     }
 
-    private static void Prune()
+    private static void PruneIfDue(DateTime now)
     {
-        var oldest = DateTime.Today.AddMonths(-KeepMonths).ToString("yyyy-MM");
-        foreach (var file in Directory.GetFiles(Folder, "????-??.jsonl"))
-            if (string.CompareOrdinal(Path.GetFileNameWithoutExtension(file), oldest) < 0) try { File.Delete(file); } catch (IOException) { }
+        var today = DateOnly.FromDateTime(now);
+        if (lastPrunedOn == today) return;
+        lastPrunedOn = today;
+        try
+        {
+            var oldest = today.AddMonths(-KeepMonths).ToString("yyyy-MM");
+            foreach (var file in Directory.EnumerateFiles(Folder, "????-??.jsonl"))
+            {
+                if (string.CompareOrdinal(Path.GetFileNameWithoutExtension(file), oldest) >= 0) continue;
+                try { File.Delete(file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_prune_failed", ex.Message); }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_prune_failed", ex.Message); }
     }
 
     /// <summary>The events of the months from <paramref name="from"/>, from a folder (this PC's, or the server's Stats folder with all PCs).</summary>
@@ -151,7 +163,16 @@ internal static class Stats
     /// <summary>A table for Excel (semicolon, as Polish Excel expects).</summary>
     internal static string Csv(IEnumerable<Entry> entries)
     {
-        static string Cell(string s) => "\"" + s.Replace("\"", "\"\"") + "\"";
+        static string Cell(string s)
+        {
+            // Quotes delimit CSV fields, but Excel still evaluates a field whose first visible character is a formula marker.
+            // A leading tab inside the quoted field keeps it as text when the CSV is opened in Excel.
+            var first = 0;
+            while (first < s.Length && (char.IsWhiteSpace(s[first]) || char.IsControl(s[first]) || s[first] == '\uFEFF')) first++;
+            if ((s.Length > 0 && s[0] is '\t' or '\r' or '\n' or '\0') ||
+                (first < s.Length && s[first] is '=' or '+' or '-' or '@' or '＝' or '＋' or '－' or '＠')) s = "\t" + s;
+            return "\"" + s.Replace("\"", "\"\"") + "\"";
+        }
         var text = new StringBuilder("Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n");
         foreach (var e in entries.OrderBy(e => e.Time))
             text.Append(Cell(e.Time.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(';').Append(Cell(e.Pc)).Append(';').Append(Cell(e.Kind)).Append(';')

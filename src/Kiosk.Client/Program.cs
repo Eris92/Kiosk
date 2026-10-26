@@ -89,6 +89,18 @@ internal static class Program
                 if (Watchdog.Request("unwatch", Environment.ProcessId, ownProgram, "").Code != 0 ||
                     Watchdog.Request("watch", Environment.ProcessId, ownProgram, "").Code != -2)
                     throw new InvalidOperationException("A late watchdog registration after unwatch was not rejected.");
+                var csv = Stats.Csv([new Stats.Entry
+                {
+                    Time = DateTimeOffset.Now, Pc = "@machine", Kind = Stats.Option,
+                    Name = " =1+1", Category = "\t+SUM(1;2)", Who = "-1+2"
+                }, new Stats.Entry { Time = DateTimeOffset.Now, Name = "＝2+2", Category = "\rtext" }]);
+                if (!csv.Contains("\"\t@machine\"", StringComparison.Ordinal) ||
+                    !csv.Contains("\"\t =1+1\"", StringComparison.Ordinal) ||
+                    !csv.Contains("\"\t\t+SUM(1;2)\"", StringComparison.Ordinal) ||
+                    !csv.Contains("\"\t-1+2\"", StringComparison.Ordinal) ||
+                    !csv.Contains("\"\t＝2+2\"", StringComparison.Ordinal) ||
+                    !csv.Contains("\"\t\rtext\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Statistics CSV formula protection failed.");
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
@@ -113,7 +125,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, statistics CSV formula protection, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

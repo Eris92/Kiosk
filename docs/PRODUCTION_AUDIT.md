@@ -130,6 +130,8 @@ Sprawdzenie konfiguracji z serwera kończy się po odczycie i walidacji `client.
 
 Watchdog jest rejestrowany tylko przez zainstalowany klient poza trybem testowym. Równoległe zgłoszenia `watch` nie nakładają się, a zamknięcie okna wysyła `unwatch` także wtedy, gdy pierwsze zgłoszenie jest jeszcze w drodze. Usługa przez 60 sekund pamięta zamknięcie konkretnej instancji procesu (sesja, PID i czas startu), więc spóźnione `watch` nie wskrzesza zamkniętej aplikacji; ponownie użyty PID innego procesu nie dziedziczy blokady. Aktywny self-test wywołuje `unwatch` i spóźnione `watch` dla własnego procesu bez uruchamiania usługi. Pełny test restartu po awarii wymaga odizolowanego stanowiska z działającą usługą.
 
+Usługa przegląda miesięczne pliki statystyk najwyżej raz dziennie zamiast po każdym zdarzeniu; błąd sprzątania nie zmienia wyniku zapisu zdarzenia. Pola tekstowe CSV, które Excel mógłby potraktować jako formułę (także po białych znakach), dostają tabulację wewnątrz cytowanego pola. Tabulacja pozostaje częścią danych przy późniejszym programowym imporcie CSV. Aktywny self-test sprawdza znaczniki `=`, `+`, `-`, `@`, pełnoszerokie `＝` i początkowe znaki kontrolne w eksportowanych polach.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
