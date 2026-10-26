@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -188,18 +189,17 @@ internal static class CentralConfig
                 var target = Path.Combine(folder, Environment.MachineName);
                 Directory.CreateDirectory(target);
                 int count = 0;
-                foreach (var file in Directory.GetFiles(Stats.Folder, "????-??.jsonl"))
+                var files = Directory.EnumerateFiles(Stats.Folder, "????-??.jsonl")
+                    .Where(file => IsMonthName(Path.GetFileNameWithoutExtension(file))).ToArray();
+                foreach (var file in files)
                 {
                     var month = Path.GetFileNameWithoutExtension(file);
-                    File.Copy(file, Path.Combine(target, month + ".jsonl"), true);
-                    File.WriteAllText(Path.Combine(target, Environment.MachineName + "-" + month + ".csv"), Stats.Csv(Stats.ReadFile(file)), new UTF8Encoding(true));
+                    PublishStatsMonth(file, target, Environment.MachineName, month);
                     count++;
                 }
                 // The server keeps only the months this PC still has (Logi: its limit applies to the copy too).
-                var kept = Directory.GetFiles(Stats.Folder, "????-??.jsonl").Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var old in Directory.GetFiles(target, "*.jsonl").Concat(Directory.GetFiles(target, "*.csv")))
-                    if (Path.GetFileNameWithoutExtension(old) is { Length: >= 7 } name && !kept.Contains(name[^7..]))
-                        try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                PruneStatsExport(target, Environment.MachineName,
+                    files.Select(file => Path.GetFileNameWithoutExtension(file)!).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Audit.Write("stats_export_ok", target);
                 return new CardService.Response { Message = "Wysłano " + count + " mies. do " + target };
             }
@@ -209,6 +209,70 @@ internal static class CentralConfig
             Audit.Write("stats_export_failed", ex.Message);
             return new CardService.Response { Code = -1, Message = ex.Message };
         }
+    }
+
+    private static bool IsMonthName(string month) =>
+        DateOnly.TryParseExact(month + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+
+    /// <summary>Stage both outputs before replacing either final file, so a failed copy preserves the previous export.</summary>
+    internal static void PublishStatsMonth(string source, string target, string computer, string month)
+    {
+        if (!IsMonthName(month)) throw new ArgumentException("Nieprawidłowy miesiąc statystyk.", nameof(month));
+        var suffix = "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var jsonDestination = Path.Combine(target, month + ".jsonl");
+        var csvDestination = Path.Combine(target, computer + "-" + month + ".csv");
+        var jsonTemporary = jsonDestination + suffix;
+        var csvTemporary = csvDestination + suffix;
+        try
+        {
+            File.Copy(source, jsonTemporary);
+            File.WriteAllText(csvTemporary, Stats.Csv(Stats.ReadFile(source)), new UTF8Encoding(true));
+            File.Move(jsonTemporary, jsonDestination, true);
+            File.Move(csvTemporary, csvDestination, true);
+        }
+        finally
+        {
+            foreach (var temporary in new[] { jsonTemporary, csvTemporary })
+            {
+                try { File.Delete(temporary); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_export_cleanup_failed", ex.Message); }
+            }
+        }
+    }
+
+    /// <summary>Only files created by this computer's stats export may be removed from a shared folder.</summary>
+    internal static void PruneStatsExport(string target, string computer, IReadOnlySet<string> kept)
+    {
+        var csvPrefix = computer + "-";
+        foreach (var old in Directory.EnumerateFiles(target))
+        {
+            var name = Path.GetFileName(old);
+            var temporary = IsOwnedStatsTemporary(name, computer);
+            var month = Path.GetExtension(name).ToLowerInvariant() switch
+            {
+                ".jsonl" => Path.GetFileNameWithoutExtension(name),
+                ".csv" when Path.GetFileNameWithoutExtension(name).StartsWith(csvPrefix, StringComparison.OrdinalIgnoreCase)
+                    => Path.GetFileNameWithoutExtension(name)[csvPrefix.Length..],
+                _ => ""
+            };
+            if (!temporary && (!IsMonthName(month) || kept.Contains(month))) continue;
+            try { File.Delete(old); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_export_prune_failed", ex.Message); }
+        }
+    }
+
+    private static bool IsOwnedStatsTemporary(string name, string computer)
+    {
+        if (!name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)) return false;
+        var withoutTmp = name[..^4];
+        var lastDot = withoutTmp.LastIndexOf('.');
+        if (lastDot < 0 || !Guid.TryParseExact(withoutTmp[(lastDot + 1)..], "N", out _)) return false;
+        var output = withoutTmp[..lastDot];
+        if (output.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) return IsMonthName(output[..^6]);
+        var prefix = computer + "-";
+        return output.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) &&
+               output.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+               IsMonthName(output[prefix.Length..^4]);
     }
 
     // ------------------------------------------------------------------ Komunikaty on a share

@@ -132,6 +132,60 @@ internal static class Program
                     foreach (var file in new[] { nestedFile, computerFile, rootFile }) if (File.Exists(file)) File.Delete(file);
                     foreach (var folder in new[] { nestedFolder, computerFolder, readRoot }) if (Directory.Exists(folder)) Directory.Delete(folder);
                 }
+                var exportRoot = Path.Combine(Path.GetTempPath(), "kiosk-stats-export-test-" + Guid.NewGuid().ToString("N"));
+                var oldMonth = DateTime.Today.AddMonths(-2).ToString("yyyy-MM");
+                var currentMonth = DateTime.Today.ToString("yyyy-MM");
+                var exportFiles = new[]
+                {
+                    oldMonth + ".jsonl", "PC1-" + oldMonth + ".csv",
+                    currentMonth + ".jsonl", "PC1-" + currentMonth + ".csv",
+                    "PC2-" + oldMonth + ".csv", "report-" + oldMonth + ".csv", "notes.jsonl"
+                };
+                var abandonedTemporary = currentMonth + ".jsonl." + Guid.NewGuid().ToString("N") + ".tmp";
+                var unrelatedTemporary = "report." + Guid.NewGuid().ToString("N") + ".tmp";
+                var sourceFile = Path.Combine(exportRoot, "source.txt");
+                try
+                {
+                    Directory.CreateDirectory(exportRoot);
+                    foreach (var file in exportFiles) File.WriteAllText(Path.Combine(exportRoot, file), "test");
+                    File.WriteAllText(Path.Combine(exportRoot, abandonedTemporary), "partial");
+                    File.WriteAllText(Path.Combine(exportRoot, unrelatedTemporary), "keep");
+                    CentralConfig.PruneStatsExport(exportRoot, "PC1", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { currentMonth });
+                    if (exportFiles.Take(2).Any(file => File.Exists(Path.Combine(exportRoot, file))) ||
+                        exportFiles.Skip(2).Any(file => !File.Exists(Path.Combine(exportRoot, file))) ||
+                        File.Exists(Path.Combine(exportRoot, abandonedTemporary)) ||
+                        !File.Exists(Path.Combine(exportRoot, unrelatedTemporary)))
+                        throw new InvalidOperationException("Statistics export removed a file outside its own expired months.");
+                    File.WriteAllText(sourceFile, JsonSerializer.Serialize(new Stats.Entry { Time = month, Kind = Stats.Option, Name = "published" }) + Environment.NewLine);
+                    CentralConfig.PublishStatsMonth(sourceFile, exportRoot, "PC1", currentMonth);
+                    var publishedJson = File.ReadAllText(Path.Combine(exportRoot, currentMonth + ".jsonl"));
+                    var publishedCsv = File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"));
+                    if (!publishedJson.Contains("published", StringComparison.Ordinal) ||
+                        !publishedCsv.Contains("published", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Statistics export did not publish both files.");
+                    try
+                    {
+                        CentralConfig.PublishStatsMonth(Path.Combine(exportRoot, "missing.jsonl"), exportRoot, "PC1", currentMonth);
+                        throw new InvalidOperationException("Statistics export accepted a missing source.");
+                    }
+                    catch (FileNotFoundException) { }
+                    if (File.ReadAllText(Path.Combine(exportRoot, currentMonth + ".jsonl")) != publishedJson ||
+                        File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv")) != publishedCsv ||
+                        !File.Exists(Path.Combine(exportRoot, unrelatedTemporary)) ||
+                        Directory.EnumerateFiles(exportRoot, "*.tmp")
+                            .Any(file => !Path.GetFileName(file).Equals(unrelatedTemporary, StringComparison.OrdinalIgnoreCase)))
+                        throw new InvalidOperationException("Failed statistics export changed published files or left temporary files.");
+                }
+                finally
+                {
+                    if (File.Exists(sourceFile)) File.Delete(sourceFile);
+                    foreach (var file in exportFiles.Append(abandonedTemporary).Append(unrelatedTemporary))
+                    {
+                        var exportPath = Path.Combine(exportRoot, file);
+                        if (File.Exists(exportPath)) File.Delete(exportPath);
+                    }
+                    if (Directory.Exists(exportRoot)) Directory.Delete(exportRoot);
+                }
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
@@ -156,7 +210,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, statistics CSV formula protection, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

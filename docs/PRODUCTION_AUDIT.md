@@ -134,6 +134,8 @@ Usługa przegląda miesięczne pliki statystyk najwyżej raz dziennie zamiast po
 
 Widok statystyk czyta pliki tylko z własnego katalogu i z jednego poziomu folderów komputerów, zgodnie ze strukturą eksportu. Pomija dowiązania katalogów i po zmianie zakresu lub źródła anuluje poprzedni odczyt oraz odrzuca jego spóźniony wynik. Aktywny self-test sprawdza oba dozwolone poziomy, pominięcie głębszego folderu i anulowanie. Zablokowany odczyt pojedynczego pliku na niedostępnym udziale może nadal czekać na system plików, ale nie nadpisze nowszego widoku.
 
+Eksport statystyk wylicza listę lokalnych miesięcy raz na synchronizację i przy sprzątaniu usuwa wyłącznie własne pliki o poprawnych nazwach `yyyy-MM.jsonl` oraz `<komputer>-yyyy-MM.csv` i osierocone pliki tymczasowe o nazwach tego eksportu; inne pliki w katalogu udziału pozostają. Nowe JSONL i CSV powstają pod tymczasowymi nazwami, a pliki docelowe są zastępowane dopiero po przygotowaniu obu. Awaria przed podmianą zachowuje wcześniejsze pliki; każda podmiana dotyczy pojedynczego pliku, więc para JSONL/CSV nie jest jedną transakcją. Aktywny test sprawdza zakres sprzątania, udaną publikację, zachowanie starych plików po błędzie źródła i usunięcie plików tymczasowych.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
