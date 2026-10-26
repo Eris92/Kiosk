@@ -432,9 +432,13 @@ internal sealed partial class DesktopView : UserControl
         ArrangeControls();
     }
 
-    internal void SetHelp(HelpAction[] actions)
+    private int? helpAccentArgb;
+
+    internal void SetHelp(HelpAction[] actions, bool categoriesChanged)
     {
-        if (ReferenceEquals(Help.Items, actions)) return;
+        var accentArgb = KioskTheme.Accent.ToArgb();
+        if (ReferenceEquals(Help.Items, actions) && !categoriesChanged && helpAccentArgb == accentArgb) return;
+        helpAccentArgb = accentArgb;
         Help.SetItems(actions);
         nav.SetItems(actions);
         Tiles.SetItems(actions);

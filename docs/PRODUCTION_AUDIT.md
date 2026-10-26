@@ -144,6 +144,8 @@ Skanowanie procesów przy pierwszym logowaniu, restarcie watchdogu i przekazaniu
 
 Podczas przebudowy menu samoobsługowego ikona panelu jest ustalana tylko przy utworzeniu panelu, a nie ponownie dla każdego należącego do niego kafelka. Kolejne kafelki używają tej samej ikony jak wcześniej, bez powtarzania przeszukiwania listy akcji.
 
+Znormalizowana ścieżka kategorii akcji jest obliczana przy jej utworzeniu i aktualizowana również dla kopii rekordu ze zmienioną kategorią. Układ kafelków zapisuje ich kolor i glif przy przebudowie, zamiast ponownie parsować je przy każdym odmalowaniu. Zmiana kategorii lub akcentu w Konfiguracji wymusza przebudowę menu i kafelków nawet wtedy, gdy lista akcji nie uległa zmianie. Aktywny self-test sprawdza normalizację ścieżki po skopiowaniu akcji.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

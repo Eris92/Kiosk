@@ -51,9 +51,9 @@ internal static class TileIcons
     /// <summary>Menu → Kategorie: the icons chosen there, by the category's path and by its own name.</summary>
     private static MenuCategory[]? categoriesSet;
 
-    internal static void SetCategories(MenuCategory[] categories)
+    internal static bool SetCategories(MenuCategory[] categories)
     {
-        if (ReferenceEquals(categoriesSet, categories)) return;   // The same configuration: nothing to rebuild.
+        if (ReferenceEquals(categoriesSet, categories)) return false;   // The same configuration: nothing to rebuild.
         categoriesSet = categories;
         var icons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var category in categories)
@@ -66,6 +66,7 @@ internal static class TileIcons
         categoryColors = categories.Where(c => KioskTheme.IsColor(c.Color))
             .ToDictionary(c => c.Path, c => ColorTranslator.FromHtml(c.Color), StringComparer.OrdinalIgnoreCase);
         bottom = new HashSet<string>(categories.Where(c => c.Bottom).Select(c => c.Path), StringComparer.OrdinalIgnoreCase);
+        return true;
     }
 
     /// <summary>A category's icon: chosen in Kategorie, its name when it is one of the icons, otherwise its first tile's.</summary>
@@ -406,7 +407,7 @@ internal sealed class TileBoard : Panel
         private static readonly Font DescriptionFont = new("Segoe UI", 10);
         private readonly TileBoard board;
         private readonly List<(Rectangle Bounds, string Title, string Glyph)> panels = [];
-        private readonly List<(Rectangle Bounds, HelpAction Item)> tiles = [];
+        private readonly List<(Rectangle Bounds, HelpAction Item, Color Color, string Glyph)> tiles = [];
         private int hover = -1;
 
         internal Canvas(TileBoard board)
@@ -438,7 +439,9 @@ internal sealed class TileBoard : Panel
                 for (int i = 0; i < panel.Tiles.Count; i++)
                 {
                     int col = i % columns, row = i / columns;
-                    tiles.Add((new Rectangle(pad + col * (tileWidth + gap), y + header + row * (tileHeight + gap), tileWidth, tileHeight), panel.Tiles[i]));
+                    var item = panel.Tiles[i];
+                    tiles.Add((new Rectangle(pad + col * (tileWidth + gap), y + header + row * (tileHeight + gap), tileWidth, tileHeight),
+                        item, TileIcons.ColorFor(item), TileIcons.For(item)));
                 }
                 y += height + S(18);
             }
@@ -504,18 +507,18 @@ internal sealed class TileBoard : Panel
             }
             for (int i = 0; i < tiles.Count; i++)
             {
-                var (bounds, item) = tiles[i];
+                var (bounds, item, baseColor, glyph) = tiles[i];
                 bool available = board.Available(item);
                 bool hot = i == hover && available;
                 using var path = KioskTheme.RoundedRectangle(bounds, S(14));
                 using (var fill = new SolidBrush(hot ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.12) : KioskTheme.Surface)) g.FillPath(fill, path);
                 using (var border = new Pen(hot ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
-                var color = TileIcons.ColorFor(item);
+                var color = baseColor;
                 if (!available) color = KioskTheme.Blend(KioskTheme.Surface, color, 0.35);
                 int diameter = S(64);
                 var circle = new Rectangle(bounds.Left + S(18), bounds.Top + (bounds.Height - diameter) / 2, diameter, diameter);
                 using (var dot = new SolidBrush(color)) g.FillEllipse(dot, circle);
-                KioskIcons.Draw(g, Rectangle.Inflate(circle, -S(16), -S(16)), TileIcons.For(item), null, available ? Color.White : KioskTheme.Muted);
+                KioskIcons.Draw(g, Rectangle.Inflate(circle, -S(16), -S(16)), glyph, null, available ? Color.White : KioskTheme.Muted);
                 int textLeft = circle.Right + S(18), textWidth = bounds.Right - S(40) - textLeft;
                 bool hasText = item.Description.Length > 0 || !available;
                 var nameBounds = new Rectangle(textLeft, bounds.Top + (hasText ? S(18) : 0), textWidth, hasText ? S(30) : bounds.Height);

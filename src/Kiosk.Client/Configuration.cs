@@ -100,7 +100,15 @@ internal sealed record HelpAction
     /// Szybka pomoc folder: "Konto", or "Konto/Hasło" for a subcategory; empty = straight in the list.
     /// The column shows the folders first, a folder opens its buttons and subfolders.
     /// </summary>
-    public string Category { get; init; } = "";
+    // CategoryPath is read for every tile and menu grouping. Keep the normalized value with the init-only source;
+    // a record `with { Category = ... }` invokes the setter and updates it in the copy.
+    private string? category = "";
+    private string categoryPath = "";
+    public string Category
+    {
+        get => category!;
+        init { category = value; categoryPath = MenuCategory.Normalize(value); }
+    }
     /// <summary>Punkt samoobsługowy: the line under the tile's name, e.g. "Naruszenie danych osobowych".</summary>
     public string Description { get; init; } = "";
     /// <summary>The tile's icon by name (<see cref="TileIcons.Names"/>); empty = chosen from the action.</summary>
@@ -114,7 +122,7 @@ internal sealed record HelpAction
     public string Side { get; init; } = "";
     /// <summary>Set for a category with its own action (Menu → Kategorie): the category's path.</summary>
     internal string? LinkPath { get; init; }
-    internal string CategoryPath => string.Join("/", (Category ?? "").Split('/').Select(s => s.Trim()).Where(s => s.Length > 0));
+    internal string CategoryPath => categoryPath;
 
     /// <summary>"Obok": empty, a https://… page or a file path (no other kind of address).</summary>
     internal static bool ValidSide(string? side) =>

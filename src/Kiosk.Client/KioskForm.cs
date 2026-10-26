@@ -990,8 +990,8 @@ internal sealed partial class KioskForm : Form
     {
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
-        TileIcons.SetCategories(config.MenuCategories);
-        desktop.SetHelp(config.HelpActions);
+        var categoriesChanged = TileIcons.SetCategories(config.MenuCategories);
+        desktop.SetHelp(config.HelpActions, categoriesChanged);
         desktop.Help.SignedIn = shellSignOut.Reason == null && (!SelfService || SelfServiceWindowsSession || cardLogon != null);
         desktop.Portal = SelfService;
         RefreshHosts();
@@ -2442,6 +2442,12 @@ internal sealed partial class KioskForm : Form
         physicalAndVirtual[0].EventState = 0x12;
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
             throw new InvalidOperationException("Virtual reader masked physical card removal.");
+
+        var categorized = new HelpAction { Category = " Pomoc / Konto // " };
+        if (categorized.CategoryPath != "Pomoc/Konto" ||
+            (categorized with { Category = " Sprzęt / Karta " }).CategoryPath != "Sprzęt/Karta" ||
+            (categorized with { Category = null! }).CategoryPath != "")
+            throw new InvalidOperationException("Help category normalization changed after copying an action.");
 
         // Older single-server files migrate to the connection list and the lock / retention timers.
         var legacy = JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\",\"SelfServiceSignInUrl\":\"https://old.example/sign-in\",\"SelfServiceLinkUrl\":\"https://old.example/link\"}")!.Migrate();
