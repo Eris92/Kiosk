@@ -79,8 +79,9 @@ elevated. Saving reloads the running Kiosk.
   username and password prompt is available only for HTTPS sites and closes when its page closes.
 - Pliki opens documents, never programs or scripts.
 - Background commands from Menu belong to the current session. Closing that session stops the command and its child processes; a running command is included in the work confirmation.
-- The Kiosk Card service accepts requests only from the installed Kiosk in Program Files. Clients trust
-  only the real service (session 0).
+- The Kiosk Card service accepts requests from the installed Kiosk in Program Files or an elevated
+  administrator. Operations that return shared secrets or launch sign-in still require the installed
+  Kiosk. Clients trust only the real service (session 0).
 
 ## Build
 

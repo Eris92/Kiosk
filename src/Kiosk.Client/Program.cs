@@ -98,6 +98,11 @@ internal static class Program
                             SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "ClientVersions", "user-copy", "Kiosk.Client.exe")) ||
                             SharedAccounts.IsInstalledKiosk(Path.Combine(installedRoot, "Other", "Kiosk.Client.exe")))
                             throw new InvalidOperationException("Installed client path verification failed.");
+                        if (!CardService.AuthorizedClient(versioned, administrator: false) ||
+                            CardService.AuthorizedClient(Path.Combine(installedRoot, "Other", "Kiosk.Client.exe"), administrator: false) ||
+                            !CardService.AuthorizedClient(null, administrator: true) ||
+                            CardService.AuthorizedClient(null, administrator: false))
+                            throw new InvalidOperationException("Card service client authorization failed.");
                         form.SmokeTest();
                         await SharePointNewsSmokeTestAsync(form);
                         await form.EmbeddedSmokeTestAsync();

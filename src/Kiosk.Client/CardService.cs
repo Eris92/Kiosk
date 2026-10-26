@@ -201,7 +201,8 @@ internal static class CardService
 
     private static PipeSecurity PipePermissions()
     {
-        // SYSTEM and administrators: full; signed-in (interactive) users: may connect and send requests.
+        // SYSTEM and administrators: full; signed-in users may connect, but Serve authorizes each request
+        // against the caller's process path or elevated administrator token before any operation runs.
         var security = new PipeSecurity();
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
@@ -280,24 +281,27 @@ internal static class CardService
                 silent.Change(Timeout.Infinite, Timeout.Infinite);
                 var request = character == -1 && requestText.Length == 0
                     ? null : JsonSerializer.Deserialize<Request>(requestText.ToString());
+                var clientProgram = ClientProgram(pipe);
+                var administrator = ClientIsAdministrator(pipe);
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }
+                    : !AuthorizedClient(clientProgram, administrator) ? new Response { Code = -2, Message = "Polecenia usługi są dostępne tylko dla zainstalowanego Kiosku lub administratora." }
                     // The session comes from Windows (the pipe's client), not from the request.
                     : request.Op == "firstsignin" ? FirstSignIn.Arm(GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var session) ? session : -1)
                     // Read-only check, nothing is copied; another server than the saved one only for an elevated administrator.
-                    : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: ClientIsAdministrator(pipe))
+                    : request.Op == "testconfig" ? CentralConfig.Test(request.Source, savedAccount: true, administrator: administrator)
                     // A shared account's password only for the installed Kiosk program, named by Windows (the pipe's client process).
-                    : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, ClientProgram(pipe))
+                    : request.Op == "sharedaccount" ? SharedAccounts.ForService(request.Source, clientProgram)
                     // A program with a shared account: started here as the Kiosk's account, the password stays in the service.
-                    : request.Op == "runas" ? SharedAccountPrograms.Start(request.Source, ClientProgram(pipe), pipe,
+                    : request.Op == "runas" ? SharedAccountPrograms.Start(request.Source, clientProgram, pipe,
                         GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var runasPid) ? (int)runasPid : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var runasSession) ? runasSession : -1)
-                    : request.Op == "newsaccount" ? NewsAccount.ForService(ClientProgram(pipe))
+                    : request.Op == "newsaccount" ? NewsAccount.ForService(clientProgram)
                     // Watchdog: the Kiosk process Windows names reports in or says goodbye.
                     : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,
-                        ClientProgram(pipe), request.Source)
+                        clientProgram, request.Source)
                     // Card + PIN sign-in: the PIN screen for the Kiosk process and session Windows names, nobody else.
                     : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
-                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, ClientProgram(pipe), request.Embed)
+                        GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, clientProgram, request.Embed)
                     : Locked(Gate(request.Op), () => Handle(request));
                 pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
                 pipe.WriteByte((byte)'\n');
@@ -309,6 +313,9 @@ internal static class CardService
     }
 
     private static Response Locked(object gate, Func<Response> action) { lock (gate) return action(); }
+
+    internal static bool AuthorizedClient(string? clientProgram, bool administrator) =>
+        administrator || SharedAccounts.IsInstalledKiosk(clientProgram);
 
     private static string? ClientProgram(NamedPipeServerStream pipe)
     {
