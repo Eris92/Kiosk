@@ -58,6 +58,9 @@ internal static class News
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
         var list = JsonSerializer.Deserialize<NewsItem[]>(File.ReadAllText(file), options) ?? [];
         var now = DateTime.Now;
+        // A single picture is often reused by several messages. Decode it once per refresh;
+        // DisposePictures already handles shared image references when the list is retired.
+        var pictures = new Dictionary<string, Image?>(StringComparer.OrdinalIgnoreCase);
         try
         {
             foreach (var item in list)
@@ -78,15 +81,30 @@ internal static class News
                 if (safe.Image.Length > 0)
                 {
                     var path = Path.IsPathFullyQualified(safe.Image) ? safe.Image : Path.Combine(folder, safe.Image);
-                    // Read into memory so the share's file is not kept open. Bound the read even if
-                    // the source is replaced or grows while the messages are being refreshed.
-                    try { if (File.Exists(path)) picture = DecodePictureFile(path); }
+                    try
+                    {
+                        path = Path.GetFullPath(path);
+                        if (!pictures.TryGetValue(path, out picture))
+                        {
+                            // Read into memory so the share's file is not kept open. Bound the read even
+                            // if the source is replaced or grows while the messages are refreshed.
+                            try { if (File.Exists(path)) picture = DecodePictureFile(path); }
+                            catch (Exception) { picture = null; }
+                            pictures[path] = picture; // Remember a missing or invalid image too.
+                        }
+                    }
                     catch (Exception) { picture = null; }
                 }
                 items.Add(safe with { Picture = picture, Action = action, VideoSource = video });
             }
         }
-        catch { DisposePictures(items); throw; }
+        catch
+        {
+            var unique = new HashSet<Image>(ReferenceEqualityComparer.Instance);
+            foreach (var picture in pictures.Values)
+                if (picture != null && unique.Add(picture)) picture.Dispose();
+            throw;
+        }
         return items;
     }
 

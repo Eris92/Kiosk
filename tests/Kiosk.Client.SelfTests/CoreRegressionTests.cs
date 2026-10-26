@@ -81,6 +81,16 @@ internal sealed partial class KioskForm
             var news = News.Load(newsFolder);
             if (news.Count != 1 || news[0].Picture != null)
                 throw new InvalidOperationException("Oversized news picture hid the message or was decoded.");
+            using (var small = new Bitmap(12, 12)) small.Save(Path.Combine(newsFolder, "shared.png"), System.Drawing.Imaging.ImageFormat.Png);
+            File.WriteAllText(Path.Combine(newsFolder, News.FileName),
+                "[{\"Title\":\"First\",\"Image\":\"shared.png\"},{\"Title\":\"Second\",\"Image\":\".\\\\shared.png\"}]");
+            var reused = News.Load(newsFolder);
+            try
+            {
+                if (reused.Count != 2 || reused[0].Picture == null || !ReferenceEquals(reused[0].Picture, reused[1].Picture))
+                    throw new InvalidOperationException("Repeated news image was decoded more than once.");
+            }
+            finally { News.DisposePictures(reused); }
         }
         finally { Directory.Delete(newsFolder, recursive: true); }
     }
