@@ -14,7 +14,10 @@ internal sealed class IdleScreen : Form
     private readonly System.Windows.Forms.Timer watch = new() { Interval = 5000 };
     private WebView2? web;
     private ApplicationView? app;
-    private bool starting;
+    private Label? startError;
+    private bool starting, restartingApp;
+    private int monitorFailures, appStartFailures;
+    private long retryAppAtMilliseconds;
 
     internal Screen Target { get; }
     private readonly int number;
@@ -31,6 +34,10 @@ internal sealed class IdleScreen : Form
         }
     }
     internal long? ShownAtMilliseconds { get; private set; }
+#if KIOSK_SELF_TEST
+    internal bool ApplicationStarted => app?.Started == true;
+    internal bool ShowingError => startError != null;
+#endif
 
     internal IdleScreen(Screen screen, ScreenContent content, int number)
     {
@@ -51,14 +58,7 @@ internal sealed class IdleScreen : Form
             ShownAtMilliseconds = Environment.TickCount64;
             Bounds = Target.Bounds;
         };
-        // A program that closed by itself (or crashed) is started again.
-        watch.Tick += async (_, _) =>
-        {
-            if (app == null || !app.Started || app.RefreshHostedWindow() || IsDisposed) return;
-            // A program that cannot start again must not take the whole Kiosk (the Windows shell) down with it.
-            try { await RestartAppAsync(); }
-            catch (Exception ex) { Audit.Write("idle_screen_error", ex.Message); }
-        };
+        watch.Tick += async (_, _) => await WatchApplicationAsync();
     }
 
     private readonly List<AlertBar> bars = [];
@@ -108,14 +108,80 @@ internal sealed class IdleScreen : Form
                 web.CoreWebView2.Navigate(content.Url);
             }
             else await RestartAppAsync();
-            watch.Start();
         }
         catch (Exception ex)
         {
-            Controls.Add(new Label { Text = "Nie udało się pokazać treści ekranu: " + ex.Message, Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, TextAlign = ContentAlignment.MiddleCenter });
-            Audit.Write("idle_screen_error", ex.Message);
+            ShowError(ex);
+            if (content.Url.Length == 0) ScheduleAppRetry();
         }
-        finally { starting = false; }
+        finally
+        {
+            starting = false;
+            // Web pages and slides have no hosted process to inspect. An application is retried even if its first launch failed.
+            if (content.Url.Length == 0 && !IsDisposed) watch.Start();
+        }
+    }
+
+    private async Task WatchApplicationAsync()
+    {
+        if (starting || restartingApp || IsDisposed) return;
+        if (app is { Started: true } running)
+        {
+            try
+            {
+                if (running.RefreshHostedWindow()) { monitorFailures = 0; return; }
+                monitorFailures = 0;
+            }
+            catch (Exception ex)
+            {
+                if (++monitorFailures < 3)
+                {
+                    if (monitorFailures == 1) Audit.Write("idle_screen_monitor_error", ex.Message);
+                    return;
+                }
+                Audit.Write("idle_screen_monitor_error", "Restart after repeated errors: " + ex.Message);
+                monitorFailures = 0;
+            }
+        }
+        if (Environment.TickCount64 < retryAppAtMilliseconds) return;
+        restartingApp = true;
+        try
+        {
+            await RestartAppAsync();
+            appStartFailures = 0;
+            retryAppAtMilliseconds = 0;
+            ClearError();
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex);
+            ScheduleAppRetry();
+        }
+        finally { restartingApp = false; }
+    }
+
+    private void ShowError(Exception ex)
+    {
+        Audit.Write("idle_screen_error", ex.Message);
+        if (IsDisposed) return;
+        startError ??= new Label { Dock = DockStyle.Fill, ForeColor = KioskTheme.Muted, TextAlign = ContentAlignment.MiddleCenter };
+        startError.Text = "Nie udało się pokazać treści ekranu: " + ex.Message;
+        if (startError.Parent != this) Controls.Add(startError);
+        startError.BringToFront();
+    }
+
+    private void ScheduleAppRetry()
+    {
+        retryAppAtMilliseconds = Environment.TickCount64 + Math.Min(30_000, 5_000 << Math.Min(3, appStartFailures));
+        appStartFailures = Math.Min(3, appStartFailures + 1);
+    }
+
+    private void ClearError()
+    {
+        if (startError == null) return;
+        Controls.Remove(startError);
+        startError.Dispose();
+        startError = null;
     }
 
     /// <summary>Reloads the page (timed refresh); programs keep running.</summary>

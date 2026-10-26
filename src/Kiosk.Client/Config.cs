@@ -143,10 +143,9 @@ internal sealed record Config
     /// WindowsSession uses the Windows account, while the legacy CardBroker signs in inside Kiosk.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
     public SelfServiceAuthentication SelfServiceAuthentication { get; init; } = SelfServiceAuthentication.WindowsSession;
-    /// <summary>Legacy CardBroker: the page opened for FIDO2 sign-in when a card is put on the reader. Empty = none.</summary>
-    public string SelfServiceSignInUrl { get; init; } = "https://myaccount.microsoft.com";
-    /// <summary>Punkt samoobsługowy: after a new PIN was set on the card, this page links the card to the person's account.</summary>
-    public string SelfServiceLinkUrl { get; init; } = "https://mysignins.microsoft.com/security-info";
+    // Retained only to read old files. Neither URL is used by the current sign-in or help flow.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SelfServiceSignInUrl { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SelfServiceLinkUrl { get; init; }
     public bool DisconnectOnCardRemoval { get; init; } = true;
     public string AccentColor { get; init; } = KioskTheme.DefaultAccent;
     public TaskbarAlignment TaskbarAlignment { get; init; } = TaskbarAlignment.Center;
@@ -250,7 +249,8 @@ internal sealed record Config
             EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
             MenuCategories = MenuCategory.Complete(MenuCategories, HelpActions),
             ConfigVersion = CurrentVersion,
-            Server = null, Port = null, IdleSeconds = null, AutoUpdate = null, UpdateChannel = null
+            Server = null, Port = null, IdleSeconds = null, AutoUpdate = null, UpdateChannel = null,
+            SelfServiceSignInUrl = null, SelfServiceLinkUrl = null
         };
     }
 
@@ -279,7 +279,6 @@ internal sealed record Config
         // Numbers are read as enum values too: an unknown one would break Konfiguracja when it opens.
         if (!Enum.IsDefined(TaskbarAlignment) || !Enum.IsDefined(NewsShow) || !Enum.IsDefined(NewsOrder) || !Enum.IsDefined(NewsSize))
             throw new InvalidDataException("Nieznane ustawienie paska zadań albo komunikatów.");
-        if (SelfServiceSignInUrl == null || SelfServiceLinkUrl == null) throw new InvalidDataException("Adresy punktu samoobsługowego nie mogą być null.");
         if (ScreenRefreshSeconds is < 0 or > 86400) throw new InvalidDataException("Odświeżanie ekranów: 0–86400 s.");
         foreach (var c in Commands ?? [])
             if (c == null || string.IsNullOrEmpty(c.Name) || string.IsNullOrEmpty(c.Path)) throw new InvalidDataException("Każde polecenie potrzebuje nazwy i ścieżki.");

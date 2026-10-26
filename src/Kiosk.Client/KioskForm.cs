@@ -2428,15 +2428,18 @@ internal sealed partial class KioskForm : Form
             throw new InvalidOperationException("Virtual reader masked physical card removal.");
 
         // Older single-server files migrate to the connection list and the lock / retention timers.
-        var legacy = JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\"}")!.Migrate();
+        var legacy = JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\",\"SelfServiceSignInUrl\":\"https://old.example/sign-in\",\"SelfServiceLinkUrl\":\"https://old.example/link\"}")!.Migrate();
         legacy.Validate();
+        var migratedJson = JsonSerializer.Serialize(legacy);
         if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
             legacy.Applications.Length != 3 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.Applications[2].IsBuiltInFiles || !legacy.EnableBrowser ||
             legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 3 ||
-            legacy.AutoUpdate != null || legacy.UpdateChannel != null ||
-            JsonSerializer.Serialize(legacy).Contains("AutoUpdate", StringComparison.Ordinal) ||
-            JsonSerializer.Serialize(legacy).Contains("UpdateChannel", StringComparison.Ordinal))
+            legacy.AutoUpdate != null || legacy.UpdateChannel != null || legacy.SelfServiceSignInUrl != null || legacy.SelfServiceLinkUrl != null ||
+            migratedJson.Contains("AutoUpdate", StringComparison.Ordinal) ||
+            migratedJson.Contains("UpdateChannel", StringComparison.Ordinal) ||
+            migratedJson.Contains("SelfServiceSignInUrl", StringComparison.Ordinal) ||
+            migratedJson.Contains("SelfServiceLinkUrl", StringComparison.Ordinal))
             throw new InvalidOperationException("Legacy configuration migration failed.");
         foreach (var invalid in new[]
         {
@@ -2698,8 +2701,10 @@ internal sealed partial class KioskForm : Form
         var legacyAuthFile = Path.Combine(AppContext.BaseDirectory, "self-test-legacy-auth.json");
         try
         {
-            File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"SelfService"}""");
-            if (Configuration.Load(legacyAuthFile).SelfServiceAuthentication != SelfServiceAuthentication.CardBroker)
+            File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceSignInUrl":"https://old.example/sign-in","SelfServiceLinkUrl":"https://old.example/link"}""");
+            var oldSelfService = Configuration.Load(legacyAuthFile);
+            if (oldSelfService.SelfServiceAuthentication != SelfServiceAuthentication.CardBroker ||
+                oldSelfService.SelfServiceSignInUrl != null || oldSelfService.SelfServiceLinkUrl != null)
                 throw new InvalidOperationException("Existing self-service configuration changed its sign-in method.");
             File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"Kiosk"}""");
             if (Configuration.Load(legacyAuthFile).SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession)
@@ -2795,6 +2800,34 @@ internal sealed partial class KioskForm : Form
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
+    }
+
+    internal async Task IdleScreenRecoverySmokeTestAsync()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "self-test-idle-host.exe");
+        IdleScreen? idle = null;
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            idle = new IdleScreen(Screen.FromControl(this), new ScreenContent { Path = path, Arguments = "--app-host-fixture" }, 1);
+            idle.Show();
+            for (int i = 0; i < 50 && !idle.ShowingError; i++) await Task.Delay(100);
+            if (!idle.ShowingError) throw new InvalidOperationException("Idle screen did not report a failed application launch.");
+            File.Copy(Environment.ProcessPath!, path);
+            for (int i = 0; i < 200 && (!idle.ApplicationStarted || idle.ShowingError); i++) await Task.Delay(100);
+            if (!idle.ApplicationStarted || idle.ShowingError)
+                throw new InvalidOperationException("Idle screen did not retry its application and clear the error.");
+        }
+        finally
+        {
+            idle?.Dispose();
+            for (int i = 0; i < 100 && File.Exists(path); i++)
+            {
+                try { File.Delete(path); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Task.Delay(100); }
+            }
+            if (File.Exists(path)) throw new IOException("Idle screen test left its application executable in use.");
+        }
     }
 
     private async Task FilesNavigationSmokeTestAsync()
