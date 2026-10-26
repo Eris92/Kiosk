@@ -120,6 +120,8 @@ Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w kata
 
 `dotnet list package --vulnerable --include-transitive` ponowiono 2026-10-25 dla klienta i FidoRun; źródło NuGet nie zgłosiło znanych podatnych pakietów. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
 
+Sprawdzenie ścieżki programu oraz utworzenie zawieszonego procesu odbywa się poza wątkiem okna. Kiosk pozostaje responsywny, gdy plik leży na wolnym udziale sieciowym lub start zatrzyma skaner plików. Przed wznowieniem procesu Kiosk przypisuje go do zadania Windows; jeśli widok zamknięto w trakcie startu, kończy nowy proces i zwalnia uchwyty. Czas wyszukania okna i przekazania do istniejącej instancji mierzy zegar monotoniczny. Aktywny test zatrzymuje sprawdzenie ścieżki, sprawdza odpowiedź interfejsu i zamyka widok przed wznowieniem; istniejący test sprawdza osadzenie rzeczywiście uruchomionego EXE.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

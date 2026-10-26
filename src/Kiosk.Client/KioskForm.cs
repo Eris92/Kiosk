@@ -2696,6 +2696,31 @@ internal sealed partial class KioskForm : Form
         if (CardPin.ReadIdentity("Kiosk self-test missing reader") != null) throw new InvalidOperationException("Identity read from a missing reader.");
 
         var entry = new ApplicationEntry { Name = "Test", Path = Environment.ProcessPath!, Arguments = "--app-host-fixture" };
+        // A slow executable path must leave the UI responsive; closing the page while it waits must abort launch.
+        using (var entered = new ManualResetEventSlim())
+        using (var release = new ManualResetEventSlim())
+        using (var stalled = new ApplicationView { ProgramExistsForTest = _ => { entered.Set(); release.Wait(); return true; } })
+        {
+            surface.Controls.Add(stalled);
+            var pending = stalled.StartAsync(entry);
+            try
+            {
+                if (!await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))))
+                    throw new InvalidOperationException("Slow application path probe did not start.");
+                var uiPulse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                BeginInvoke(() => uiPulse.TrySetResult());
+                await uiPulse.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                if (pending.IsCompleted) throw new InvalidOperationException("Slow application path probe did not wait.");
+            }
+            finally
+            {
+                stalled.Dispose();
+                release.Set();
+                surface.Controls.Remove(stalled);
+            }
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            if (stalled.ProgramPath.Length != 0) throw new InvalidOperationException("Closed application page continued launching.");
+        }
         if (new Config().SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession)
             throw new InvalidOperationException("New self-service configuration did not select Windows SSO.");
         var legacyAuthFile = Path.Combine(AppContext.BaseDirectory, "self-test-legacy-auth.json");

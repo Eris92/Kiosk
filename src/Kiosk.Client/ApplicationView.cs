@@ -89,6 +89,9 @@ internal sealed class ApplicationView : Panel
     private HashSet<IntPtr> untrackedBefore = [];
     /// <summary>The program file (for its icon on the taskbar).</summary>
     internal string ProgramPath { get; private set; } = "";
+#if KIOSK_SELF_TEST
+    internal Func<string, bool>? ProgramExistsForTest { get; set; }
+#endif
 
     internal ApplicationView() { Dock = DockStyle.Fill; BackColor = KioskTheme.Background; }
 
@@ -97,34 +100,65 @@ internal sealed class ApplicationView : Panel
     internal async Task StartAsync(ApplicationEntry entry, IProgramStarter? logon = null)
     {
         // A program on a file server that only the shared account may read is not visible from here.
-        if (logon is not NetworkAccountStarter && !File.Exists(entry.Path)) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
+        if (logon is not NetworkAccountStarter)
+        {
+            // A disconnected file server can stall File.Exists for seconds. Keep the Kiosk responsive.
+            bool exists = await Task.Run(() =>
+            {
+#if KIOSK_SELF_TEST
+                return ProgramExistsForTest?.Invoke(entry.Path) ?? File.Exists(entry.Path);
+#else
+                return File.Exists(entry.Path);
+#endif
+            });
+            if (IsDisposed) return;
+            if (!exists) throw new FileNotFoundException("Nie znaleziono aplikacji.", entry.Path);
+        }
+        if (IsDisposed) return;
         ProgramPath = entry.Path;
         _ = Handle;
-        var before = WindowsOfHostedProcesses();
-        var windowsBefore = TopLevelWindows();
-        job = AppNative.CreateJobObject(IntPtr.Zero, null);
-        if (job.IsInvalid) throw new Win32Exception();
-        var limits = new AppNative.JobLimits { Basic = new AppNative.BasicLimits { Flags = 0x2000 } }; // KILL_ON_JOB_CLOSE
-        if (!AppNative.SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<AppNative.JobLimits>())) throw new Win32Exception();
+        job = AppNative.CreateKillOnCloseJob();
         // SW_SHOWNOACTIVATE: the window starts normally shown (SW_HIDE or a minimised start makes some apps,
         // e.g. KeePass with "minimize to tray", hide themselves or stay blank). It is adopted within ~50 ms.
-        var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = 4 };
         // Start suspended: no descendant can escape ownership before job assignment.
         var directory = string.IsNullOrWhiteSpace(entry.WorkingDirectory) ? Path.GetDirectoryName(entry.Path) : entry.WorkingDirectory;
         var commandLine = '"' + entry.Path + "\" " + entry.Arguments;
+        // Both account sign-in and ordinary CreateProcess may wait on a slow disk or security scanner.
         AppNative.ProcessInfo process;
-        if (logon != null)
-        {
-            // Off the window's thread: the sign-in program or the service may take a while, the Kiosk stays responsive.
-            var path = entry.Path;
-            var started = await Task.Run(() => logon.Start(path, commandLine, directory));
-            if (IsDisposed) { AppNative.TerminateProcess(started.Process, 1); AppNative.CloseHandle(started.Thread); AppNative.CloseHandle(started.Process); job?.Dispose(); job = null; return; }
-            process = new AppNative.ProcessInfo { Process = started.Process, Thread = started.Thread };
-        }
-        else if (!AppNative.CreateProcess(entry.Path, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,
-            directory, ref startup, out process)) throw new Win32Exception();
         try
         {
+            process = await Task.Run(() =>
+            {
+                if (logon != null)
+                {
+                    var started = logon.Start(entry.Path, commandLine, directory);
+                    return new AppNative.ProcessInfo { Process = started.Process, Thread = started.Thread };
+                }
+                var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Flags = 1, ShowWindow = 4 };
+                if (!AppNative.CreateProcess(entry.Path, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero,
+                    directory, ref startup, out var startedProcess)) throw new Win32Exception();
+                return startedProcess;
+            });
+        }
+        catch
+        {
+            job?.Dispose();
+            job = null;
+            throw;
+        }
+        HashSet<IntPtr> before = [];
+        try
+        {
+            // The process is still suspended. A closed view must not leave a late-started program behind.
+            if (IsDisposed)
+            {
+                AppNative.TerminateProcess(process.Process, 1);
+                job?.Dispose();
+                job = null;
+                return;
+            }
+            before = WindowsOfHostedProcesses();
+            var windowsBefore = TopLevelWindows();
             if (!AppNative.AssignProcessToJobObject(job, process.Process))
             {
                 if (logon is not UserLogon) throw new Win32Exception();
@@ -142,19 +176,19 @@ internal sealed class ApplicationView : Panel
         catch { AppNative.TerminateProcess(process.Process != IntPtr.Zero ? process.Process : untrackedProcess, 1); throw; }
         finally { AppNative.CloseHandle(process.Thread); if (process.Process != IntPtr.Zero) AppNative.CloseHandle(process.Process); }
 
-        var deadline = DateTime.UtcNow.AddSeconds(30); // Office and Electron apps can take a while.
-        DateTime? handedOver = null;
-        while (!IsDisposed && DateTime.UtcNow < deadline)
+        var deadline = Environment.TickCount64 + 30_000; // Office and Electron apps can take a while.
+        long? handedOver = null;
+        while (!IsDisposed && Environment.TickCount64 < deadline)
         {
             var window = FindMainWindow();
             if (window != IntPtr.Zero) { Embed(window); return; }
             if (job != null && ActiveProcesses() == 0)
             {
                 // The program passed the request to a copy already running in another Kiosk view (e.g. a second Edge window).
-                handedOver ??= DateTime.UtcNow;
+                handedOver ??= Environment.TickCount64;
                 var handed = FindHandedOverWindow(before);
                 if (handed != IntPtr.Zero) { job?.Dispose(); job = null; adopted = true; Embed(handed); return; }
-                if (DateTime.UtcNow - handedOver < TimeSpan.FromSeconds(10)) { await Task.Delay(100); continue; }
+                if (Environment.TickCount64 - handedOver < 10_000) { await Task.Delay(100); continue; }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
             }
             await Task.Delay(50);
