@@ -2204,6 +2204,7 @@ internal sealed partial class KioskForm : Form
         AddWindow(session, SettingsKey, "Konfiguracja", view);
     }
 
+#if KIOSK_SELF_TEST
     // ---------------------------------------------------------------- self-test
 
     /// <summary>Pictures of every Konfiguracja tab at 1280×720 and 1024×576 (= 1280×720 at 125 %), for checking the layout from CI.</summary>
@@ -2326,6 +2327,31 @@ internal sealed partial class KioskForm : Form
             var nullable = News.Load(folder);
             if (nullable.Count != 1 || nullable[0].Title != "" || nullable[0].Text != "Działa" || nullable[0].IsBar || nullable[0].Action != "")
                 throw new InvalidOperationException("Null fields in a news entry were not normalized.");
+
+            using (var source = new Bitmap(3000, 1000))
+            using (var encoded = new MemoryStream())
+            {
+                using (var graphics = Graphics.FromImage(source)) graphics.Clear(Color.Crimson);
+                source.Save(encoded, System.Drawing.Imaging.ImageFormat.Png);
+                using var scaled = News.DecodePicture(encoded.ToArray());
+                if (scaled.Width != 1920 || scaled.Height != 640 || ((Bitmap)scaled).GetPixel(960, 320).ToArgb() != Color.Crimson.ToArgb())
+                    throw new InvalidOperationException("News picture was not bounded and rendered correctly.");
+            }
+            using (var oversized = File.Create(Path.Combine(folder, "oversized.png"))) oversized.SetLength(News.MaxPictureBytes + 1L);
+            File.WriteAllText(Path.Combine(folder, News.FileName), "[{\"Title\":\"Large image\",\"Image\":\"oversized.png\"}]");
+            var limited = News.Load(folder);
+            if (limited.Count != 1 || limited[0].Picture != null)
+                throw new InvalidOperationException("Oversized news picture hid the message or was decoded.");
+            using (var shared = new Bitmap(12, 12)) shared.Save(Path.Combine(folder, "shared.png"), System.Drawing.Imaging.ImageFormat.Png);
+            File.WriteAllText(Path.Combine(folder, News.FileName),
+                "[{\"Title\":\"First\",\"Image\":\"shared.png\"},{\"Title\":\"Second\",\"Image\":\".\\\\shared.png\"}]");
+            var reused = News.Load(folder);
+            try
+            {
+                if (reused.Count != 2 || reused[0].Picture == null || !ReferenceEquals(reused[0].Picture, reused[1].Picture))
+                    throw new InvalidOperationException("Repeated news picture was decoded more than once.");
+            }
+            finally { News.DisposePictures(reused); }
         }
         finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
     }
@@ -2786,6 +2812,7 @@ internal sealed partial class KioskForm : Form
         closeConfirmed = true;
         CloseAllSessions("self_test_finished");
     }
+#endif
 }
 
 // IMsRdpExtendedSettings (IUnknown): property bag used for EnableRdsAadAuth (Microsoft Entra sign-in).

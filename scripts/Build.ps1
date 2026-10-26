@@ -42,7 +42,7 @@ $published = $false
 try {
     $arguments = @('publish', (Join-Path $repository 'src\Kiosk.Client\Kiosk.Client.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $staging, '-p:ContinuousIntegrationBuild=true', '-p:Deterministic=true')
     if ($SelfTest) { $arguments += '-p:KioskSelfTest=true' }
-    else { $arguments += @('-p:DebugType=None', '-p:DebugSymbols=false') }
+    else { $arguments += @('-p:KioskSelfTest=false', '-p:DebugType=None', '-p:DebugSymbols=false') }
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed; the previous build was retained.' }
     $configTool = Join-Path $repository 'src\Kiosk.ConfigTool\KioskKonfiguracje.csproj'

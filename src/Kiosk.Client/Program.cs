@@ -30,6 +30,7 @@ internal static class Program
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => Audit.Write("unhandled_error", e.Exception.GetType().Name + ": " + e.Exception.Message);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Audit.Write("fatal_error", e.ExceptionObject.ToString() ?? "");
+#if KIOSK_SELF_TEST
         if (args.Length > 0 && args[0] == "--app-host-fixture")
         {
             using var fixture = new Form { Text = "Kiosk host test", Size = new Size(480, 320) };
@@ -37,6 +38,7 @@ internal static class Program
             Application.Run(fixture);
             return 0;
         }
+#endif
         if (args.Length == 4 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner), args[3]);
         if (args.Length == 2 && args[0] == CardPageHost.Argument) return CardPageHost.Run(args[1]);
@@ -45,9 +47,12 @@ internal static class Program
         if (args.Length is 3 or 4 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2], args.Length == 4 ? args[3] : null);
         if (args.Length == 2 && args[0] == RdpUserHost.Argument) return RdpUserHost.Run(args[1]);
         if (args.Length == 1 && args[0] == FilesHost.Argument) return FilesHost.Run();
+#if KIOSK_SELF_TEST
         bool selfTest = args.Length > 0 && args[0] == "--self-test";
+#endif
         try
         {
+#if KIOSK_SELF_TEST
             if (selfTest)
             {
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
@@ -98,7 +103,7 @@ internal static class Program
                         await form.EmbeddedSmokeTestAsync();
                         await form.ApplicationSmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, SharePoint news request ordering, settings round-trip, owned application window, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, owned application window, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }
@@ -107,6 +112,7 @@ internal static class Program
                 Application.Run(form);
                 return result;
             }
+#endif
             // Without a path: the PC's shared configuration (Install-KioskShell.ps1) wins over the example next to the exe,
             // so every account and every copy of the Kiosk on this PC shows the same Konfiguracja.
             var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "client.json");
@@ -140,12 +146,17 @@ internal static class Program
         catch (Exception ex)
         {
             Audit.Write("startup_error", ex.Message);
+#if KIOSK_SELF_TEST
             if (selfTest) File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString());
             else MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+#else
+            MessageBox.Show(ex.Message, "Kiosk startup error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+#endif
             return 1;
         }
     }
 
+#if KIOSK_SELF_TEST
     private static async Task SharePointNewsSmokeTestAsync(Control owner)
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -196,6 +207,7 @@ internal static class Program
         if ((await active.WaitAsync(TimeSpan.FromSeconds(2))).Count != 0 || closing.Cached.Count != 0)
             throw new InvalidOperationException("A disposed SharePoint source published an obsolete result.");
     }
+#endif
 }
 
 internal static class Audit

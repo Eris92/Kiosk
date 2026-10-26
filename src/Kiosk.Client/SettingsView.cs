@@ -87,8 +87,10 @@ internal sealed class SettingsView : UserControl
     private readonly DataGridView pageActions = Grid();
     private readonly NumericUpDown screenRefresh = new() { Minimum = 0, Maximum = 86400, Width = 120 };
     private bool scaled;
+#if KIOSK_SELF_TEST
     /// <summary>Self-test pictures: lays the view out as on a screen with this scale.</summary>
     internal static float? ScaleOverride;
+#endif
     /// <summary>Shows each screen's number on the screen itself.</summary>
     internal event Action? IdentifyScreensRequested;
     private readonly NumericUpDown idleAfter = new() { Minimum = 3, Maximum = 86400, Width = 120 };
@@ -1153,7 +1155,11 @@ internal sealed class SettingsView : UserControl
         base.OnHandleCreated(e);
         if (scaled) return;
         scaled = true;
+#if KIOSK_SELF_TEST
         float factor = ScaleOverride ?? DeviceDpi / 96f;
+#else
+        float factor = DeviceDpi / 96f;
+#endif
         if (Math.Abs(factor - 1) < 0.01) return;
         Scale(new SizeF(factor, factor));
         accent.ItemHeight = (int)(26 * factor);   // owner-drawn: Scale leaves the item height (the colour bar was cut off)
