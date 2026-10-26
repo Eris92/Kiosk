@@ -14,7 +14,8 @@ of the PC, not of the Kiosk. Run as administrator; the script picks what this ed
     any more: no Task Manager, no Lock, no Sign out, no Change password. Only "Przełącz użytkownika" (fast user
     switching, also in Konfiguracja) and Cancel remain. These policies are for the whole PC, administrators included.
 
--Uninstall unblocks the filter keys or restores recorded Pro policies. Supports -WhatIf.
+-Uninstall restores recorded filter keys and administrator setting or recorded Pro policies. The Windows
+Keyboard Filter feature remains installed after uninstall. Supports -WhatIf.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -30,7 +31,7 @@ if (-not [Environment]::Is64BitProcess) { throw 'Uruchom 64-bitowy PowerShell (C
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Uruchom jako administrator.' }
 
-$keys = 'Ctrl+Alt+Del', 'Ctrl+Shift+Esc', 'Win+L'
+$keys = 'Ctrl+Alt+Del', 'Shift+Ctrl+Esc', 'Win+L'
 $system = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 $explorer = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
 # What the Ctrl+Alt+Del screen offers on Windows Pro: each one off.
@@ -41,33 +42,126 @@ $policies = @(
     @{ Key = $explorer; Name = 'NoLogoff' }               # Wyloguj
 )
 
-function Get-KeyboardFilter {
-    try { Get-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -ErrorAction Stop } catch { $null }
-}
-
 $edition = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name EditionID).EditionID
 # The feature can be listed as Disabled on Pro even though that edition cannot use Keyboard Filter.
-$feature = if ($edition -match 'Enterprise|Education|IoT') { Get-KeyboardFilter } else { $null }
+$feature = if ($edition -match 'Enterprise|Education|IoT') {
+    Get-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -ErrorAction Stop
+} else { $null }
 if ($feature) {
-    if (-not $Uninstall -and $feature.State -ne 'Enabled' -and $PSCmdlet.ShouldProcess('Client-KeyboardFilter', 'enable feature')) {
-        $result = Enable-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -All -NoRestart
-        if ($result.RestartNeeded) { Write-Warning 'Filtr klawiatury zadziała po ponownym uruchomieniu Windows. Uruchom potem ten skrypt jeszcze raz.'; return }
-    }
+    $stateFile = Join-Path $env:ProgramData 'Kiosk\DeploymentState\keyboard-filter.clixml'
     $namespace = 'root\standardcimv2\embedded'
-    if ($PSCmdlet.ShouldProcess('Keyboard Filter', ($(if ($Uninstall) { 'unblock ' } else { 'block ' }) + ($keys -join ', ')))) {
-        # Administrators keep every shortcut (and can always undo this).
-        $setting = Get-CimInstance -Namespace $namespace -ClassName WEKF_Settings | Where-Object Name -eq 'DisableKeyboardFilterForAdministrators'
-        if ($setting) { Set-CimInstance -InputObject $setting -Property @{ Value = 'true' } }
-        foreach ($id in $keys) {
-            $key = Get-CimInstance -Namespace $namespace -ClassName WEKF_PredefinedKey | Where-Object Id -eq $id
-            if (-not $key) { Write-Warning "Filtr klawiatury nie zna skrótu $id."; continue }
-            Set-CimInstance -InputObject $key -Property @{ Enabled = -not $Uninstall }
+    if (-not $Uninstall -and $feature.State -ne 'Enabled') {
+        if ($feature.State -eq 'EnablePending') {
+            Write-Warning 'Uruchom ponownie Windows, a następnie ponów ten skrypt, aby skonfigurować reguły filtra.'
+            return
         }
-        Set-Service -Name MsKeyboardFilter -StartupType Automatic
-        if (-not $Uninstall) { Start-Service -Name MsKeyboardFilter }
+        if ($PSCmdlet.ShouldProcess('Client-KeyboardFilter', 'enable feature')) {
+            Enable-WindowsOptionalFeature -Online -FeatureName Client-KeyboardFilter -All -NoRestart | Out-Null
+            Write-Warning 'Uruchom ponownie Windows, a następnie ponów ten skrypt, aby skonfigurować reguły filtra.'
+        }
+        return
     }
-    if ($WhatIfPreference) { Write-Output 'WhatIf: ustawienia Filtra klawiatury nie zostaly zmienione.' }
-    else { Write-Host ($(if ($Uninstall) { 'Filtr klawiatury: skróty odblokowane.' } else { 'Filtr klawiatury: zablokowane ' + ($keys -join ', ') + ' (poza administratorami).' })) }
+    if ($feature.State -ne 'Enabled') {
+        throw 'Keyboard Filter is disabled; enable it and restart Windows before restoring saved rule values.'
+    }
+    if ($Uninstall -and -not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+        throw 'No saved Keyboard Filter state exists; do not change rules configured by another administrator.'
+    }
+    # Resolve all documented WMI IDs before changing any rule; a missing rule is an error.
+    $available = @(Get-CimInstance -Namespace $namespace -ClassName WEKF_PredefinedKey -ErrorAction Stop)
+    $rules = @(Resolve-KioskKeyboardFilterKeys $available)
+    $settings = @(Get-CimInstance -Namespace $namespace -ClassName WEKF_Settings -ErrorAction Stop |
+        Where-Object Name -eq 'DisableKeyboardFilterForAdministrators')
+    if ($settings.Count -ne 1) { throw 'Keyboard Filter administrator bypass setting is missing or duplicated.' }
+    $setting = $settings[0]
+    $service = Get-Service -Name MsKeyboardFilter -ErrorAction Stop
+    if ($service.Status -ne 'Running') { throw 'Keyboard Filter service is not running; restart Windows before configuring rules.' }
+
+    if ($Uninstall) {
+        if ($PSCmdlet.ShouldProcess('Keyboard Filter', 'restore saved rules and administrator setting where unchanged')) {
+            $journal = Open-KioskRegistryJournal 'keyboard-filter'
+            $saved = $journal.State.Filter
+            if (-not $saved -or $saved.Version -ne 1) { throw 'Saved Keyboard Filter state is missing or unsupported.' }
+            $seen = @{}
+            foreach ($entry in @($saved.Rules)) {
+                if ($entry.Id -notin $keys -or $seen.ContainsKey([string]$entry.Id) -or
+                    [bool]$entry.Applied -ne $true) {
+                    throw 'Saved Keyboard Filter rules are invalid or duplicated.'
+                }
+                $seen[[string]$entry.Id] = $true
+            }
+            if ($null -ne $saved.Administrators -and [string]$saved.Administrators.Applied -ine 'true') {
+                throw 'Saved Keyboard Filter administrator setting is invalid.'
+            }
+            $remaining = @()
+            foreach ($entry in @($saved.Rules)) {
+                $rule = @($rules | Where-Object Id -eq $entry.Id)
+                if ($rule.Count -ne 1) { throw "Saved Keyboard Filter rule is invalid: $($entry.Id)" }
+                $current = [bool]$rule[0].Enabled
+                if ($current -eq [bool]$entry.Original) { continue }
+                if ($current -ne [bool]$entry.Applied) {
+                    Write-Warning "Keyboard Filter rule changed after Kiosk deployment; leaving it in place: $($entry.Id)"
+                    $remaining += $entry
+                    continue
+                }
+                Set-CimInstance -InputObject $rule[0] -Property @{ Enabled = [bool]$entry.Original } -ErrorAction Stop | Out-Null
+            }
+            $saved.Rules = $remaining
+            if ($null -ne $saved.Administrators) {
+                $current = [string]$setting.Value
+                if ($current -ieq [string]$saved.Administrators.Original) { $saved.Administrators = $null }
+                elseif ($current -ieq [string]$saved.Administrators.Applied) {
+                    Set-CimInstance -InputObject $setting -Property @{ Value = [string]$saved.Administrators.Original } -ErrorAction Stop | Out-Null
+                    $saved.Administrators = $null
+                } else { Write-Warning 'Keyboard Filter administrator setting changed after Kiosk deployment; leaving it in place.' }
+            }
+            if ($saved.Rules.Count -eq 0 -and $null -eq $saved.Administrators) { $journal.State.Filter = $null }
+            Save-KioskRegistryJournal $journal
+            if ($null -eq $journal.State.Filter) { Remove-Item -LiteralPath $journal.File -Force }
+        }
+        if ($WhatIfPreference) { Write-Output 'WhatIf: zapisane reguły Filtra klawiatury zostałyby przywrócone.' }
+        else { Write-Output 'Filtr klawiatury: zapisane reguły przywrócono tam, gdzie pozostały bez zmian. Funkcja Windows pozostaje włączona.' }
+        return
+    }
+
+    if ($PSCmdlet.ShouldProcess('Keyboard Filter', 'record previous values and block required keys')) {
+        $journal = Open-KioskRegistryJournal 'keyboard-filter'
+        $saved = $journal.State.Filter
+        if ($saved) {
+            if ($saved.Version -ne 1 -or @($saved.Rules).Count -ne $rules.Count -or
+                $null -eq $saved.Administrators -or [string]$saved.Administrators.Applied -ine 'true') {
+                throw 'Saved Keyboard Filter state is incomplete; restore it before reinstalling.'
+            }
+            $seen = @{}
+            foreach ($entry in @($saved.Rules)) {
+                $rule = @($rules | Where-Object Id -eq $entry.Id)
+                if ($seen.ContainsKey([string]$entry.Id) -or $rule.Count -ne 1 -or
+                    [bool]$entry.Applied -ne $true -or [bool]$rule[0].Enabled -ne [bool]$entry.Applied) {
+                    throw "Keyboard Filter rule changed since Kiosk deployment: $($entry.Id)"
+                }
+                $seen[[string]$entry.Id] = $true
+            }
+            if ([string]$setting.Value -ine [string]$saved.Administrators.Applied) {
+                throw 'Keyboard Filter administrator setting changed since Kiosk deployment.'
+            }
+        } else {
+            $saved = @{
+                Version = 1
+                Rules = @($rules | ForEach-Object { @{ Id = $_.Id; Original = [bool]$_.Enabled; Applied = $true } })
+                Administrators = @{ Original = [string]$setting.Value; Applied = 'true' }
+            }
+            $journal.State.Filter = $saved
+            Save-KioskRegistryJournal $journal
+        }
+        if ([string]$setting.Value -ine 'true') {
+            Set-CimInstance -InputObject $setting -Property @{ Value = 'true' } -ErrorAction Stop | Out-Null
+        }
+        foreach ($rule in $rules) {
+            if (-not [bool]$rule.Enabled) { Set-CimInstance -InputObject $rule -Property @{ Enabled = $true } -ErrorAction Stop | Out-Null }
+        }
+    }
+    if ($WhatIfPreference) { Write-Output 'WhatIf: ustawienia Filtra klawiatury nie zostały zmienione.' }
+    else { Write-Output ('Filtr klawiatury: zablokowane ' + ($keys -join ', ') + ' (poza administratorami).') }
     return
 }
 

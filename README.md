@@ -33,12 +33,14 @@ CI builds and verifies an unsigned deployment candidate on `main` and `codex/**`
 | `Install-KioskShell.ps1` | Makes the PC a shared kiosk. The Kiosk becomes the Windows shell, in `C:\Program Files\Kiosk`, with its configuration in `C:\ProgramData\Kiosk\client.json`. `-Uninstall` reverts it. |
 | `Install-KioskCardService.ps1` | The **Kiosk Card** service (LocalSystem). It handles the card PIN, card sign-in, shared accounts and the watchdog that restarts a crashed or hung Kiosk. |
 | `Set-KioskSignInScreen.ps1` | The Windows sign-in screen in the Kiosk look, with security key sign-in. It also removes the sign-in tile of old test builds. `-SecurityKeyOnly` hides the password tiles. |
-| `Set-KioskKeyboardLock.ps1` | Locks Ctrl+Alt+Del options and Windows shortcuts in Windows itself. No program can block Ctrl+Alt+Del. |
+| `Set-KioskKeyboardLock.ps1` | Uses Keyboard Filter on Enterprise/Education/IoT or Windows policies on Pro. Saves previous values for `-Uninstall`; on Enterprise, the optional feature remains enabled after rule rollback. |
 | `Set-KioskConfigSource.ps1` | Konfiguracja z serwera: one configuration on a share for many PCs. |
 | `Set-KioskSharedAccount.ps1` | Shared accounts (`accounts.kiosk`) for pages and network folders. |
 | `Install-KioskConfig.ps1` | An administrator's PC for preparing the configuration. It stages a verified client in a versioned directory and updates only its editor/preview shortcuts; Explorer remains the shell. `-Uninstall` removes those shortcuts and retains the configuration and binaries. |
 
 All scripts support `-WhatIf`.
+
+Keyboard Filter needs a restart after the Windows feature is first enabled; run `Set-KioskKeyboardLock.ps1` again to configure its rules. The script fails if a required predefined key or the service is unavailable. On Windows Pro, Ctrl+Alt+Del still opens the Windows security screen with its configured options hidden.
 
 `Install-KioskShell.ps1` keeps an existing `%ProgramData%\Kiosk\client.json` during an ordinary upgrade. To replace it deliberately, pass `-SourceConfig` with the prepared JSON file; this takes precedence even when the installed configuration exists. For a SelfService migration to Windows sign-in, check that the selected file sets `SessionMode=SelfService` and `SelfServiceAuthentication=WindowsSession`, then run the installer with that explicit source. The installer reports its selected source and validates the resulting configuration before changing the shell. Use `-WhatIf` to check source selection without applying the installation.
 

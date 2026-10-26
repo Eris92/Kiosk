@@ -15,6 +15,26 @@ Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.json' | ForEach
 }
 [xml](Get-Content -LiteralPath (Join-Path $root 'config\intune\ShellLauncher.xml') -Raw) | Out-Null
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+$filterRules = @(
+    [pscustomobject]@{ Id = 'Ctrl+Alt+Del'; Enabled = $false },
+    [pscustomobject]@{ Id = 'Shift+Ctrl+Esc'; Enabled = $false },
+    [pscustomobject]@{ Id = 'Win+L'; Enabled = $false }
+)
+$selectedRules = @(Resolve-KioskKeyboardFilterKeys $filterRules)
+if ($selectedRules.Count -ne 3 -or $selectedRules[1].Id -ne 'Shift+Ctrl+Esc') {
+    throw 'Keyboard Filter did not resolve all documented predefined key IDs.'
+}
+foreach ($invalid in @(
+    @($filterRules | Where-Object Id -ne 'Shift+Ctrl+Esc'),
+    @($filterRules + $filterRules[1])
+)) {
+    try {
+        Resolve-KioskKeyboardFilterKeys $invalid | Out-Null
+        throw 'Keyboard Filter accepted missing or duplicated predefined keys.'
+    } catch {
+        if ($_.Exception.Message -notmatch '^Keyboard Filter must expose exactly one predefined rule') { throw }
+    }
+}
 $configFixtureRoot = [IO.Path]::GetFullPath((Join-Path $root ('out\config-source-' + [Guid]::NewGuid().ToString('N'))))
 try {
     New-Item -ItemType Directory -Path $configFixtureRoot -Force | Out-Null

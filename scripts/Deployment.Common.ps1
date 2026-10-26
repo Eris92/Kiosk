@@ -304,3 +304,15 @@ function Restore-KioskRegistryJournal($Journal) {
     $Journal.State.Values = $remaining
     Save-KioskRegistryJournal $Journal
 }
+
+function Resolve-KioskKeyboardFilterKeys([object[]]$Available) {
+    # These are WEKF_PredefinedKey.Id values, not the display order of pressed keys.
+    $required = @('Ctrl+Alt+Del', 'Shift+Ctrl+Esc', 'Win+L')
+    $resolved = @()
+    foreach ($id in $required) {
+        $matches = @($Available | Where-Object { $_.Id -eq $id })
+        if ($matches.Count -ne 1) { throw "Keyboard Filter must expose exactly one predefined rule for $id; found $($matches.Count)." }
+        $resolved += $matches[0]
+    }
+    return $resolved
+}
