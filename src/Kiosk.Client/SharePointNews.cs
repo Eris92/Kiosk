@@ -15,6 +15,7 @@ internal sealed class SharePointNews : IDisposable
 
     private readonly Control owner;
     private readonly Func<string, int, Task<List<NewsItem>>> fetch;
+    private readonly Func<long> nowMilliseconds;
     // WebView2 has one navigation and one message listener. A timer tick or settings save must not
     // start another request until the current navigation and its handlers have finished.
     private readonly SemaphoreSlim fetchGate = new(1, 1);
@@ -28,15 +29,16 @@ internal sealed class SharePointNews : IDisposable
     internal List<NewsItem> Cached => cached;
     /// <summary>The owner releases old pictures after all desktop and screen controls stop using them.</summary>
     internal event Action<IReadOnlyList<NewsItem>>? CacheReplaced;
-    private DateTime fetchedAt = DateTime.MinValue;
+    private long? fetchedAtMilliseconds;
     private bool disposed;
 
     internal string LastError { get; private set; } = "";
 
-    internal SharePointNews(Control owner, Func<string, int, Task<List<NewsItem>>>? fetch = null)
+    internal SharePointNews(Control owner, Func<string, int, Task<List<NewsItem>>>? fetch = null, Func<long>? nowMilliseconds = null)
     {
         this.owner = owner;
         this.fetch = fetch ?? FetchAsync;
+        this.nowMilliseconds = nowMilliseconds ?? (() => Environment.TickCount64);
     }
 
     internal bool Matches(string url, int count, string accountName) =>
@@ -54,9 +56,9 @@ internal sealed class SharePointNews : IDisposable
             if (disposed) return [];
             account = accountName.Trim();
             var wanted = (Url: url, Count: count, Account: account);
-            if (request != wanted) { request = wanted; ReplaceCache([]); fetchedAt = DateTime.MinValue; }
-            if (url.Length == 0 || DateTime.UtcNow - fetchedAt < Refresh) return cached;
-            fetchedAt = DateTime.UtcNow; // One attempt per period, also when it fails.
+            if (request != wanted) { request = wanted; ReplaceCache([]); fetchedAtMilliseconds = null; LastError = ""; }
+            var now = nowMilliseconds();
+            if (url.Length == 0 || fetchedAtMilliseconds is { } fetched && now - fetched < Refresh.TotalMilliseconds) return cached;
             try
             {
                 var latest = await fetch(url, count);
@@ -70,6 +72,8 @@ internal sealed class SharePointNews : IDisposable
                 LastError = ex.Message;
                 Audit.Write("sharepoint_news_failed", ex.Message);
             }
+            // Count from completion: a slow fetch must not make queued callers fetch again immediately.
+            fetchedAtMilliseconds = nowMilliseconds(); // One attempt per period, also when it fails.
             return cached;
         }
         finally { fetchGate.Release(); }

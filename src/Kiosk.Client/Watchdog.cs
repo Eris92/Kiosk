@@ -59,12 +59,12 @@ internal static class Watchdog
         public required SafeAccessTokenHandle Token;   // The Kiosk's own token: a restart runs as exactly that user.
         public required string Program;
         public required string Arguments;
-        public DateTime LastBeat = DateTime.UtcNow;
+        public long LastBeatMilliseconds = Environment.TickCount64;
     }
 
     private static readonly object gate = new();
     private static readonly Dictionary<int, Watched> watched = [];             // by Windows session
-    private static readonly Dictionary<int, List<DateTime>> restarts = [];     // by Windows session
+    private static readonly Dictionary<int, List<long>> restarts = [];         // monotonic milliseconds, by Windows session
 
     /// <summary>Service: "watch" / "unwatch" from the pipe's client process, which Windows names (not the request).</summary>
     internal static CardService.Response Request(string op, int clientPid, string? program, string arguments)
@@ -79,7 +79,7 @@ internal static class Watchdog
                 if (current?.ProcessId == clientPid) { Forget(session); Audit.Write("watchdog_unwatch", "session " + session); }
                 return new CardService.Response();
             }
-            if (current?.ProcessId == clientPid) { current.LastBeat = DateTime.UtcNow; return new CardService.Response(); }
+            if (current?.ProcessId == clientPid) { current.LastBeatMilliseconds = Environment.TickCount64; return new CardService.Response(); }
             if (!Path.GetFileName(program).Equals("Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase))
                 return new CardService.Response { Code = -2, Message = "Watchdog pilnuje tylko programu Kiosk." };
             var process = Process.GetProcessById(clientPid);
@@ -96,13 +96,14 @@ internal static class Watchdog
     {
         new Thread(() =>
         {
-            var cleaned = DateTime.MinValue;
+            long? cleanedAtMilliseconds = null;
             while (!stopping.Wait(TimeSpan.FromSeconds(10)))
             {
                 // Logi: the PC's log and statistics folders, every hour (Retention).
-                if (DateTime.UtcNow - cleaned > TimeSpan.FromHours(1))
+                var now = Environment.TickCount64;
+                if (cleanedAtMilliseconds is not { } cleaned || now - cleaned > TimeSpan.FromHours(1).TotalMilliseconds)
                 {
-                    cleaned = DateTime.UtcNow;
+                    cleanedAtMilliseconds = now;
                     try { Retention.RunForMachine(); } catch (Exception ex) { Audit.Write("log_cleanup_failed", ex.Message); }
                 }
                 try { CheckSmartCardService(); } catch (Exception ex) { Audit.Write("watchdog_error", ex.Message); }
@@ -114,12 +115,14 @@ internal static class Watchdog
     private static void CheckKiosks()
     {
         List<(int Session, Watched Kiosk, string Reason)> restart = [];
+        var now = Environment.TickCount64;
         lock (gate)
         {
             foreach (var (session, kiosk) in watched.ToList())
             {
                 if (kiosk.Process.HasExited) restart.Add((session, kiosk, "zakończony (kod " + kiosk.Process.ExitCode + ")"));
-                else if (DateTime.UtcNow - kiosk.LastBeat > HungAfter) restart.Add((session, kiosk, "nie odpowiada od " + (int)(DateTime.UtcNow - kiosk.LastBeat).TotalSeconds + " s"));
+                else if (now - kiosk.LastBeatMilliseconds > HungAfter.TotalMilliseconds)
+                    restart.Add((session, kiosk, "nie odpowiada od " + (now - kiosk.LastBeatMilliseconds) / 1000 + " s"));
             }
             foreach (var (session, _, _) in restart) watched.Remove(session);
         }
@@ -137,7 +140,8 @@ internal static class Watchdog
         if (!WTSQueryUserToken(session, out var user)) { Audit.Write("watchdog_session_ended", "session " + session + ", Kiosk " + reason); return; }
         user.Dispose();
         var history = restarts.TryGetValue(session, out var list) ? list : restarts[session] = [];
-        history.RemoveAll(t => DateTime.UtcNow - t > RestartWindow);
+        var now = Environment.TickCount64;
+        history.RemoveAll(t => now - t > RestartWindow.TotalMilliseconds);
         if (history.Count >= MaxRestarts)
         {
             Audit.Write("watchdog_gave_up", "session " + session + ": Kiosk " + reason + "; " + MaxRestarts + " restarty w " + RestartWindow.TotalMinutes + " min");
@@ -161,7 +165,7 @@ internal static class Watchdog
             Audit.Write("watchdog_already_running", "session " + session + ": Kiosk " + reason);
             return;
         }
-        history.Add(DateTime.UtcNow);
+        history.Add(Environment.TickCount64);
         if (!CreateEnvironmentBlock(out var environment, kiosk.Token, false)) throw new Win32Exception();
         try
         {
@@ -184,7 +188,7 @@ internal static class Watchdog
         old.Process.Dispose();
     }
 
-    private static DateTime lastScardStart = DateTime.MinValue;
+    private static long? lastScardStartMilliseconds;
 
     /// <summary>Card readers cannot be reached because the smart card service stopped: start it (at most every 5 minutes).</summary>
     private static void CheckSmartCardService()
@@ -193,8 +197,9 @@ internal static class Watchdog
         if (result == 0) { SCardReleaseContext(context); return; }
         // SCARD_E_NO_SERVICE, SCARD_E_SERVICE_STOPPED; no reader at all (SCARD_E_NO_READERS_AVAILABLE) is not a fault.
         if (result is not (unchecked((int)0x8010001D) or unchecked((int)0x8010001E))) return;
-        if (DateTime.UtcNow - lastScardStart < TimeSpan.FromMinutes(5)) return;
-        lastScardStart = DateTime.UtcNow;
+        var now = Environment.TickCount64;
+        if (lastScardStartMilliseconds is { } last && now - last < TimeSpan.FromMinutes(5).TotalMilliseconds) return;
+        lastScardStartMilliseconds = now;
         using var sc = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), "start SCardSvr") { UseShellExecute = false, CreateNoWindow = true })!;
         sc.WaitForExit(30000);
         Audit.Write("watchdog_restart_scard", "0x" + result.ToString("X8") + " -> sc " + sc.ExitCode);

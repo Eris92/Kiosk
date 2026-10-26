@@ -10,11 +10,11 @@ namespace Kiosk.Client;
 /// <summary>
 /// "Kiosk Card": a small Windows service (LocalSystem) that talks FIDO2 to the card for Kiosk. Windows lets only
 /// administrators and services send FIDO2 commands to a card, so the Kiosk (a normal user) asks the service over
-/// a local pipe. The service does only this (plus changing the PIN or resetting the card for its holder, Szybka pomoc):
-/// check the card PIN, create the Kiosk credential and return its
-/// hmac-secret, always for the relying party "kiosk.local" — never signatures or sign-ins for other sites.
-/// It also installs the latest official Kiosk release on request ("update"), so updating needs no administrator,
-/// and is the Kiosk's watchdog (Watchdog.cs): a crashed or hung Kiosk starts again, a stopped smart card service too.
+/// a local pipe. The card operations check or change the PIN, reset the card for its holder (Szybka pomoc),
+/// and create the Kiosk credential or return its hmac-secret for the relying party "kiosk.local".
+/// They never sign in to other sites.
+/// It also serves the configured shared files/accounts and is the Kiosk's watchdog (Watchdog.cs): a crashed or hung
+/// Kiosk starts again, as does a stopped smart card service.
 /// </summary>
 internal static class CardService
 {
@@ -24,7 +24,7 @@ internal static class CardService
 
     internal sealed class Request
     {
-        public string Op { get; set; } = "";          // watch | unwatch | verify | info | haspin | setpin | changepin | reset | update | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | runas | newsaccount | fidosignin
+        public string Op { get; set; } = "";          // watch | unwatch | verify | info | haspin | setpin | changepin | reset | firstsignin | syncconfig | testconfig | syncnews | stat | syncstats | testnetwork | sharedaccount | runas | newsaccount | fidosignin
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";

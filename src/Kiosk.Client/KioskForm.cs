@@ -1212,18 +1212,28 @@ internal sealed partial class KioskForm : Form
     /// Szybka pomoc, locked or not: a help page (the person's browser when signed in, else a guest window),
     /// or the card itself: change its PIN, set it up again, reset it.
     /// </summary>
-    private DateTime statsExportedAt = DateTime.MinValue;
+    private long statsExportedAtMilliseconds = -1;
+    private int statsExportRunning;
 
     /// <summary>Konfiguracja → Statystyki → Automatycznie: every N hours the service copies the statistics to the export folder (checked hourly; a failure is tried again the next hour).</summary>
     private void ExportStats()
     {
         int hours = config.StatsExportHours;
-        if (hours <= 0 || DateTime.UtcNow - statsExportedAt < TimeSpan.FromHours(hours) - TimeSpan.FromMinutes(5)) return;
+        if (hours <= 0) return;
+        var last = Interlocked.Read(ref statsExportedAtMilliseconds);
+        if (last >= 0 && Environment.TickCount64 - last < hours * 3_600_000L - 300_000L) return;
+        if (Interlocked.CompareExchange(ref statsExportRunning, 1, 0) != 0) return;
         _ = Task.Run(() =>
         {
-            var answer = CardService.Call(new CardService.Request { Op = "syncstats" });
-            if (answer.Code == 0) statsExportedAt = DateTime.UtcNow;
-            else if (answer.Code == -2) statsExportedAt = DateTime.UtcNow;   // No folder set: nothing to do until the next time.
+            try
+            {
+                var answer = CardService.Call(new CardService.Request { Op = "syncstats" });
+                if (answer.Code is 0 or -2) // No folder set: nothing to do until the next time.
+                    Interlocked.Exchange(ref statsExportedAtMilliseconds, Environment.TickCount64);
+                else Audit.Write("stats_export_failed", answer.Message);
+            }
+            catch (Exception ex) { Audit.Write("stats_export_failed", ex.Message); }
+            finally { Volatile.Write(ref statsExportRunning, 0); }
         });
     }
 

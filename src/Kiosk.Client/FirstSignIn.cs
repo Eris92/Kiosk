@@ -16,14 +16,14 @@ internal static class FirstSignIn
     private static readonly TimeSpan Setup = TimeSpan.FromMinutes(5);     // First sign-in: "Hi, we're getting things ready".
     private static readonly object gate = new();
     private static int kioskSession = -1;
-    private static DateTime armedUntil = DateTime.MinValue;
+    private static long armedUntilMilliseconds;
 
     /// <summary>Service: the Kiosk in <paramref name="session"/> is about to show the sign-in screen.</summary>
     internal static CardService.Response Arm(int session)
     {
         if (session <= 0 || session != WTSGetActiveConsoleSessionId())
             return new CardService.Response { Code = -2, Message = "Pierwsze logowanie działa tylko na ekranie tego komputera." };
-        lock (gate) { kioskSession = session; armedUntil = DateTime.UtcNow + Window; }
+        lock (gate) { kioskSession = session; armedUntilMilliseconds = Environment.TickCount64 + (long)Window.TotalMilliseconds; }
         Audit.Write("first_signin_armed", session.ToString());
         return new CardService.Response { Message = "OK" };
     }
@@ -35,7 +35,7 @@ internal static class FirstSignIn
         lock (gate)
         {
             // Only the sign-in on this PC's screen: an administrator's remote session at that moment is left alone.
-            if (kioskSession < 0 || session == kioskSession || DateTime.UtcNow > armedUntil || session != WTSGetActiveConsoleSessionId()) return;
+            if (kioskSession < 0 || session == kioskSession || Environment.TickCount64 > armedUntilMilliseconds || session != WTSGetActiveConsoleSessionId()) return;
             back = kioskSession;
             kioskSession = -1;
         }
@@ -47,8 +47,8 @@ internal static class FirstSignIn
         try
         {
             // The profile is ready once the person's desktop (Explorer, or the Kiosk as their shell) runs.
-            var until = DateTime.UtcNow + Setup;
-            while (DateTime.UtcNow < until && !DesktopStarted(session)) Thread.Sleep(2000);
+            var until = Environment.TickCount64 + (long)Setup.TotalMilliseconds;
+            while (Environment.TickCount64 < until && !DesktopStarted(session)) Thread.Sleep(2000);
             Thread.Sleep(TimeSpan.FromSeconds(15)); // Let sign-in finish its work (tokens, OneDrive, Office) before signing out.
             Audit.Write("first_signin_done", session.ToString());
             if (!WTSConnectSession(back, WTSGetActiveConsoleSessionId(), "", true))

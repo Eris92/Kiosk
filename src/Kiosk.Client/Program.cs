@@ -163,6 +163,7 @@ internal static class Program
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = new List<string>();
+        long simulatedNow = 10_000;
         using var news = new SharePointNews(owner, async (url, count) =>
         {
             calls.Add(url + "|" + count);
@@ -172,7 +173,7 @@ internal static class Program
                 await release.Task;
             }
             return [new NewsItem { Title = url }];
-        });
+        }, () => simulatedNow);
         var first = news.GetAsync("https://first.example", 1, "first-account");
         await started.Task;
         if (!news.Matches("https://first.example", 1, "first-account") || news.Matches("https://second.example", 2, "second-account"))
@@ -181,6 +182,7 @@ internal static class Program
         var changed = news.GetAsync("https://second.example", 2, "second-account");
         await Task.Yield();
         if (calls.Count != 1) throw new InvalidOperationException("SharePoint news requests overlapped in one WebView2 controller.");
+        simulatedNow += 120_000; // A slow first request passed the normal refresh interval while callers queued.
         release.SetResult();
         var firstItems = await first;
         var duplicateItems = await duplicate;
