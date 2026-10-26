@@ -2600,12 +2600,24 @@ internal sealed partial class KioskForm : Form
         ActivateWindow(BrowserKey);
         if (!browserView.Visible || noteView.Visible || browserView.Parent != surface)
             throw new InvalidOperationException("Browser view is not embedded.");
-        var bookmarkNavigation = new TaskCompletionSource<string>();
-        browserView.Web.CoreWebView2.NavigationStarting += (_, e) => { e.Cancel = true; bookmarkNavigation.TrySetResult(e.Uri); };
+        const string bookmarkUrl = "https://bookmark.invalid/";
+        var bookmarkNavigation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var core = browserView.Web.CoreWebView2;
+        void OnBookmarkStarting(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationStartingEventArgs e)
+        {
+            // A prior HTTP challenge can still emit a navigation event after its request has finished.
+            if (!string.Equals(e.Uri, bookmarkUrl, StringComparison.Ordinal)) return;
+            e.Cancel = true;
+            bookmarkNavigation.TrySetResult();
+        }
+        core.NavigationStarting += OnBookmarkStarting;
         var bookmarkButton = browserView.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().Single();
-        bookmarkButton.PerformClick();
-        if (await bookmarkNavigation.Task.WaitAsync(TimeSpan.FromSeconds(5)) != "https://bookmark.invalid/")
-            throw new InvalidOperationException("Bookmark navigation failed.");
+        try
+        {
+            bookmarkButton.PerformClick();
+            await bookmarkNavigation.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally { core.NavigationStarting -= OnBookmarkStarting; }
 
         // Konfiguracja is for admins: a listed card or a Windows administrator; test mode alone does not open it.
         var adminTest = config with { TestMode = false, AdminCards = [new AdminCard { Name = "Alicja", Id = alice.Id }] };
