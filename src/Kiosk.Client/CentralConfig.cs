@@ -7,7 +7,7 @@ namespace Kiosk.Client;
 
 /// <summary>
 /// Konfiguracja z serwera: when the PC's own client.json names a ConfigSource (a folder or share), every start copies
-/// that whole folder (client.json, logo, kiosk-news.json, …) into a local copy and uses its client.json. Paths in it
+/// its configuration assets (client.json, logo, kiosk-news.json, …) into a local copy and uses its client.json. Paths in it
 /// may be relative to the folder (e.g. "BrandLogo": "logo.jpg"). Without the server the last copy is used; without a
 /// copy, the PC's own. Locally Konfiguracja is then only a preview; only ConfigSource itself can be changed there.
 ///
@@ -141,7 +141,7 @@ internal static class CentralConfig
         var folder = Path.Combine(cache, DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
-            Copy(source, folder);
+            Copy(source, folder, skipStatistics: required == FileName);
             if (required == FileName) Configuration.Load(Path.Combine(folder, FileName));
         }
         catch { TryDelete(folder); throw; }
@@ -358,12 +358,25 @@ internal static class CentralConfig
     private static string? Newest(string? a, string? b) =>
         a == null ? b : b == null ? a : Directory.GetLastWriteTimeUtc(a) >= Directory.GetLastWriteTimeUtc(b) ? a : b;
 
-    private static void Copy(string from, string to)
+    /// <summary>Copy configuration assets, not exported statistics or linked directories outside the source tree.</summary>
+    internal static void Copy(string from, string to, bool skipStatistics)
     {
-        Directory.CreateDirectory(to);
-        foreach (var file in Directory.GetFiles(from))
-            if (!EditorFile(Path.GetFileName(file))) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
-        foreach (var folder in Directory.GetDirectories(from)) Copy(folder, Path.Combine(to, Path.GetFileName(folder)));
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
+        var pending = new Stack<(string Source, string Destination, bool Root)>();
+        pending.Push((from, to, true));
+        while (pending.TryPop(out var next))
+        {
+            Directory.CreateDirectory(next.Destination);
+            foreach (var file in Directory.EnumerateFiles(next.Source, "*", options))
+                if (!EditorFile(Path.GetFileName(file)))
+                    File.Copy(file, Path.Combine(next.Destination, Path.GetFileName(file)), true);
+            foreach (var folder in Directory.EnumerateDirectories(next.Source, "*", options))
+            {
+                var name = Path.GetFileName(folder);
+                if (skipStatistics && next.Root && name.Equals("Stats", StringComparison.OrdinalIgnoreCase)) continue;
+                pending.Push((folder, Path.Combine(next.Destination, name), false));
+            }
+        }
     }
 
     /// <summary>The messages editor (KioskKomunikaty.exe, its settings) and its .bak / .tmp files live next to kiosk-news.json, but are not for the kiosks.</summary>

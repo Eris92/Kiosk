@@ -186,6 +186,43 @@ internal static class Program
                     }
                     if (Directory.Exists(exportRoot)) Directory.Delete(exportRoot);
                 }
+                var copyRoot = Path.Combine(Path.GetTempPath(), "kiosk-central-copy-test-" + Guid.NewGuid().ToString("N"));
+                var copySource = Path.Combine(copyRoot, "source");
+                var configCopy = Path.Combine(copyRoot, "config");
+                var newsCopy = Path.Combine(copyRoot, "news-copy");
+                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"), Path.Combine("Stats", "PC", "old.jsonl"), "KioskKomunikaty.tmp" };
+                try
+                {
+                    Directory.CreateDirectory(Path.Combine(copySource, "Stats", "PC"));
+                    Directory.CreateDirectory(Path.Combine(copySource, "news"));
+                    foreach (var file in copiedFiles) File.WriteAllText(Path.Combine(copySource, file), file);
+                    CentralConfig.Copy(copySource, configCopy, skipStatistics: true);
+                    CentralConfig.Copy(copySource, newsCopy, skipStatistics: false);
+                    if (Directory.Exists(Path.Combine(configCopy, "Stats")) ||
+                        !File.Exists(Path.Combine(configCopy, "client.json")) ||
+                        !File.Exists(Path.Combine(configCopy, "news", "item.txt")) ||
+                        File.Exists(Path.Combine(configCopy, "KioskKomunikaty.tmp")) ||
+                        !File.Exists(Path.Combine(newsCopy, "Stats", "PC", "old.jsonl")))
+                        throw new InvalidOperationException("Central configuration copy included statistics or lost required assets.");
+                }
+                finally
+                {
+                    foreach (var root in new[] { copySource, configCopy, newsCopy })
+                    {
+                        foreach (var file in copiedFiles)
+                        {
+                            var candidate = Path.Combine(root, file);
+                            if (File.Exists(candidate)) File.Delete(candidate);
+                        }
+                        foreach (var folder in new[] { Path.Combine("Stats", "PC"), "Stats", "news" })
+                        {
+                            var candidate = Path.Combine(root, folder);
+                            if (Directory.Exists(candidate)) Directory.Delete(candidate);
+                        }
+                        if (Directory.Exists(root)) Directory.Delete(root);
+                    }
+                    if (Directory.Exists(copyRoot)) Directory.Delete(copyRoot);
+                }
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
@@ -210,7 +247,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }
