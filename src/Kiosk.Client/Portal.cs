@@ -94,6 +94,8 @@ internal static class TileIcons
 /// <summary>Punkt samoobsługowy: the categories at the left ("Strona główna" first), one of them selected.</summary>
 internal sealed class NavBar : Control
 {
+    private static readonly Font ItemFont = new("Segoe UI", 11);
+    private static readonly Font SelectedFont = new("Segoe UI Semibold", 11);
     private (string Path, string Text, string Glyph, HelpAction? Link, bool NeedsSignIn)[] entries = [];
     private bool signedIn = true;
     /// <summary>Before signing in, categories that only work after it are grey with a padlock.</summary>
@@ -176,8 +178,8 @@ internal sealed class NavBar : Control
         rows.Clear();
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var font = new Font("Segoe UI", 11);
-        using var bold = new Font("Segoe UI Semibold", 11);
+        var font = ItemFont;
+        var bold = SelectedFont;
         int y = 0;
         for (int i = 0; i < entries.Length; i++)
         {
@@ -381,6 +383,9 @@ internal sealed class TileBoard : Panel
 
     private sealed class Canvas : Control
     {
+        private static readonly Font SectionFont = new("Segoe UI Semibold", 14);
+        private static readonly Font NameFont = new("Segoe UI Semibold", 13);
+        private static readonly Font DescriptionFont = new("Segoe UI", 10);
         private readonly TileBoard board;
         private readonly List<(Rectangle Bounds, string Title, string Glyph)> panels = [];
         private readonly List<(Rectangle Bounds, HelpAction Item, int Index)> tiles = [];
@@ -469,9 +474,9 @@ internal sealed class TileBoard : Panel
             var g = e.Graphics;
             DesktopView.PaintBackdrop(g, this);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            using var titleFont = new Font("Segoe UI Semibold", 14);
-            using var nameFont = new Font("Segoe UI Semibold", 13);
-            using var textFont = new Font("Segoe UI", 10);
+            var titleFont = SectionFont;
+            var nameFont = NameFont;
+            var textFont = DescriptionFont;
             foreach (var panel in panels)
             {
                 // Only a heading on the background (no frame around the tiles); none for the category's own tiles.
@@ -520,6 +525,7 @@ internal sealed class TileBoard : Panel
 /// </summary>
 internal sealed partial class DesktopView
 {
+    private static readonly Font AccountFont = new("Segoe UI", 11, FontStyle.Bold);
     internal TileBoard Tiles { get; } = new();
     private readonly NavBar nav = new();
     private readonly Label portalTitle = new() { AutoSize = false, TextAlign = ContentAlignment.BottomLeft, AutoEllipsis = true };
@@ -550,7 +556,7 @@ internal sealed partial class DesktopView
         portalLine.ForeColor = KioskTheme.Muted;
         nav.Visible = Tiles.Visible = account.Visible = false;
         KioskTheme.StyleButton(account, primary: true);
-        account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
+        account.Font = AccountFont;
         account.Click += (_, _) => AccountRequested?.Invoke();
         nav.SelectionRequested += path => Atomically(() =>
         {
@@ -641,9 +647,6 @@ internal sealed partial class DesktopView
         portalPerson.Text = personName ?? "";
         portalLogin.Text = login;
         account.Text = personName != null ? "Zakończ sesję" : signInWanted ? "Wróć" : "Zaloguj kartą";
-        // In the accent colour like "Zaloguj": a plain button disappeared on the background.
-        KioskTheme.StyleButton(account, primary: true);
-        account.Font = new Font("Segoe UI", 11, FontStyle.Bold);
         Tiles.SignedIn = nav.SignedIn = personName != null;
         // Signed out inside a category that needs the card: back to the start page.
         if (personName == null && nav.SelectedLocked) { nav.Select(""); Tiles.ShowCategory(""); ApplyVisibility(); }

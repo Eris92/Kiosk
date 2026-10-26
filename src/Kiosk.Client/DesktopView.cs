@@ -4,6 +4,7 @@ namespace Kiosk.Client;
 
 internal static class KioskTheme
 {
+    private static readonly Font ButtonFont = new("Segoe UI", 10, FontStyle.Bold);
     internal static readonly Color Background = Color.FromArgb(13, 20, 35);
     internal static readonly Color Surface = Color.FromArgb(24, 35, 54);
     internal static readonly Color Border = Color.FromArgb(44, 60, 81);
@@ -44,7 +45,9 @@ internal static class KioskTheme
 
     internal static void SetAccent(string? hex)
     {
-        Accent = ColorTranslator.FromHtml(IsColor(hex) ? hex! : DefaultAccent);
+        var next = ColorTranslator.FromHtml(IsColor(hex) ? hex! : DefaultAccent);
+        if (Accent.ToArgb() == next.ToArgb()) return;
+        Accent = next;
         Changed?.Invoke();
     }
 
@@ -63,7 +66,7 @@ internal static class KioskTheme
         button.FlatAppearance.MouseDownBackColor = primary ? AccentPressed : Color.FromArgb(49, 67, 93);
         button.BackColor = primary ? Accent : Surface;
         button.ForeColor = primary ? OnAccent : Text;
-        button.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        button.Font = ButtonFont;
         button.Cursor = Cursors.Hand;
         button.UseVisualStyleBackColor = false;
     }
@@ -260,6 +263,8 @@ internal sealed partial class DesktopView : UserControl
         KioskTheme.StyleButton(pinCancel);
         KioskTheme.StyleButton(askYes, primary: !askWarning);
         KioskTheme.StyleButton(askNo, primary: askWarning);
+        KioskTheme.StyleButton(account, primary: true);
+        account.Font = AccountFont;
         Invalidate(true);
     }
 

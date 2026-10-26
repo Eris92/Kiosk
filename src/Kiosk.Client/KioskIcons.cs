@@ -17,6 +17,9 @@ internal static class KioskIcons
     }
     private static readonly string Family = ResolveFamily();
     private static readonly Dictionary<string, Image?> programIcons = new(StringComparer.OrdinalIgnoreCase);
+    // Icon sizes repeat on every repaint. Keep common fonts for the process lifetime, with a fixed size limit.
+    private const int MaxGlyphFonts = 64;
+    private static readonly Dictionary<int, Font> glyphFonts = new();
 
     /// <summary>The program's icon (cached); null when the file has none or is missing.</summary>
     internal static Image? ForProgram(string path)
@@ -42,8 +45,24 @@ internal static class KioskIcons
             return;
         }
         if (string.IsNullOrEmpty(glyph)) return;
-        using var font = new Font(Family, Math.Max(6, Math.Min(bounds.Width, bounds.Height) * 0.72f), GraphicsUnit.Pixel);
+        int pixels = Math.Min(bounds.Width, bounds.Height);
+        lock (glyphFonts)
+        {
+            if (!glyphFonts.TryGetValue(pixels, out var font))
+            {
+                font = new Font(Family, Math.Max(6, pixels * 0.72f), GraphicsUnit.Pixel);
+                if (glyphFonts.Count < MaxGlyphFonts) glyphFonts.Add(pixels, font);
+                else
+                {
+                    using (font) DrawGlyph(g, glyph, font, bounds, color);
+                    return;
+                }
+            }
+            DrawGlyph(g, glyph, font, bounds, color);
+        }
+    }
+
+    private static void DrawGlyph(Graphics g, string glyph, Font font, Rectangle bounds, Color color) =>
         TextRenderer.DrawText(g, glyph, font, bounds, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-    }
 }
