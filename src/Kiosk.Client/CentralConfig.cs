@@ -122,8 +122,7 @@ internal static class CentralConfig
                 var file = Path.Combine(source, FileName);
                 if (!File.Exists(file)) return new CardService.Response { Code = -1, Message = "folder dostępny, ale nie ma w nim " + FileName };
                 Configuration.Load(file);
-                int files = Directory.GetFiles(source, "*", SearchOption.AllDirectories).Length;
-                return new CardService.Response { Message = "OK – " + FileName + " poprawny, plików: " + files };
+                return new CardService.Response { Message = "OK – " + FileName + " poprawny" };
             }
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }

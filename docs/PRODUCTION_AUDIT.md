@@ -126,6 +126,8 @@ Limity czasu watchdogu, okno funkcji „Pierwsze logowanie”, wykrywanie znikni
 
 Potok usługi `KioskCard` pozwala użytkownikom interaktywnym nawiązać połączenie, lecz przed wykonaniem polecenia usługa sprawdza ścieżkę procesu klienta podaną przez Windows lub jego podniesiony token administratora. Proces spoza zainstalowanego Kiosku i bez podniesienia dostaje odmowę również dla operacji karty, statystyk, konfiguracji oraz watchdogu. Pobieranie kont wspólnych i uruchamianie logowania zachowują dodatkowy wymóg procesu zainstalowanego w Program Files. Test wbudowany sprawdza rozróżnienie dozwolonej ścieżki wersjonowanej, innej ścieżki oraz uprawnienia administratora. Lokalna usługa została celowo zatrzymana przez użytkownika po wcześniejszej próbie, więc tej zmiany nie testowano na działającym potoku i nie wdrożono do usługi.
 
+Sprawdzenie konfiguracji z serwera kończy się po odczycie i walidacji `client.json`; nie wylicza już rekurencyjnie wszystkich plików udziału. Duże drzewo wiadomości, dokumentów lub niedostępny podfolder nie opóźnia testu samej konfiguracji.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

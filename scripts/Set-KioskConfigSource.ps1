@@ -97,7 +97,7 @@ Write-Output 'Kiosk pobierze konfigurację przy następnym uruchomieniu.'
 
 if (-not $current -or $WhatIfPreference -or -not ($Test -or $PSBoundParameters.ContainsKey('ConfigSource') -or $Credential)) { return }
 
-# The same check for every account: folder reachable, client.json present and valid JSON, number of files.
+# The same check for every account: folder reachable and client.json present with valid JSON.
 $check = {
     param($source)
     try {
@@ -105,7 +105,7 @@ $check = {
         $file = Join-Path $source 'client.json'
         if (-not (Test-Path -LiteralPath $file)) { return 'NIE - folder dostępny, ale nie ma w nim client.json' }
         $null = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
-        'OK - client.json czytelny, plików: ' + @(Get-ChildItem -LiteralPath $source -File -Recurse).Count
+        'OK - client.json czytelny'
     } catch { 'NIE - ' + $_.Exception.Message }
 }
 Write-Output ''
