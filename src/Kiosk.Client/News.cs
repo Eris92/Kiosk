@@ -43,6 +43,11 @@ internal sealed record NewsItem
 /// <summary>Reads kiosk-news.json from the folder set in Konfiguracja (a local folder or a share).</summary>
 internal static class News
 {
+    private static readonly JsonSerializerOptions readOptions = new()
+    {
+        PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true
+    };
+
     internal const string FileName = "kiosk-news.json";
     internal const int MaxPictureBytes = 8 * 1024 * 1024;
     internal const long MaxPicturePixels = 16_000_000;
@@ -55,8 +60,7 @@ internal static class News
         if (string.IsNullOrWhiteSpace(folder)) return items;
         var file = Path.Combine(folder, FileName);
         if (!File.Exists(file)) return items;
-        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-        var list = JsonSerializer.Deserialize<NewsItem[]>(File.ReadAllText(file), options) ?? [];
+        var list = JsonSerializer.Deserialize<NewsItem[]>(File.ReadAllText(file), readOptions) ?? [];
         var now = DateTime.Now;
         // A single picture is often reused by several messages. Decode it once per refresh;
         // DisposePictures already handles shared image references when the list is retired.

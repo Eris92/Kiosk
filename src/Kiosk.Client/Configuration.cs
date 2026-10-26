@@ -236,13 +236,16 @@ internal sealed record MenuCategory
 
 internal static class Configuration
 {
+    private static readonly JsonSerializerOptions strictReadOptions = new()
+    {
+        UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
+    };
+    private static readonly JsonSerializerOptions indentedWriteOptions = new() { WriteIndented = true };
+
     internal static Config Load(string path, string? logicalPath = null)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));
-        var config = document.RootElement.Deserialize<Config>(new JsonSerializerOptions
-        {
-            UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
-        }) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
+        var config = document.RootElement.Deserialize<Config>(strictReadOptions) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
         // Files written before WindowsSession was the default omitted this property. Preserve their
         // CardBroker behavior; new Config instances serialize an explicit WindowsSession choice.
         if (config.SessionMode == SessionMode.SelfService && document.RootElement.ValueKind == JsonValueKind.Object &&
@@ -275,7 +278,7 @@ internal static class Configuration
     internal static void Save(string path, Config config, CentralConfig.Secrets? secrets = null)
     {
         config.Validate();
-        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(config, indentedWriteOptions);
         try
         {
             Replace(path, json);
