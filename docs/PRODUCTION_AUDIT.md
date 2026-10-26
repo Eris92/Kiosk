@@ -1,4 +1,4 @@
-# Audyt wydania Kiosk — 2026-10-23–25
+# Audyt wydania Kiosk — 2026-10-23–26
 
 ## Zakres i wynik
 
@@ -116,7 +116,7 @@ Przy wymianie komunikatów obrazy z folderu i SharePointa są zwalniane po aktua
 
 Weryfikator paczki przetestowano na izolowanym pakiecie: prawidłowy manifest przechodzi, ukryty plik spoza wykazu, dodatkowy EXE i ścieżka z przejściem do katalogu nadrzędnego są odrzucane. Te testy i parsowanie skryptów przeszły zarówno w PowerShell 7, jak i w Windows PowerShell 5.1. CI i lokalnie zainstalowany MSVC zbudowały natywną DLL i pełną paczkę. Paczka pozostaje niepodpisanym kandydatem.
 
-Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną. Usługa pozostaje na wcześniej zainstalowanej wersji pliku EXE; pilot jest aktualizowany niezależnie. Wcześniejsze problemy ze startem usługi oraz zależność sondy od fizycznej karty zostały usunięte. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
+Lokalna usługa `KioskCard` działa jako LocalSystem/Automatic z binarium w katalogu wersjonowanym. Instalator sprawdził odpowiedź kontrolną. Dnia 2026-10-26 ponownie zainstalowano Build Tools 2022 17.14.42 z MSVC x64 i Windows SDK: natywna DLL i pełna paczka `e0ab68b` zbudowały się lokalnie, a `Verify-Package.ps1` potwierdził wykaz i hashe. Z tej niepodpisanej paczki testowej zaktualizowano samą usługę do `CardService/release-db6189b36536431287400bb7f9b6d941`; jej DLL ma taki sam SHA-256 jak plik źródłowy, usługa jest uruchomiona i odpowiedziała na dwie niezależne sondy bez karty. Produkcyjna konfiguracja i zainstalowany interaktywny klient nie zostały zmienione. Próby nie korzystały z karty ani PIN i nie potwierdzają logowania użytkownika.
 
 `dotnet list package --vulnerable --include-transitive` ponowiono 2026-10-25 dla klienta i FidoRun; źródło NuGet nie zgłosiło znanych podatnych pakietów. To wynik dla bieżących wersji i danych o podatnościach, wymagający ponowienia przed wydaniem.
 
