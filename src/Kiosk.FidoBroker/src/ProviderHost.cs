@@ -262,7 +262,7 @@ namespace FidoRun
             Status.Check(status, "GetCredentialCount");
             log.Write("ProviderEnumeration: CredentialTiles=" + count + "; ConnectedKeyCount=NotMeasured");
             if (count > 32) throw new InvalidOperationException("Unexpected credential count.");
-            view.ShowTiles(count, selected);
+            view.ShowTiles(count);
             if (count == 0)
             {
                 ReleaseCredential();

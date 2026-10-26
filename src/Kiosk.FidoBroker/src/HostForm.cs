@@ -517,13 +517,13 @@ namespace FidoRun
             card.Controls.Add(state, 0, 5);
 
             pinCard = card;
-            if (Embedded) ApplyKioskLook(card, title, buttons, restart);
+            if (Embedded) ApplyKioskLook(title, buttons, restart);
             outer.Controls.Add(card, 1, 1);
             Controls.Add(outer);
         }
 
         // Inside the Kiosk: centred like the Kiosk's own cards, its colours, its buttons.
-        private void ApplyKioskLook(TableLayoutPanel card, Label title, FlowLayoutPanel buttons, Button restart)
+        private void ApplyKioskLook(Label title, FlowLayoutPanel buttons, Button restart)
         {
             // The same type and sizes as the Kiosk's own PIN card: bold heading, one text size under it, 46 px buttons.
             foreach (Control control in new Control[] { title, providerStatus, providerFeedback, fields, buttons, state })
@@ -874,7 +874,7 @@ namespace FidoRun
         public void SerializationUnavailable(int generation)
         { Post(delegate { if (generation == fieldGeneration) { serializationAvailable = false; ApplyInteractionState(); } }); }
 
-        public void ShowTiles(uint count, uint selected)
+        public void ShowTiles(uint count)
         {
             Post(delegate
             {

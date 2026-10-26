@@ -758,7 +758,7 @@ internal sealed partial class KioskForm : Form
                 }
                 else
                 {
-                    var entry = content.Url.Length > 0 ? EdgeForScreen(session.Logon!, n, content.Url)
+                    var entry = content.Url.Length > 0 ? EdgeForScreen(n, content.Url)
                         : new ApplicationEntry { Name = title, Path = content.Path, Arguments = content.Arguments };
                     session.Layout ??= ScreenLayouts.Load(session.Identity.Id);
                     if (n > 1) session.Layout["app:" + title] = n; // Opens on its own screen.
@@ -774,7 +774,7 @@ internal sealed partial class KioskForm : Form
 
     /// <summary>The person's own Edge (their signed-in profile, SSO) for a screen. When their Edge already runs, it opens
     /// the window in that copy and the Kiosk view takes the new window over.</summary>
-    private static ApplicationEntry EdgeForScreen(UserLogon logon, int n, string url)
+    private static ApplicationEntry EdgeForScreen(int n, string url)
     {
         return new ApplicationEntry
         {
@@ -999,7 +999,7 @@ internal sealed partial class KioskForm : Form
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
         taskbar.LogoutButton.Enabled = current != null;
-        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(current, w); return (w.Key, w.Title, w.View == visibleView, glyph, icon, HostOf(w.View) != null); }).ToArray() : []);
+        taskbar.SetTasks(CanUseApps ? current!.Windows.Select(w => { var (glyph, icon) = IconFor(w); return (w.Key, w.Title, w.View == visibleView, glyph, icon, HostOf(w.View) != null); }).ToArray() : []);
         taskbar.Status.Text = current == null ? (requireRemoval ? "Wyjmij kartę" : "Brak karty") + (others > 0 ? " · zachowane sesje: " + others : "") :
             (current.Locked ? "🔒 " : "● ") + current.Name + (others > 0 ? " · inne sesje: " + others : "");
         taskbar.Status.ForeColor = CanUseApps ? Color.FromArgb(110, 214, 150) : KioskTheme.Muted;
@@ -1103,7 +1103,7 @@ internal sealed partial class KioskForm : Form
     }
 
     /// <summary>Taskbar icon of a window: the program's own icon, or the icon of the Kiosk function.</summary>
-    private static (string? Glyph, Image? Icon) IconFor(UserSession session, Window w)
+    private static (string? Glyph, Image? Icon) IconFor(Window w)
     {
         if (w.Key.StartsWith("rdp:")) return (KioskIcons.Remote, null);
         if (w.Key == BrowserKey || w.Key.StartsWith("browser:") || w.Key.StartsWith("web:")) return (KioskIcons.Browser, null);

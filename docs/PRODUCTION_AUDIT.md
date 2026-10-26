@@ -138,6 +138,8 @@ Eksport statystyk wylicza listę lokalnych miesięcy raz na synchronizację i pr
 
 Kopia konfiguracji z serwera pomija miesięczne pliki eksportu `Stats/<komputer>/yyyy-MM.jsonl` i `Stats/<komputer>/<komputer>-yyyy-MM.csv` w domyślnym katalogu `Stats` na najwyższym poziomie źródła. Inne zasoby w tym katalogu nadal są kopiowane. Kopiowanie pomija dowiązania plików i katalogów oraz przechodzi drzewo iteracyjnie. Osobne pobieranie komunikatów nadal kopiuje ich podfoldery, także `Stats`, jeżeli jest częścią źródła komunikatów. Aktywny test sprawdza zachowanie `client.json` i zasobów oraz pominięcie miesięcznych eksportów i plików edytora. Inny, niestandardowy folder eksportu umieszczony wewnątrz źródła konfiguracji nadal byłby kopiowany i wymaga osobnego ustawienia poza tym źródłem.
 
+Analiza nieużywanych elementów w czterech projektach .NET wskazała trzy parametry w kliencie i dwa w brokerze FIDO. Usunięto je wraz z nieużywanym numerem kafelka Menu. Nazwa wybranej kategorii jest obliczana przy jej zmianie, więc rysowanie kafelków nie dzieli ścieżki kategorii na tablicę przy każdym odmalowaniu. W brokerze indeks wskazany przez Windows nadal wybiera poświadczenie; nie jest już przekazywany do widoku bez wyboru kafelków.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

@@ -78,7 +78,7 @@ internal static class TileIcons
             _ => inside.Select(For).FirstOrDefault() ?? ""
         };
 
-    internal static Color ColorFor(HelpAction item, int index) =>
+    internal static Color ColorFor(HelpAction item) =>
         KioskTheme.IsColor(item.Color) ? ColorTranslator.FromHtml(item.Color)
         : CategoryColor(item.LinkPath ?? item.CategoryPath) ?? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.85);
 
@@ -221,6 +221,7 @@ internal sealed class TileBoard : Panel
     private readonly Canvas canvas;
     private HelpAction[] items = [];
     private string category = "";
+    private string categoryLeaf = "";
     private bool signedIn = true, busy;
     internal event Action<HelpAction>? ActionRequested;
 
@@ -259,6 +260,12 @@ internal sealed class TileBoard : Panel
     internal static bool InCategory(HelpAction item, string path) =>
         item.CategoryPath.Equals(path, StringComparison.OrdinalIgnoreCase) || item.CategoryPath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase);
 
+    private static string FirstSegment(string path)
+    {
+        var slash = path.IndexOf('/');
+        return slash < 0 ? path : path[..slash];
+    }
+
     internal void SetItems(HelpAction[] actions) { items = actions; Rebuild(); }
 
     /// <summary>Opens an entry as a click on its tile would (the left menu's categories with their own action).</summary>
@@ -267,7 +274,13 @@ internal sealed class TileBoard : Panel
         // Signed out, a tile that needs the card does nothing: "Zaloguj kartą" at the top signs in.
         if (!busy && Available(item)) ActionRequested?.Invoke(item);
     }
-    internal void ShowCategory(string path) { category = path; offset = 0; Rebuild(); }
+    internal void ShowCategory(string path)
+    {
+        category = path;
+        categoryLeaf = path[(path.LastIndexOf('/') + 1)..];
+        offset = 0;
+        Rebuild();
+    }
     internal bool SignedIn { get => signedIn; set { if (signedIn != value) { signedIn = value; canvas.Invalidate(); } } }
     internal bool Busy { get => busy; set { if (busy != value) { busy = value; canvas.Invalidate(); } } }
     private bool Available(HelpAction item) => !busy && (signedIn || !item.NeedsSignIn);
@@ -287,16 +300,16 @@ internal sealed class TileBoard : Panel
             var path = item.CategoryPath;
             if (category.Length == 0)
             {
-                var top = path.Split('/')[0];
+                var top = FirstSegment(path);
                 if (top.Length == 0) Add("Na skróty", "", item);
                 else Add(top, TileIcons.ForCategory(top, items.Where(i => InCategory(i, top))), item);
             }
             else if (InCategory(item, category))
             {
                 var rest = path.Length > category.Length ? path[(category.Length + 1)..] : "";
-                var title = rest.Length == 0 ? category.Split('/')[^1] : rest.Replace("/", " › ");
+                var title = rest.Length == 0 ? categoryLeaf : rest.Replace("/", " › ");
                 Add(title, rest.Length == 0 ? TileIcons.ForCategory(category, items.Where(i => InCategory(i, category)))
-                    : TileIcons.ForCategory(rest.Split('/')[0], items.Where(i => InCategory(i, category + "/" + rest))), item);
+                    : TileIcons.ForCategory(FirstSegment(rest), items.Where(i => InCategory(i, category + "/" + rest))), item);
             }
         }
         return panels;
@@ -388,7 +401,7 @@ internal sealed class TileBoard : Panel
         private static readonly Font DescriptionFont = new("Segoe UI", 10);
         private readonly TileBoard board;
         private readonly List<(Rectangle Bounds, string Title, string Glyph)> panels = [];
-        private readonly List<(Rectangle Bounds, HelpAction Item, int Index)> tiles = [];
+        private readonly List<(Rectangle Bounds, HelpAction Item)> tiles = [];
         private int hover = -1;
 
         internal Canvas(TileBoard board)
@@ -406,21 +419,21 @@ internal sealed class TileBoard : Panel
             tiles.Clear();
             hover = -1;
             width = Math.Max(S(300), width - S(4));
-            int pad = 0, gap = S(14), tileHeight = S(104), y = 0, index = 0;
+            int pad = 0, gap = S(14), tileHeight = S(104), y = 0;
             // As many columns as fit tiles of at least 320 px (96 DPI), at most three, each at most 460 px wide.
             int columns = Math.Clamp((width - 2 * pad + gap) / (S(320) + gap), 1, 3);
             int tileWidth = Math.Min(S(460), (width - 2 * pad - (columns - 1) * gap) / columns);
             foreach (var panel in content)
             {
                 // The category's own tiles need no heading (the left column marks it); a subcategory gets one.
-                int header = panel.Title.Equals(board.category.Split('/')[^1], StringComparison.OrdinalIgnoreCase) ? 0 : S(52);
+                int header = panel.Title.Equals(board.categoryLeaf, StringComparison.OrdinalIgnoreCase) ? 0 : S(52);
                 int rowsNeeded = (panel.Tiles.Count + columns - 1) / columns;
                 int height = header + rowsNeeded * tileHeight + (rowsNeeded - 1) * gap + pad;
                 panels.Add((new Rectangle(0, y, width, height), panel.Title, panel.Glyph));
                 for (int i = 0; i < panel.Tiles.Count; i++)
                 {
                     int col = i % columns, row = i / columns;
-                    tiles.Add((new Rectangle(pad + col * (tileWidth + gap), y + header + row * (tileHeight + gap), tileWidth, tileHeight), panel.Tiles[i], index++));
+                    tiles.Add((new Rectangle(pad + col * (tileWidth + gap), y + header + row * (tileHeight + gap), tileWidth, tileHeight), panel.Tiles[i]));
                 }
                 y += height + S(18);
             }
@@ -480,19 +493,19 @@ internal sealed class TileBoard : Panel
             foreach (var panel in panels)
             {
                 // Only a heading on the background (no frame around the tiles); none for the category's own tiles.
-                if (panel.Title.Equals(board.category.Split('/')[^1], StringComparison.OrdinalIgnoreCase)) continue;
+                if (panel.Title.Equals(board.categoryLeaf, StringComparison.OrdinalIgnoreCase)) continue;
                 TextRenderer.DrawText(g, panel.Title, titleFont, new Rectangle(panel.Bounds.Left + S(2), panel.Bounds.Top + S(6), panel.Bounds.Width - S(4), S(38)),
                     KioskTheme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             }
             for (int i = 0; i < tiles.Count; i++)
             {
-                var (bounds, item, index) = tiles[i];
+                var (bounds, item) = tiles[i];
                 bool available = board.Available(item);
                 bool hot = i == hover && available;
                 using var path = KioskTheme.RoundedRectangle(bounds, S(14));
                 using (var fill = new SolidBrush(hot ? KioskTheme.Blend(KioskTheme.Surface, KioskTheme.AccentLine, 0.12) : KioskTheme.Surface)) g.FillPath(fill, path);
                 using (var border = new Pen(hot ? KioskTheme.AccentLine : KioskTheme.Border)) g.DrawPath(border, path);
-                var color = TileIcons.ColorFor(item, index);
+                var color = TileIcons.ColorFor(item);
                 if (!available) color = KioskTheme.Blend(KioskTheme.Surface, color, 0.35);
                 int diameter = S(64);
                 var circle = new Rectangle(bounds.Left + S(18), bounds.Top + (bounds.Height - diameter) / 2, diameter, diameter);
