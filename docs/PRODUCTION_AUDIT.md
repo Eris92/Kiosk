@@ -142,6 +142,8 @@ Analiza nieużywanych elementów w czterech projektach .NET wskazała trzy param
 
 Skanowanie procesów przy pierwszym logowaniu, restarcie watchdogu i przekazaniu przeglądarki zwalnia teraz wszystkie obiekty `Process`, również te pominięte po wcześniejszym trafieniu. Broker przy zamykaniu programów użytkownika pobiera własny PID tylko raz i zwalnia jego obiekt; uchwyt procesu użyty do instalacji haka klawisza Windows także jest zwalniany. Wykrywanie nowej sesji i decyzja o wznowieniu Kiosku zachowują dotychczasowe warunki.
 
+Podczas przebudowy menu samoobsługowego ikona panelu jest ustalana tylko przy utworzeniu panelu, a nie ponownie dla każdego należącego do niego kafelka. Kolejne kafelki używają tej samej ikony jak wcześniej, bez powtarzania przeszukiwania listy akcji.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

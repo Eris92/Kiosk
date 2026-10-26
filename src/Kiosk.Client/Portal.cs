@@ -289,10 +289,16 @@ internal sealed class TileBoard : Panel
     private List<(string Title, string Glyph, List<HelpAction> Tiles)> Panels()
     {
         var panels = new List<(string, string, List<HelpAction>)>();
-        void Add(string title, string glyph, HelpAction item)
+        void Add(string title, string? iconName, string iconPath, HelpAction item)
         {
             var panel = panels.FirstOrDefault(p => p.Item1.Equals(title, StringComparison.OrdinalIgnoreCase));
-            if (panel.Item3 == null) { panel = (title, glyph, []); panels.Add(panel); }
+            if (panel.Item3 == null)
+            {
+                // Only the first tile in a panel determines its icon; later tiles reuse it.
+                var glyph = iconName == null ? "" : TileIcons.ForCategory(iconName, items.Where(i => InCategory(i, iconPath)));
+                panel = (title, glyph, []);
+                panels.Add(panel);
+            }
             panel.Item3.Add(item);
         }
         foreach (var item in items)
@@ -301,15 +307,14 @@ internal sealed class TileBoard : Panel
             if (category.Length == 0)
             {
                 var top = FirstSegment(path);
-                if (top.Length == 0) Add("Na skróty", "", item);
-                else Add(top, TileIcons.ForCategory(top, items.Where(i => InCategory(i, top))), item);
+                if (top.Length == 0) Add("Na skróty", null, "", item);
+                else Add(top, top, top, item);
             }
             else if (InCategory(item, category))
             {
                 var rest = path.Length > category.Length ? path[(category.Length + 1)..] : "";
                 var title = rest.Length == 0 ? categoryLeaf : rest.Replace("/", " › ");
-                Add(title, rest.Length == 0 ? TileIcons.ForCategory(category, items.Where(i => InCategory(i, category)))
-                    : TileIcons.ForCategory(FirstSegment(rest), items.Where(i => InCategory(i, category + "/" + rest))), item);
+                Add(title, rest.Length == 0 ? category : FirstSegment(rest), path, item);
             }
         }
         return panels;
