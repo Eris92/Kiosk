@@ -143,6 +143,20 @@ try {
         [IO.File]::ReadAllText((Join-Path $payloadTarget 'lib\support.dll')) -ne 'library') {
         throw 'Verified payload copy omitted or included an unexpected file.'
     }
+    $signedHashes = @{
+        'Kiosk.Client.exe' = (Get-FileHash -LiteralPath (Join-Path $payloadSource 'Kiosk.Client.exe') -Algorithm SHA256).Hash
+        'lib/support.dll' = (Get-FileHash -LiteralPath (Join-Path $payloadSource 'lib\support.dll') -Algorithm SHA256).Hash
+    }
+    $signedTarget = Join-Path $payloadRoot 'signed-target'
+    New-Item -ItemType Directory -Path $signedTarget | Out-Null
+    Copy-KioskPayloadVerified $payloadSource $signedTarget $signedHashes
+    [IO.File]::WriteAllText((Join-Path $payloadSource 'lib\support.dll'), 'changed after manifest verification')
+    try {
+        Copy-KioskPayloadVerified $payloadSource $signedTarget $signedHashes
+        throw 'Payload copy accepted a file changed since manifest verification.'
+    } catch {
+        if ($_.Exception.Message -notmatch '^Client payload changed since package verification:') { throw }
+    }
     [IO.File]::WriteAllText((Join-Path $payloadTarget 'rogue.txt'), 'unlisted')
     $rejected = $false
     try { Copy-KioskPayloadVerified $payloadSource $payloadTarget }
@@ -159,6 +173,11 @@ try {
 }
 $fixture = Join-Path $outRoot ('verify-fixture-' + [Guid]::NewGuid().ToString('N'))
 $verify = Join-Path $PSScriptRoot 'Verify-Package.ps1'
+function Write-TestPackageManifest($Manifest, [string]$Path) {
+    $Manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $Path -Encoding UTF8
+    $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    Set-Content -LiteralPath (Join-Path (Split-Path -Parent $Path) 'package.sha256.ps1') -Value "# Kiosk package.json SHA256: $hash" -Encoding Ascii
+}
 try {
     $required = @(
         'client\Kiosk.Client.exe', 'client\Kiosk.Client.dll', 'client\KioskKonfiguracje.exe',
@@ -179,12 +198,51 @@ try {
     $entries = @(Get-ChildItem -LiteralPath $fixture -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
         [ordered]@{Path=$_.FullName.Substring($fixture.Length + 1).Replace('\','/');Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
     })
-    $manifest = [ordered]@{Format=1;Files=$entries}
+    $manifest = [ordered]@{Format=2;Files=$entries}
     $manifestPath = Join-Path $fixture 'package.json'
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-TestPackageManifest $manifest $manifestPath
     & $verify -PackagePath $fixture | Out-Null
+    $previousWhatIf = $WhatIfPreference
+    try {
+        $WhatIfPreference = $true
+        Assert-KioskPackagedSource (Join-Path $fixture 'client') 'client' $false '' | Out-Null
+    } finally { $WhatIfPreference = $previousWhatIf }
+    $clientHashes = Assert-KioskPackagedSource (Join-Path $fixture 'client') 'client' $false ''
+    $providerHashes = Assert-KioskPackagedSource (Join-Path $fixture 'credential-provider') 'credential-provider' $false ''
+    if ($clientHashes.Count -ne 6 -or $providerHashes.Count -ne 1 -or
+        -not $providerHashes.ContainsKey('KioskCredentialProvider.dll')) {
+        throw 'Installer did not retain the verified package inventory.'
+    }
+    try {
+        Assert-KioskPackagedSource (Join-Path $fixture 'client') 'client' $true ''
+        throw 'Installer accepted an unsigned package when RequireSigned was set.'
+    } catch {
+        if ($_.Exception.Message -notmatch 'trusted Authenticode signature.*manifest seal') { throw }
+    }
+    try {
+        Assert-KioskPackagedSource $outRoot 'client' $true ''
+        throw 'Installer accepted a raw client directory as a signed package.'
+    } catch {
+        if ($_.Exception.Message -ne 'A signed deployment requires SourcePath from a sealed Kiosk package.') { throw }
+    }
     try { & $verify -PackagePath $fixture -RequireSigned | Out-Null; throw 'Verifier accepted unsigned client binaries.' }
-    catch { if ($_.Exception.Message -notmatch 'trusted Authenticode signature') { throw } }
+    catch { if ($_.Exception.Message -notmatch 'trusted Authenticode signature.*manifest seal') { throw } }
+
+    $manifest.SourceRevision = 'tampered'
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted a changed manifest with an old seal.' }
+    catch { if ($_.Exception.Message -ne 'Package manifest seal hash mismatch.') { throw } }
+    $manifest.Remove('SourceRevision')
+    Write-TestPackageManifest $manifest $manifestPath
+
+    $manifest.Format = 1
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Remove-Item -LiteralPath (Join-Path $fixture 'package.sha256.ps1') -Force
+    & $verify -PackagePath $fixture | Out-Null
+    try { & $verify -PackagePath $fixture -RequireSigned | Out-Null; throw 'Verifier accepted legacy format 1 as signed.' }
+    catch { if ($_.Exception.Message -ne 'Signed deployment requires a sealed format-2 Kiosk package.') { throw } }
+    $manifest.Format = 2
+    Write-TestPackageManifest $manifest $manifestPath
 
     $hidden = Join-Path $fixture 'client\unlisted.txt'
     [IO.File]::WriteAllText($hidden, 'must be rejected')
@@ -196,14 +254,14 @@ try {
     $rogue = Join-Path $fixture 'client\Rogue.exe'
     [IO.File]::WriteAllText($rogue, 'must be rejected')
     $manifest.Files += [ordered]@{Path='client/Rogue.exe';Sha256=(Get-FileHash -LiteralPath $rogue -Algorithm SHA256).Hash.ToLowerInvariant()}
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-TestPackageManifest $manifest $manifestPath
     try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted an unexpected executable.' }
     catch { if ($_.Exception.Message -notmatch 'Unexpected executable') { throw } }
     $manifest.Files = @($manifest.Files | Where-Object { $_.Path -ne 'client/Rogue.exe' })
     Remove-Item -LiteralPath $rogue -Force
 
     $manifest.Files[0].Path = 'client/../outside.bin'
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-TestPackageManifest $manifest $manifestPath
     try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted a traversal path.' }
     catch { if ($_.Exception.Message -notmatch 'Invalid path in package manifest') { throw } }
 } finally {

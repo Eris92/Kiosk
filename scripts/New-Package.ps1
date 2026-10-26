@@ -87,8 +87,21 @@ try {
         [ordered]@{Path=$relative;Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
     })
     $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'client\Kiosk.Client.exe')
-    [ordered]@{Format=1;SourceRevision=$revision;SourceHasUncommittedChanges=[bool]$dirty;Runtime='win-x64 self-contained';ClientAuthenticode=[string]$signature.Status;SignerThumbprint=[string]$signature.SignerCertificate.Thumbprint;Configuration='public-default';Files=$files} |
+    [ordered]@{Format=2;SourceRevision=$revision;SourceHasUncommittedChanges=[bool]$dirty;Runtime='win-x64 self-contained';ClientAuthenticode=[string]$signature.Status;SignerThumbprint=[string]$signature.SignerCertificate.Thumbprint;Configuration='public-default';Files=$files} |
         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $stage 'package.json') -Encoding UTF8
+    # Authenticode protects this comment-only seal. Its digest binds the entire file inventory,
+    # including configuration and documentation that cannot carry Authenticode themselves.
+    $seal = Join-Path $stage 'package.sha256.ps1'
+    $manifestHash = (Get-FileHash -LiteralPath (Join-Path $stage 'package.json') -Algorithm SHA256).Hash.ToUpperInvariant()
+    Set-Content -LiteralPath $seal -Value "# Kiosk package.json SHA256: $manifestHash" -Encoding Ascii
+    if ($certificate) {
+        $parameters = @{ LiteralPath = $seal; Certificate = $certificate; HashAlgorithm = 'SHA256'; ErrorAction = 'Stop' }
+        if ($TimestampServer) { $parameters.TimestampServer = $TimestampServer }
+        $result = Set-AuthenticodeSignature @parameters
+        if ($result.Status -ne 'Valid' -or $result.SignerCertificate.Thumbprint -ne $thumbprint) {
+            throw "Manifest seal signing failed or signer was untrusted: $seal ($($result.Status))."
+        }
+    }
     & (Join-Path $PSScriptRoot 'Verify-Package.ps1') -PackagePath $stage -RequireSigned:([bool]$RequireSigned -or [bool]$certificate) -TrustedSignerThumbprint $thumbprint
     if (Test-Path -LiteralPath $destination) { throw "Package output already exists; choose a new directory to preserve the previous artifact: $destination" }
     Move-Item -LiteralPath $stage -Destination $destination

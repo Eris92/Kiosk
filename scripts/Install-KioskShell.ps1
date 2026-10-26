@@ -16,6 +16,8 @@ param(
     [string]$SourceConfig = '',
     [ValidateSet('Auto', 'ShellLauncher', 'DefaultProfile')][string]$Method = 'Auto',
     [switch]$RequireSmartCard,
+    [switch]$RequireSigned,
+    [string]$TrustedSignerThumbprint = '',
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -109,6 +111,7 @@ if ($Uninstall) {
 }
 if (-not $SourcePath) { $SourcePath = Get-KioskClientSource }
 $source = (Resolve-Path -LiteralPath $SourcePath).ProviderPath
+$packageHashes = Assert-KioskPackagedSource $source 'client' ([bool]$RequireSigned) $TrustedSignerThumbprint
 $sourceExe = Join-Path $source 'Kiosk.Client.exe'
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) { throw 'Publish the production client first.' }
 $edition = (Get-CimInstance Win32_OperatingSystem).Caption
@@ -135,7 +138,7 @@ $journal = Journal
 if ($journal.State.Method -and $journal.State.Method -ne $Method) { throw 'Uninstall the recorded shell method before changing installation methods.' }
 Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Force -Path $release | Out-Null
-Copy-KioskPayloadVerified $source $release
+Copy-KioskPayloadVerified $source $release $packageHashes
 $directory = Split-Path -Parent $ConfigPath
 Set-KioskDirectoryAcl $directory -UsersRead
 if (Test-Path -LiteralPath $ConfigPath) { Set-KioskFileAcl $ConfigPath -UsersRead }

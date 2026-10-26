@@ -25,6 +25,8 @@ param(
     [switch]$MakeDefault,
     [switch]$HideOtherOptions,
     [switch]$Trace, # Writes C:\ProgramData\Kiosk\signin-trace.log for diagnosing the tile.
+    [switch]$RequireSigned,
+    [string]$TrustedSignerThumbprint = '',
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -78,14 +80,24 @@ if (-not $SourcePath) {
     if (Test-Path -LiteralPath (Join-Path $root 'src\Kiosk.CredentialProvider')) { $SourcePath = Join-Path $root 'out\credential-provider\KioskCredentialProvider.dll' }
 }
 if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) { throw "Build the sign-in tile first (scripts\Build-CredentialProvider.ps1): $SourcePath" }
+$packageHashes = Assert-KioskPackagedSource (Split-Path -Parent (Resolve-Path -LiteralPath $SourcePath).ProviderPath) 'credential-provider' ([bool]$RequireSigned) $TrustedSignerThumbprint
 if (-not (Test-Path "$providers\$fido")) { throw "Windows security key provider $fido is not registered on this PC." }
 
 # 1. Program file and tile picture.
 $dll = Join-Path $InstallPath ('KioskCredentialProvider-' + [Guid]::NewGuid().ToString('N') + '.dll')
 if ($PSCmdlet.ShouldProcess($dll, 'copy sign-in tile')) {
+    if ($null -ne $packageHashes -and
+        ((-not $packageHashes.ContainsKey('KioskCredentialProvider.dll')) -or
+         (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256).Hash -ne $packageHashes['KioskCredentialProvider.dll'])) {
+        throw 'Credential provider changed since package verification.'
+    }
     Set-KioskDirectoryAcl $InstallPath -UsersRead
     # Never replace a DLL already loaded in LogonUI; update registration after copying a fresh version.
     Copy-Item -LiteralPath $SourcePath -Destination $dll
+    if ($null -ne $packageHashes -and
+        (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ne $packageHashes['KioskCredentialProvider.dll']) {
+        throw 'Credential provider copy differs from the verified package.'
+    }
 }
 if ($PSCmdlet.ShouldProcess($TileImage, 'draw tile picture')) {
     Add-Type -AssemblyName System.Drawing

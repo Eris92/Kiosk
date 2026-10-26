@@ -62,6 +62,31 @@ function Get-KioskClientSource {
     return Join-Path $root 'client'
 }
 
+function Assert-KioskPackagedSource([string]$Source, [string]$Role, [bool]$RequireSigned, [string]$TrustedSignerThumbprint) {
+    if ($Role -notin @('client', 'credential-provider')) { throw 'Unsupported Kiosk package source role.' }
+    $full = [IO.Path]::GetFullPath($Source).TrimEnd('\')
+    $packageRoot = [IO.Path]::GetDirectoryName($full)
+    $manifest = Join-Path $packageRoot 'package.json'
+    if (Test-Path -LiteralPath $manifest -PathType Leaf) {
+        $expected = [IO.Path]::GetFullPath((Join-Path $packageRoot $Role)).TrimEnd('\')
+        if (-not [string]::Equals($full, $expected, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'SourcePath does not point to the expected Kiosk package directory.'
+        }
+        $verified = & (Join-Path $PSScriptRoot 'Verify-Package.ps1') -PackagePath $packageRoot -RequireSigned:$RequireSigned -TrustedSignerThumbprint $TrustedSignerThumbprint -PassThru
+        $hashes = @{}
+        $prefix = $Role + '/'
+        foreach ($entry in @($verified.Files)) {
+            if (-not $entry.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $relative = $entry.Path.Substring($prefix.Length)
+            if ($Role -eq 'client' -and ($relative -eq 'client.json' -or $relative -like 'self-test*')) { continue }
+            $hashes[$relative] = [string]$entry.Sha256
+        }
+        return $hashes
+    } elseif ($RequireSigned -or $TrustedSignerThumbprint) {
+        throw 'A signed deployment requires SourcePath from a sealed Kiosk package.'
+    }
+}
+
 function Get-KioskInstallConfigSource([string]$DestinationPath, [string]$SourcePath, [bool]$ExplicitSource) {
     $selected = if ($ExplicitSource -or -not (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
         $SourcePath
@@ -93,13 +118,21 @@ function Get-KioskPayloadFiles([string]$Root, [switch]$SkipLocalFiles) {
     return $files.ToArray()
 }
 
-function Copy-KioskPayloadVerified([string]$Source, [string]$Target) {
+function Copy-KioskPayloadVerified([string]$Source, [string]$Target, [hashtable]$ExpectedHashes = $null) {
     $expected = @(Get-KioskPayloadFiles $Source -SkipLocalFiles)
     if ($expected.Count -eq 0) { throw 'Client payload has no files.' }
+    if ($null -ne $ExpectedHashes -and $ExpectedHashes.Count -ne $expected.Count) {
+        throw 'Client payload differs from the verified package inventory.'
+    }
     $hashes = @{}
     foreach ($file in $expected) {
         if ($hashes.ContainsKey($file.Relative)) { throw "Duplicate client payload path: $($file.Relative)" }
-        $hashes[$file.Relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        $sourceHash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+        if ($null -ne $ExpectedHashes -and
+            (-not $ExpectedHashes.ContainsKey($file.Relative) -or $ExpectedHashes[$file.Relative] -ne $sourceHash)) {
+            throw "Client payload changed since package verification: $($file.Relative)"
+        }
+        $hashes[$file.Relative] = $sourceHash
     }
     Get-ChildItem -LiteralPath $Source -Force | Where-Object { $_.Name -ne 'client.json' -and $_.Name -notlike 'self-test*' } |
         Copy-Item -Destination $Target -Recurse -Force

@@ -14,6 +14,8 @@ param(
     [string]$ConfigPath = (Join-Path $env:ProgramData 'Kiosk\client.json'),
     [string]$SourceConfig = '',
     [switch]$NoDesktopShortcuts,
+    [switch]$RequireSigned,
+    [string]$TrustedSignerThumbprint = '',
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -62,6 +64,7 @@ if ($Uninstall) {
 
 if (-not $SourcePath) { $SourcePath = Get-KioskClientSource }
 $source = (Resolve-Path -LiteralPath $SourcePath).ProviderPath
+$packageHashes = Assert-KioskPackagedSource $source 'client' ([bool]$RequireSigned) $TrustedSignerThumbprint
 $sourceExe = Join-Path $source 'Kiosk.Client.exe'
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $source 'hostfxr.dll') -PathType Leaf)) {
@@ -88,7 +91,7 @@ if (-not $PSCmdlet.ShouldProcess($target, 'stage a verified client and update ed
 
 Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Path $target | Out-Null
-Copy-KioskPayloadVerified $source $target
+Copy-KioskPayloadVerified $source $target $packageHashes
 $exe = Join-Path $target 'Kiosk.Client.exe'
 Assert-KioskClientConfig $exe $selectedConfig
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {

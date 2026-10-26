@@ -11,6 +11,8 @@ the previous binary path and startup mode are restored. -Uninstall removes the s
 param(
     [string]$SourcePath = '',
     [string]$InstallPath = (Join-Path $env:ProgramFiles 'Kiosk\CardService'),
+    [switch]$RequireSigned,
+    [string]$TrustedSignerThumbprint = '',
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -30,6 +32,7 @@ if ($Uninstall) {
 }
 if (-not $SourcePath) { $SourcePath = Get-KioskClientSource }
 $source = (Resolve-Path -LiteralPath $SourcePath).ProviderPath
+$packageHashes = Assert-KioskPackagedSource $source 'client' ([bool]$RequireSigned) $TrustedSignerThumbprint
 $sourceExe = Join-Path $source 'Kiosk.Client.exe'
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) { throw "Published client not found: $sourceExe" }
 $release = [Guid]::NewGuid().ToString('N')
@@ -39,7 +42,7 @@ $binary = '"{0}" --card-service' -f (Join-Path $target 'Kiosk.Client.exe')
 if (-not $PSCmdlet.ShouldProcess($name, "copy payload to $target, register and start service")) { return }
 Set-KioskDirectoryAcl $InstallPath -UsersRead
 New-Item -ItemType Directory -Force -Path $target | Out-Null
-Copy-KioskPayloadVerified $source $target
+Copy-KioskPayloadVerified $source $target $packageHashes
 $wasRunning = $existing -and $existing.State -eq 'Running'
 try {
     if ($existing) {

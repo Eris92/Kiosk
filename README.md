@@ -16,7 +16,9 @@ For an Entra rollout, join or hybrid join the test PC, enable the organization's
 
 ## Download
 
-CI builds and verifies an unsigned deployment candidate on `main` and `codex/**` branches. A signed release for automatic updates is published separately after validation. Build locally with `scripts\New-Package.ps1`; the candidate is placed in `out\package`.
+CI builds and verifies an unsigned deployment candidate on `main` and `codex/**` branches. Build locally with `scripts\New-Package.ps1`; the candidate is placed in `out\package`. Updates are installed explicitly from a new versioned package.
+
+For a production package, run `New-Package.ps1 -RequireSigned -SigningCertificateThumbprint <thumbprint>` on a clean checkout, then `Verify-Package.ps1 -PackagePath <package> -RequireSigned -TrustedSignerThumbprint <thumbprint>`. Format 2 includes an Authenticode signed seal for the SHA-256 of `package.json`; the manifest covers configuration, scripts and binaries. Deploy from the verified package with `Install-KioskShell.ps1 -RequireSigned -TrustedSignerThumbprint <thumbprint>` and the same switches on any other Kiosk installer used. Supply site-specific configuration through `-SourceConfig` rather than editing a signed package.
 
 ## Requirements
 
