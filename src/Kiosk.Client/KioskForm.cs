@@ -134,7 +134,13 @@ internal sealed partial class KioskForm : Form
         desktop.ResumeRequested += () => _ = VerifyAndUnlockAsync();
 
         timer.Tick += (_, _) => TickState();
-        Shown += (_, _) => { timer.Start(); Watchdog.Watch(this); RotateScreens(); StartIdleScreens(); statsTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start(); };
+        Shown += (_, _) =>
+        {
+            timer.Start();
+            // Preview and self-test runs must not be resurrected by the production service.
+            if (!config.TestMode && SharedAccounts.IsInstalledKiosk(Environment.ProcessPath)) Watchdog.Watch(this);
+            RotateScreens(); StartIdleScreens(); statsTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start();
+        };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         statsTimer.Tick += (_, _) => ExportStats();
         desktop.News.ActionRequested += item => _ = RunNewsActionAsync(item);

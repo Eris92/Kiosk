@@ -8,7 +8,7 @@ namespace Kiosk.Client;
 
 /// <summary>
 /// Watchdog, part of the Kiosk Card service (LocalSystem; Windows restarts the service itself, Install-KioskCardService.ps1).
-/// Each Kiosk reports to the service every 15 s from its window's thread. When a Kiosk ends without saying goodbye
+/// Each installed production Kiosk reports to the service every 15 s from its window's thread. When a Kiosk ends without saying goodbye
 /// (crash, killed) while its person is still signed in, or stops reporting for 90 s (hung), the service starts it
 /// again in the same session, as the same user with the same arguments: at most 3 times in 15 minutes per session.
 /// It also starts the Windows smart card service (SCardSvr) when card readers cannot be reached because it stopped.
@@ -27,24 +27,36 @@ internal static class Watchdog
     {
         var arguments = Join(Environment.GetCommandLineArgs().Skip(1));
         var skip = 0;
-        var registered = false;
+        var registered = 0;
+        var inFlight = 0;
+        var closed = 0;
         var timer = new System.Windows.Forms.Timer { Interval = (int)BeatEvery.TotalMilliseconds };
         void Beat()
         {
-            if (skip > 0) { skip--; return; }
+            if (Volatile.Read(ref closed) != 0) return;
+            if (Volatile.Read(ref skip) > 0) { Interlocked.Decrement(ref skip); return; }
+            if (Interlocked.CompareExchange(ref inFlight, 1, 0) != 0) return;
             // Off the window's thread: without the service the pipe waits seconds before giving up.
             _ = Task.Run(() =>
             {
-                if (CardService.Call(new CardService.Request { Op = "watch", Source = arguments }).Code == 0) registered = true;
-                // No service: ask again in 5 minutes. Once watched, never pause: missed reports would read as a hung Kiosk.
-                else if (!registered) skip = 20;
+                try
+                {
+                    if (CardService.Call(new CardService.Request { Op = "watch", Source = arguments }).Code == 0)
+                        Volatile.Write(ref registered, 1);
+                    // No service: ask again in 5 minutes. Once watched, never pause: missed reports would read as a hung Kiosk.
+                    else if (Volatile.Read(ref registered) == 0) Volatile.Write(ref skip, 20);
+                }
+                finally { Volatile.Write(ref inFlight, 0); }
             });
         }
         timer.Tick += (_, _) => Beat();
         form.FormClosed += (_, _) =>
         {
+            Volatile.Write(ref closed, 1);
             timer.Dispose();
-            if (registered) CardService.Call(new CardService.Request { Op = "unwatch" });
+            // Even a watch still in flight must have a matching unwatch. The service remembers it if it arrives first.
+            if (Volatile.Read(ref registered) != 0 || Volatile.Read(ref inFlight) != 0)
+                CardService.Call(new CardService.Request { Op = "unwatch" });
         };
         Beat();
         timer.Start();
@@ -56,6 +68,7 @@ internal static class Watchdog
     {
         public required int ProcessId;
         public required Process Process;
+        public required long ProcessStartFileTime;
         public required SafeAccessTokenHandle Token;   // The Kiosk's own token: a restart runs as exactly that user.
         public required string Program;
         public required string Arguments;
@@ -65,30 +78,63 @@ internal static class Watchdog
     private static readonly object gate = new();
     private static readonly Dictionary<int, Watched> watched = [];             // by Windows session
     private static readonly Dictionary<int, List<long>> restarts = [];         // monotonic milliseconds, by Windows session
+    private static readonly Dictionary<(int Session, int ProcessId, long Started), long> recentlyClosed = [];
 
     /// <summary>Service: "watch" / "unwatch" from the pipe's client process, which Windows names (not the request).</summary>
     internal static CardService.Response Request(string op, int clientPid, string? program, string arguments)
     {
         if (clientPid <= 0 || program == null || !ProcessIdToSessionId((uint)clientPid, out var session))
             return new CardService.Response { Code = -2, Message = "Nie rozpoznano programu Kiosk." };
-        lock (gate)
+        Process? process = null;
+        long started;
+        try
         {
-            watched.TryGetValue(session, out var current);
-            if (op == "unwatch")
+            process = Process.GetProcessById(clientPid);
+            started = process.StartTime.ToFileTimeUtc();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            process?.Dispose();
+            return new CardService.Response { Code = -2, Message = "Program Kiosk już nie działa." };
+        }
+        try
+        {
+            lock (gate)
             {
-                if (current?.ProcessId == clientPid) { Forget(session); Audit.Write("watchdog_unwatch", "session " + session); }
+                var now = Environment.TickCount64;
+                foreach (var stale in recentlyClosed.Where(pair => now - pair.Value > 60_000).Select(pair => pair.Key).ToArray())
+                    recentlyClosed.Remove(stale);
+                var identity = (Session: session, ProcessId: clientPid, Started: started);
+                watched.TryGetValue(session, out var current);
+                if (op == "unwatch")
+                {
+                    recentlyClosed[identity] = now;
+                    if (current?.ProcessId == clientPid && current.ProcessStartFileTime == started)
+                    {
+                        Forget(session);
+                        Audit.Write("watchdog_unwatch", "session " + session);
+                    }
+                    return new CardService.Response();
+                }
+                if (recentlyClosed.ContainsKey(identity))
+                    return new CardService.Response { Code = -2, Message = "Program Kiosk jest już zamykany." };
+                if (current?.ProcessId == clientPid && current.ProcessStartFileTime == started)
+                {
+                    current.LastBeatMilliseconds = now;
+                    return new CardService.Response();
+                }
+                if (!Path.GetFileName(program).Equals("Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase) || process.HasExited)
+                    return new CardService.Response { Code = -2, Message = "Watchdog pilnuje tylko działającego programu Kiosk." };
+                var token = PrimaryToken(process);
+                if (current != null) Forget(session);
+                watched[session] = new Watched { ProcessId = clientPid, Process = process, ProcessStartFileTime = started,
+                    Token = token, Program = program, Arguments = arguments };
+                process = null; // The watchdog owns this process handle until unwatch or restart.
+                Audit.Write("watchdog_watch", "session " + session + ", " + program);
                 return new CardService.Response();
             }
-            if (current?.ProcessId == clientPid) { current.LastBeatMilliseconds = Environment.TickCount64; return new CardService.Response(); }
-            if (!Path.GetFileName(program).Equals("Kiosk.Client.exe", StringComparison.OrdinalIgnoreCase))
-                return new CardService.Response { Code = -2, Message = "Watchdog pilnuje tylko programu Kiosk." };
-            var process = Process.GetProcessById(clientPid);
-            var token = PrimaryToken(process);
-            if (current != null) Forget(session);
-            watched[session] = new Watched { ProcessId = clientPid, Process = process, Token = token, Program = program, Arguments = arguments };
-            Audit.Write("watchdog_watch", "session " + session + ", " + program);
-            return new CardService.Response();
         }
+        finally { process?.Dispose(); }
     }
 
     /// <summary>Service: checks every 10 s until the service stops.</summary>

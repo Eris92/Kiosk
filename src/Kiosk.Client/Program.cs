@@ -85,6 +85,10 @@ internal static class Program
                 retry.Request("ignored", 11_000, () => attempts++, out _);
                 if (attempts != 2 || retry.Reason != "self_test")
                     throw new InvalidOperationException("Windows sign-out retry verification failed.");
+                var ownProgram = Environment.ProcessPath ?? throw new InvalidOperationException("Self-test executable path is unavailable.");
+                if (Watchdog.Request("unwatch", Environment.ProcessId, ownProgram, "").Code != 0 ||
+                    Watchdog.Request("watch", Environment.ProcessId, ownProgram, "").Code != -2)
+                    throw new InvalidOperationException("A late watchdog registration after unwatch was not rejected.");
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
@@ -109,7 +113,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }
