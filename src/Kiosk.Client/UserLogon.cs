@@ -88,18 +88,27 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     }
 
     private Microsoft.Win32.SafeHandles.SafeAccessTokenHandle? token;
+    private readonly object tokenGate = new();
 
     /// <summary>Runs <paramref name="work"/> as this person (Pliki: their folders, with their rights).</summary>
     internal object? RunAs(Func<object?> work)
     {
         if (card != null) throw new NotSupportedException("Pliki osoby zalogowanej kartą otwierają się w osobnym oknie.");
-        if (token == null || token.IsInvalid)
+        Microsoft.Win32.SafeHandles.SafeAccessTokenHandle accessToken;
+        bool addedReference = false;
+        lock (tokenGate)
         {
-            var password = Reveal();
-            try { if (!LogonUser(user, domain, password, 2, 0, out token)) throw new Win32Exception(); }   // LOGON32_LOGON_INTERACTIVE
-            finally { Array.Clear(password); }
+            if (token == null || token.IsInvalid)
+            {
+                var password = Reveal();
+                try { if (!LogonUser(user, domain, password, 2, 0, out token)) throw new Win32Exception(); }   // LOGON32_LOGON_INTERACTIVE
+                finally { Array.Clear(password); }
+            }
+            accessToken = token;
+            accessToken.DangerousAddRef(ref addedReference); // Session disposal may race a slow folder operation.
         }
-        return System.Security.Principal.WindowsIdentity.RunImpersonated(token, work);
+        try { return System.Security.Principal.WindowsIdentity.RunImpersonated(accessToken, work); }
+        finally { if (addedReference) accessToken.DangerousRelease(); }
     }
 
     /// <summary>
@@ -140,8 +149,11 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
 
     public void Dispose()
     {
-        if (secret != null) { Array.Clear(secret); secret = null; }
-        token?.Dispose(); token = null;
+        lock (tokenGate)
+        {
+            if (secret != null) { Array.Clear(secret); secret = null; }
+            token?.Dispose(); token = null;
+        }
         // Signs the person out: their programs close with it. In the background: the answer can take seconds.
         if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
     }

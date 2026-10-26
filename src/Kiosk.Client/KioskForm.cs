@@ -2659,6 +2659,7 @@ internal sealed partial class KioskForm : Form
 
     internal async Task ApplicationSmokeTestAsync()
     {
+        await FilesNavigationSmokeTestAsync();
         // Card PIN unlock runs in a child process; a missing reader must fail cleanly, without a dialog.
         var pin = await CardPin.VerifyAsync("Kiosk self-test missing reader", Handle, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
         if (pin.Code != CardPin.NoKey || pin.Message.Length == 0) throw new InvalidOperationException("Card PIN check: " + pin.Code + " " + pin.Message);
@@ -2754,6 +2755,51 @@ internal sealed partial class KioskForm : Form
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
+    }
+
+    private async Task FilesNavigationSmokeTestAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "kiosk-files-test-" + Guid.NewGuid().ToString("N"));
+        var first = Path.Combine(root, "first");
+        var second = Path.Combine(root, "second");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        File.WriteAllText(Path.Combine(first, "visible.txt"), "file contents");
+        File.WriteAllText(Path.Combine(second, "stale.txt"), "old result");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        int hold = 0;
+        Func<Func<object?>, object?> runAs = work =>
+        {
+            if (Volatile.Read(ref hold) == 1) { entered.Set(); release.Wait(); }
+            return work();
+        };
+        var files = new FilesView(runAs, null);
+        surface.Controls.Add(files);
+        try
+        {
+            files.CreateControl();
+            await files.NavigateForSmokeTestAsync(first).WaitAsync(TimeSpan.FromSeconds(10));
+            await files.PlacesForSmokeTestAsync.WaitAsync(TimeSpan.FromSeconds(10));
+            if (files.FolderForSmokeTest != first || !files.ItemsForSmokeTest.SequenceEqual(["visible.txt"]))
+                throw new InvalidOperationException("Files did not show the requested folder.");
+            Volatile.Write(ref hold, 1);
+            var stale = files.NavigateForSmokeTestAsync(second);
+            if (!await Task.Run(() => entered.Wait(5000))) throw new InvalidOperationException("Slow folder test did not start.");
+            Volatile.Write(ref hold, 0);
+            await files.NavigateForSmokeTestAsync(first).WaitAsync(TimeSpan.FromSeconds(10));
+            release.Set();
+            await stale.WaitAsync(TimeSpan.FromSeconds(10));
+            if (files.FolderForSmokeTest != first || !files.ItemsForSmokeTest.SequenceEqual(["visible.txt"]))
+                throw new InvalidOperationException("A stale folder result replaced the current folder.");
+        }
+        finally
+        {
+            release.Set();
+            surface.Controls.Remove(files);
+            files.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     internal async Task CommandSmokeTestAsync()

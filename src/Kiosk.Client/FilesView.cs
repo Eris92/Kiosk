@@ -11,6 +11,8 @@ namespace Kiosk.Client;
 /// </summary>
 internal sealed class FilesView : UserControl
 {
+    private sealed record FileEntry(string Name, string Path, bool IsFolder, DateTime Modified, long? Bytes);
+
     private readonly Func<Func<object?>, object?> runAs;
     private readonly string? profile;
     private readonly TextBox address = new() { Font = new Font("Segoe UI", 11), BorderStyle = BorderStyle.FixedSingle };
@@ -24,7 +26,14 @@ internal sealed class FilesView : UserControl
     private readonly ImageList icons = new() { ColorDepth = ColorDepth.Depth32Bit };
     private readonly Stack<string> back = new();
     private readonly List<(string Name, string Path)> placeList = [];
+    private readonly Dictionary<string, string> typeNames = new(StringComparer.OrdinalIgnoreCase);
     private string folder = "";
+    private string initialFolder = "";
+    private bool placesStarted;
+    private Task? placesLoading;
+    private readonly CancellationTokenSource placesCancellation = new();
+    private int navigationVersion;
+    private CancellationTokenSource? navigation;
     private (string[] Paths, bool Move)? clipboard;
 
     /// <summary>A file to open in its program (the Kiosk hosts it like an application).</summary>
@@ -89,8 +98,7 @@ internal sealed class FilesView : UserControl
         status.BackColor = KioskTheme.Taskbar; status.ForeColor = KioskTheme.Muted;
 
         Controls.Add(list); Controls.Add(places); Controls.Add(status); Controls.Add(toolbar);
-        FillPlaces();
-        if (placeList.Count > 0) Navigate(placeList[0].Path);
+        initialFolder = profile ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     }
 
     private bool scaled;
@@ -105,12 +113,16 @@ internal sealed class FilesView : UserControl
         if (scaled) return;
         scaled = true;
         float factor = DeviceDpi / 96f;
-        if (Math.Abs(factor - 1) < 0.01) return;
-        Scale(new SizeF(factor, factor));
-        foreach (ColumnHeader column in list.Columns) column.Width = (int)(column.Width * factor);
-        icons.ImageSize = new Size((int)(16 * factor), (int)(16 * factor));
-        icons.Images.Clear();
-        if (folder.Length > 0) Navigate(folder, remember: false);
+        if (Math.Abs(factor - 1) >= 0.01)
+        {
+            Scale(new SizeF(factor, factor));
+            foreach (ColumnHeader column in list.Columns) column.Width = (int)(column.Width * factor);
+            icons.ImageSize = new Size((int)(16 * factor), (int)(16 * factor));
+            icons.Images.Clear();
+        }
+        if (initialFolder.Length > 0) { var path = initialFolder; initialFolder = ""; Navigate(path); }
+        else if (folder.Length > 0) Navigate(folder, remember: false);
+        if (!placesStarted) { placesStarted = true; placesLoading = FillPlacesAsync(); }
     }
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] private static extern int SetWindowTheme(IntPtr window, string? app, string? idList);
@@ -118,12 +130,35 @@ internal sealed class FilesView : UserControl
 
     private T? As<T>(Func<T?> work) => (T?)runAs(() => work());
 
-    private void FillPlaces()
+    private async Task FillPlacesAsync()
     {
+        try
+        {
+            var found = await Task.Run(() => DiscoverPlaces(placesCancellation.Token), placesCancellation.Token);
+            if (IsDisposed || placesCancellation.IsCancellationRequested) return;
+            placeList.Clear();
+            placeList.AddRange(found);
+            places.Items.Clear();
+            places.Items.AddRange(found.Select(p => (object)p.Name).ToArray());
+        }
+        catch (OperationCanceledException) when (placesCancellation.IsCancellationRequested) { }
+        catch (Exception ex) { Audit.Write("file_places_error", ex.Message); }
+    }
+
+    private List<(string Name, string Path)> DiscoverPlaces(CancellationToken cancellation)
+    {
+        var found = new List<(string Name, string Path)>();
         var home = profile ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        void Add(string name, string? path) { if (!string.IsNullOrEmpty(path) && As(() => Directory.Exists(path))) placeList.Add((name, path)); }
+        void Add(string name, string? path)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (!string.IsNullOrEmpty(path) && As(() => Directory.Exists(path))) found.Add((name, path));
+        }
         // Known folders of that person: under their profile (OneDrive may hold Pulpit / Dokumenty / Obrazy).
-        var oneDrive = As(() => Directory.Exists(home) ? Directory.GetDirectories(home, "OneDrive*") : []) ?? [];
+        string[] oneDrive;
+        try { oneDrive = As(() => Directory.Exists(home) ? Directory.GetDirectories(home, "OneDrive*") : []) ?? []; }
+        catch (IOException) { oneDrive = []; }
+        catch (UnauthorizedAccessException) { oneDrive = []; }
         string Known(string name) => oneDrive.Select(o => Path.Combine(o, name)).FirstOrDefault(p => As(() => Directory.Exists(p))) ?? Path.Combine(home, name);
         Add("Pulpit", Known("Desktop"));
         Add("Dokumenty", Known("Documents"));
@@ -133,42 +168,93 @@ internal sealed class FilesView : UserControl
         Add("Folder osobisty", home);
         foreach (var drive in DriveInfo.GetDrives())
         {
-            try { if (drive.IsReady && drive.DriveType is DriveType.Fixed or DriveType.Removable or DriveType.Network) Add((drive.VolumeLabel.Length > 0 ? drive.VolumeLabel + " " : "") + "(" + drive.Name.TrimEnd('\\') + ")", drive.Name); }
+            cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable or DriveType.Network)) continue;
+                var label = drive.VolumeLabel;
+                Add((label.Length > 0 ? label + " " : "") + "(" + drive.Name.TrimEnd('\\') + ")", drive.Name);
+            }
             catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
-        places.Items.AddRange(placeList.Select(p => (object)p.Name).ToArray());
+        return found;
     }
 
-    private void Navigate(string path, bool remember = true)
+    private void Navigate(string path, bool remember = true) => _ = NavigateAsync(path, remember);
+
+    private async Task NavigateAsync(string path, bool remember)
     {
+        navigation?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        navigation = cancellation;
+        var version = ++navigationVersion;
+        status.Text = "Wczytywanie folderu…";
+        list.Enabled = false;
         try
         {
-            var entries = As(() =>
-            {
-                var info = new DirectoryInfo(path);
-                if (!info.Exists) throw new DirectoryNotFoundException("Nie ma folderu " + path);
-                return info.EnumerateFileSystemInfos().Where(i => (i.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0)
-                    .OrderBy(i => i is FileInfo).ThenBy(i => i.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
-            })!;
+            // Read names and metadata under the person's token, away from the WinForms thread. A slow
+            // network folder must not freeze the whole Kiosk; a later navigation supersedes this one.
+            var entries = await Task.Run(() => As(() => ReadDirectory(path, cancellation.Token))!, cancellation.Token);
+            if (IsDisposed || cancellation.IsCancellationRequested || version != navigationVersion) return;
             if (remember && folder.Length > 0 && !string.Equals(folder, path, StringComparison.OrdinalIgnoreCase)) back.Push(folder);
             folder = path;
             address.Text = path;
             list.BeginUpdate();
-            list.Items.Clear();
-            foreach (var entry in entries)
+            try
             {
-                bool isFolder = entry is DirectoryInfo;
-                var item = new ListViewItem(entry.Name) { Tag = entry.FullName, ImageKey = IconKey(entry.FullName, isFolder) };
-                item.SubItems.Add(entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
-                item.SubItems.Add(isFolder ? "Folder" : TypeName(entry.FullName));
-                item.SubItems.Add(entry is FileInfo f ? FormatSize(f.Length) : "");
-                list.Items.Add(item);
+                list.Items.Clear();
+                var items = new ListViewItem[entries.Length];
+                for (int i = 0; i < entries.Length; i++)
+                {
+                    var entry = entries[i];
+                    var item = new ListViewItem(entry.Name) { Tag = entry.Path, ImageKey = IconKey(entry.Path, entry.IsFolder) };
+                    item.SubItems.Add(entry.Modified.ToString("yyyy-MM-dd HH:mm"));
+                    item.SubItems.Add(entry.IsFolder ? "Folder" : TypeName(entry.Path));
+                    item.SubItems.Add(entry.Bytes is { } size ? FormatSize(size) : "");
+                    items[i] = item;
+                }
+                list.Items.AddRange(items);
             }
-            list.EndUpdate();
-            status.Text = entries.Count + " elementów" + (clipboard is { } c ? " · w schowku: " + c.Paths.Length + (c.Move ? " (wytnij)" : " (kopiuj)") : "");
+            finally { list.EndUpdate(); }
+            status.Text = entries.Length + " elementów" + (clipboard is { } c ? " · w schowku: " + c.Paths.Length + (c.Move ? " (wytnij)" : " (kopiuj)") : "");
         }
-        catch (Exception ex) { Problem(ex); }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception ex) { if (!IsDisposed && version == navigationVersion) Problem(ex); }
+        finally
+        {
+            if (!IsDisposed && version == navigationVersion) { list.Enabled = true; navigation = null; }
+            cancellation.Dispose();
+        }
     }
+
+    private static FileEntry[] ReadDirectory(string path, CancellationToken cancellation)
+    {
+        var info = new DirectoryInfo(path);
+        if (!info.Exists) throw new DirectoryNotFoundException("Nie ma folderu " + path);
+        var entries = new List<FileEntry>();
+        foreach (var entry in info.EnumerateFileSystemInfos())
+        {
+            cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                if ((entry.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
+                var isFolder = entry is DirectoryInfo;
+                entries.Add(new FileEntry(entry.Name, entry.FullName, isFolder, entry.LastWriteTime,
+                    entry is FileInfo file ? file.Length : null));
+            }
+            catch (IOException) { } // The item was removed while this directory was being read.
+            catch (UnauthorizedAccessException) { }
+        }
+        return entries.OrderBy(e => !e.IsFolder).ThenBy(e => e.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    }
+
+#if KIOSK_SELF_TEST
+    internal Task NavigateForSmokeTestAsync(string path) => NavigateAsync(path, remember: false);
+    internal Task PlacesForSmokeTestAsync => placesLoading ?? Task.CompletedTask;
+    internal string FolderForSmokeTest => folder;
+    internal string[] ItemsForSmokeTest => list.Items.Cast<ListViewItem>().Select(i => i.Text).ToArray();
+#endif
 
     /// <summary>Right click: what can be done with the clicked files, or with this folder when nothing is under the mouse.</summary>
     private void ShowMenu(Point point)
@@ -414,11 +500,21 @@ internal sealed class FilesView : UserControl
     private static string FormatSize(long bytes) =>
         bytes < 1024 ? bytes + " B" : bytes < 1 << 20 ? (bytes / 1024.0).ToString("0") + " KB" : bytes < 1L << 30 ? (bytes / 1048576.0).ToString("0.0") + " MB" : (bytes / 1073741824.0).ToString("0.0") + " GB";
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { navigationVersion++; navigation?.Cancel(); placesCancellation.Cancel(); icons.Dispose(); }
+        base.Dispose(disposing);
+    }
+
     // ------------------------------------------------------------------ icons and types (Windows' own, by extension)
 
     private string IconKey(string path, bool isFolder)
     {
-        var key = isFolder ? "<folder>" : Path.GetExtension(path).ToLowerInvariant() is var ext && ext is ".exe" or ".lnk" or ".ico" ? path : Path.GetExtension(path).ToLowerInvariant();
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        // These three types can have per-file icons. Bound the cache across a long-lived session;
+        // after that the standard icon for the extension is enough for another executable.
+        bool customIcon = (extension is ".exe" or ".lnk" or ".ico") && icons.Images.Count < 256;
+        var key = isFolder ? "<folder>" : customIcon ? path : extension;
         if (icons.Images.ContainsKey(key)) return key;
         var info = new ShFileInfo();
         uint flags = SHGFI_ICON | (icons.ImageSize.Width > 24 ? 0 : SHGFI_SMALLICON) | SHGFI_USEFILEATTRIBUTES;   // Large icons on a big scale: sharper.
@@ -430,10 +526,15 @@ internal sealed class FilesView : UserControl
         return key;
     }
 
-    private static string TypeName(string path)
+    private string TypeName(string path)
     {
+        var extension = Path.GetExtension(path);
+        if (typeNames.TryGetValue(extension, out var cached)) return cached;
         var info = new ShFileInfo();
-        return SHGetFileInfo(path, 0x80, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES) != IntPtr.Zero ? info.TypeName : Path.GetExtension(path);
+        var name = SHGetFileInfo(path, 0x80, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES) != IntPtr.Zero
+            ? info.TypeName : extension;
+        typeNames[extension] = name;
+        return name;
     }
 
     private const uint SHGFI_ICON = 0x100, SHGFI_SMALLICON = 0x1, SHGFI_TYPENAME = 0x400, SHGFI_USEFILEATTRIBUTES = 0x10;
