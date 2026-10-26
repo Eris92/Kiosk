@@ -148,6 +148,8 @@ Znormalizowana ścieżka kategorii akcji jest obliczana przy jej utworzeniu i ak
 
 Analizator wydajności wskazał ponowne tworzenie ustawień serializacji JSON przy wczytaniu i zapisie konfiguracji oraz komunikatów. Każda z tych trzech ścieżek używa teraz jednego zestawu ustawień przez cały czas działania procesu; zasady walidacji i format plików pozostały takie same. Powtórny przebieg reguły `CA1869` nie wykazał tych ostrzeżeń.
 
+W ścieżce CTAP transakcja PC/SC zaczyna się teraz przed wyborem apletu FIDO2, a nie po nim; niepowodzenie `SCardBeginTransaction` zatrzymuje operację i może zostać ponowione. Kod zwalnia transakcję tylko wtedy, gdy została rozpoczęta. Jest to istotne, ponieważ Windows blokuje dostęp innych aplikacji do karty dopiero w czasie aktywnej transakcji. Lokalny build i self-test nie sprawdzają współdzielenia fizycznej karty z innym programem; ten scenariusz wymaga próby na czytniku testowym.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

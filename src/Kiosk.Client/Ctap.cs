@@ -19,6 +19,7 @@ internal sealed class CtapCard : IDisposable
 {
     private IntPtr context, card;
     private uint protocol;
+    private bool transactionActive;
     private ECDiffieHellman? platformKey;
     private byte[]? shared;     // SHA-256 of the ECDH secret with the card (PIN protocol 1)
     private byte[]? pinToken;
@@ -38,17 +39,24 @@ internal sealed class CtapCard : IDisposable
             try
             {
                 Check(SCardConnect(context, reader, 2, 3, out card, out protocol), "Brak karty w czytniku");
+                // The SELECT and every following command must use the same applet. Do not continue when Windows
+                // could not grant exclusive access to this card.
+                Check(SCardBeginTransaction(card), "Nie można zablokować karty do operacji FIDO2");
+                transactionActive = true;
                 // SELECT the FIDO applet.
                 var answer = Apdu([0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01, 0x00]);
                 if (!answer.Ok) throw new CtapException(-2, "Karta nie ma aplikacji FIDO2.");
-                // Keep other programs (Windows' smart card stack) off the card until we are done: they would
-                // select another applet and the PIN token would be lost.
-                SCardBeginTransaction(card);
                 return;
             }
             catch (CtapException ex) when (ex.Code == -1 && attempt < 4)
             {
-                if (card != IntPtr.Zero) { SCardDisconnect(card, 1); card = IntPtr.Zero; } // SCARD_RESET_CARD
+                if (card != IntPtr.Zero)
+                {
+                    bool resetInTransaction = transactionActive;
+                    if (resetInTransaction) { SCardEndTransaction(card, 1); transactionActive = false; } // SCARD_RESET_CARD
+                    SCardDisconnect(card, resetInTransaction ? 0u : 1u); // Reset here only when no transaction was held.
+                    card = IntPtr.Zero;
+                }
                 Thread.Sleep(300);
             }
         }
@@ -266,7 +274,12 @@ internal sealed class CtapCard : IDisposable
         if (pinToken != null) Array.Clear(pinToken);
         if (shared != null) Array.Clear(shared);
         platformKey?.Dispose();
-        if (card != IntPtr.Zero) { SCardEndTransaction(card, 0); SCardDisconnect(card, 0); card = IntPtr.Zero; }
+        if (card != IntPtr.Zero)
+        {
+            if (transactionActive) { SCardEndTransaction(card, 0); transactionActive = false; }
+            SCardDisconnect(card, 0);
+            card = IntPtr.Zero;
+        }
         if (context != IntPtr.Zero) { SCardReleaseContext(context); context = IntPtr.Zero; }
     }
 
