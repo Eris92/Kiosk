@@ -469,12 +469,7 @@ namespace FidoRun
         internal static void CloseProgramsForSession(LogonOutcome outcome, Action<string> log)
         {
             if (outcome == null || outcome.Sid == null) return;
-            int session, selfId, closed = 0;
-            using (System.Diagnostics.Process current = System.Diagnostics.Process.GetCurrentProcess())
-            {
-                session = current.SessionId;
-                selfId = current.Id;
-            }
+            int session = ProcessIdentity.SessionId, selfId = ProcessIdentity.Id, closed = 0;
             foreach (System.Diagnostics.Process candidate in System.Diagnostics.Process.GetProcesses())
                 using (candidate)
                 {

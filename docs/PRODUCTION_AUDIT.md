@@ -152,6 +152,8 @@ W ścieżce CTAP transakcja PC/SC zaczyna się teraz przed wyborem apletu FIDO2,
 
 Trzy operacje PIN korzystają z jednego kodu uzgadniania klucza ECDH. Tymczasowy klucz karty i jego publiczny uchwyt są zwalniane po wyprowadzeniu sekretu, a bufor nowego sekretu zastępuje poprzedni dopiero po udanym uzgodnieniu. Jawne bufory UTF-8 PIN-u, skrótu PIN-u i wyściełanej wartości są czyszczone również wtedy, gdy operacja kończy się błędem. Test z fizyczną kartą nadal jest konieczny dla `setpin`, `changepin` i `verify`.
 
+Broker FIDO odczytuje własny PID i numer sesji Windows raz na proces, zwalniając obiekt `Process` po inicjalizacji. Nazwy potoków, ścieżki logów i katalogów GUI używają tych samych wartości bez kolejnych otwarć procesu. Edytor komunikatów korzysta ze stałych ustawień zapisu JSON; ponowne sprawdzenie reguły `CA1869` nie zgłosiło ostrzeżenia.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

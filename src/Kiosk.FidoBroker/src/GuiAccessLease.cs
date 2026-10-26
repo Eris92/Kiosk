@@ -54,7 +54,7 @@ namespace FidoRun
         private int references = 1;
         private string sidKey;
         private readonly string cleanupReport = Path.Combine(TraceLog.LogRoot(), "FidoRun",
-            "gui-access-" + System.Diagnostics.Process.GetCurrentProcess().Id + ".log");
+            "gui-access-" + ProcessIdentity.Id + ".log");
         private GuiAccessLease(Action<string> logger) { log = logger; }
         private sealed class AclLock : IDisposable
         {
@@ -110,7 +110,7 @@ namespace FidoRun
         }
         private static IntPtr OpenObjectDirectory(string leaf = "BaseNamedObjects", bool optional = false, bool link = false)
         {
-            string path = "\\Sessions\\" + System.Diagnostics.Process.GetCurrentProcess().SessionId
+            string path = "\\Sessions\\" + ProcessIdentity.SessionId
                 + (String.IsNullOrEmpty(leaf) ? "" : "\\" + leaf);
             UnicodeName name = new UnicodeName { Length = checked((ushort)(path.Length * 2)),
                 MaximumLength = checked((ushort)(path.Length * 2 + 2)), Buffer = Marshal.StringToHGlobalUni(path) };
@@ -131,7 +131,7 @@ namespace FidoRun
         private static IntPtr OpenAppContainerPipeDirectory(string leaf = "", bool optional = false)
         {
             string path = "\\Device\\NamedPipe\\Sessions\\"
-                + System.Diagnostics.Process.GetCurrentProcess().SessionId + "\\AppContainerNamedObjects" + leaf;
+                + ProcessIdentity.SessionId + "\\AppContainerNamedObjects" + leaf;
             UnicodeName name = new UnicodeName { Length = checked((ushort)(path.Length * 2)),
                 MaximumLength = checked((ushort)(path.Length * 2 + 2)), Buffer = Marshal.StringToHGlobalUni(path) };
             IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeName)));

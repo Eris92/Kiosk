@@ -33,7 +33,7 @@ namespace FidoRun
                 log("Caller=" + identity.Name + "; SID=" + identity.User.Value);
                 log("CallerContext: AdminSidPresent=" + present + "; AdminEnabled=" +
                     principal.IsInRole(WindowsBuiltInRole.Administrator) + "; IsSystem=" + identity.IsSystem +
-                    "; SessionId=" + Process.GetCurrentProcess().SessionId);
+                    "; SessionId=" + ProcessIdentity.SessionId);
             }
             foreach (string name in new[] { "fidocredprov.dll", "webauthn.dll", "aadauthhelper.dll" })
             {

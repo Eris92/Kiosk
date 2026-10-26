@@ -49,7 +49,7 @@ namespace FidoRun
         private static volatile bool stopping;
         private static volatile bool pinEntered;
 
-        private static readonly int self = Process.GetCurrentProcess().Id;
+        private static readonly int self = ProcessIdentity.Id;
         internal static string PipeName(int client) { return "KioskFido-" + client + "-" + self; }
 
         internal static void Start(int client, Action<string> log)

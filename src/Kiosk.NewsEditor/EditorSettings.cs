@@ -17,6 +17,7 @@ internal sealed class EditorSettings
     private static string Shared => Path.Combine(AppContext.BaseDirectory, FileName);
     private static string Personal => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Kiosk", FileName);
     private static readonly JsonSerializerOptions Read = new() { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+    private static readonly JsonSerializerOptions Write = new() { WriteIndented = true };
 
     internal static EditorSettings Load()
     {
@@ -35,7 +36,7 @@ internal sealed class EditorSettings
     internal void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Personal)!);
-        File.WriteAllText(Personal, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(Personal, JsonSerializer.Serialize(this, Write));
     }
 
     private static EditorSettings? From(string path)
