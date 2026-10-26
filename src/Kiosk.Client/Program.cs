@@ -101,6 +101,37 @@ internal static class Program
                     !csv.Contains("\"\t＝2+2\"", StringComparison.Ordinal) ||
                     !csv.Contains("\"\t\rtext\"", StringComparison.Ordinal))
                     throw new InvalidOperationException("Statistics CSV formula protection failed.");
+                var readRoot = Path.Combine(Path.GetTempPath(), "kiosk-stats-test-" + Guid.NewGuid().ToString("N"));
+                var computerFolder = Path.Combine(readRoot, "PC1");
+                var nestedFolder = Path.Combine(computerFolder, "unrelated");
+                var month = DateTimeOffset.Now;
+                var monthName = month.ToString("yyyy-MM") + ".jsonl";
+                var rootFile = Path.Combine(readRoot, monthName);
+                var computerFile = Path.Combine(computerFolder, monthName);
+                var nestedFile = Path.Combine(nestedFolder, monthName);
+                try
+                {
+                    Directory.CreateDirectory(nestedFolder);
+                    var line = JsonSerializer.Serialize(new Stats.Entry { Time = month, Kind = Stats.Option, Name = "test" }) + Environment.NewLine;
+                    File.WriteAllText(rootFile, line);
+                    File.WriteAllText(computerFile, line);
+                    File.WriteAllText(nestedFile, line);
+                    if (Stats.Read(readRoot, month.LocalDateTime.Date.AddDays(-1)).Count != 2)
+                        throw new InvalidOperationException("Statistics reader traversed beyond its per-computer folders.");
+                    using var cancelled = new CancellationTokenSource();
+                    cancelled.Cancel();
+                    try
+                    {
+                        Stats.Read(readRoot, month.LocalDateTime.Date.AddDays(-1), cancelled.Token);
+                        throw new InvalidOperationException("Cancelled statistics read continued.");
+                    }
+                    catch (OperationCanceledException) { }
+                }
+                finally
+                {
+                    foreach (var file in new[] { nestedFile, computerFile, rootFile }) if (File.Exists(file)) File.Delete(file);
+                    foreach (var folder in new[] { nestedFolder, computerFolder, readRoot }) if (Directory.Exists(folder)) Directory.Delete(folder);
+                }
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>
@@ -125,7 +156,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, statistics CSV formula protection, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, statistics CSV formula protection, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

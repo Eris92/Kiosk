@@ -1043,16 +1043,40 @@ internal sealed class SettingsView : UserControl
         statsTab.Controls.Add(help);
 
         List<Stats.Entry> shown = [];
+        CancellationTokenSource? loading = null;
+        var loadGeneration = 0;
+        statsTab.Disposed += (_, _) => { loadGeneration++; loading?.Cancel(); };
         async void Load()
         {
+            loading?.Cancel();
+            var currentLoad = new CancellationTokenSource();
+            loading = currentLoad;
+            var generation = ++loadGeneration;
             var from = period.SelectedIndex switch { 0 => DateTime.Today, 1 => DateTime.Today.AddDays(-6), 2 => DateTime.Today.AddDays(-29), 3 => DateTime.Today.AddDays(-89), _ => DateTime.Today.AddYears(-1) };
             var folder = source.SelectedIndex == 1 && serverFolder != null ? serverFolder : Stats.Folder;
             summary.Text = "Wczytuję…";
             refresh.Enabled = false;
-            try { shown = await Task.Run(() => Stats.Read(folder, from)); }
-            catch (Exception ex) { summary.Text = "Nie udało się wczytać statystyk: " + ex.Message; return; }
-            finally { if (!IsDisposed) refresh.Enabled = true; }
-            if (IsDisposed) return;
+            export.Enabled = false;
+            shown = [];
+            options.Rows.Clear();
+            days.Rows.Clear();
+            List<Stats.Entry> read;
+            try { read = await Task.Run(() => Stats.Read(folder, from, currentLoad.Token), currentLoad.Token); }
+            catch (OperationCanceledException) when (currentLoad.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                if (!IsDisposed && !statsTab.IsDisposed && generation == loadGeneration)
+                    summary.Text = "Nie udało się wczytać statystyk: " + ex.Message;
+                return;
+            }
+            finally
+            {
+                if (!IsDisposed && !statsTab.IsDisposed && generation == loadGeneration) refresh.Enabled = true;
+                if (ReferenceEquals(loading, currentLoad)) loading = null;
+                currentLoad.Dispose();
+            }
+            if (IsDisposed || statsTab.IsDisposed || generation != loadGeneration) return;
+            shown = read;
             var signIns = shown.Where(e => e.Kind == Stats.SignIn).ToList();
             var opened = shown.Where(e => e.Kind != Stats.SignIn).ToList();
             int people = shown.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count();
@@ -1061,14 +1085,13 @@ internal sealed class SettingsView : UserControl
                            (computers > 1 ? "     Komputery: " + computers : "") +
                            "\n" + (opened.Count == 0 ? "Brak otwartych opcji w tym okresie." : "Najczęściej: " + string.Join(", ",
                                opened.GroupBy(e => e.Name).OrderByDescending(g => g.Count()).Take(3).Select(g => g.Key + " (" + g.Count() + ")")));
-            options.Rows.Clear();
             foreach (var g in opened.GroupBy(e => (e.Kind, e.Name, e.Category)).OrderByDescending(g => g.Count()))
                 options.Rows.Add(g.Key.Name, g.Key.Kind, g.Key.Category, g.Count(), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
                     g.Max(e => e.Time).LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
-            days.Rows.Clear();
             foreach (var g in shown.GroupBy(e => e.Time.LocalDateTime.Date).OrderByDescending(g => g.Key))
                 days.Rows.Add(g.Key.ToString("yyyy-MM-dd"), g.Count(e => e.Kind == Stats.SignIn), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
                     g.Count(e => e.Kind != Stats.SignIn));
+            export.Enabled = true;
         }
         refresh.Click += (_, _) => Load();
         period.SelectedIndexChanged += (_, _) => Load();

@@ -92,31 +92,45 @@ internal static class Stats
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_prune_failed", ex.Message); }
     }
 
-    /// <summary>The events of the months from <paramref name="from"/>, from a folder (this PC's, or the server's Stats folder with all PCs).</summary>
-    internal static List<Entry> Read(string folder, DateTime from)
+    /// <summary>The events of the months from <paramref name="from"/>, from this PC's folder or the server's one-level per-PC folders.</summary>
+    internal static List<Entry> Read(string folder, DateTime from, CancellationToken cancellation = default)
     {
         var list = new List<Entry>();
+        cancellation.ThrowIfCancellationRequested();
         if (!Directory.Exists(folder)) return list;
         var first = from.ToString("yyyy-MM");
-        foreach (var file in Directory.GetFiles(folder, "*.jsonl", SearchOption.AllDirectories))
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true };
+        void ReadFolder(string directory)
         {
-            var month = Path.GetFileNameWithoutExtension(file);
-            if (month.Length >= 7 && string.CompareOrdinal(month[^7..], first) < 0) continue;
-            list.AddRange(ReadFile(file).Where(e => e.Time.LocalDateTime >= from));
+            foreach (var file in Directory.EnumerateFiles(directory, "*.jsonl", options))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var month = Path.GetFileNameWithoutExtension(file);
+                if (month.Length >= 7 && string.CompareOrdinal(month[^7..], first) < 0) continue;
+                list.AddRange(ReadFile(file, cancellation).Where(e => e.Time.LocalDateTime >= from));
+            }
+        }
+        ReadFolder(folder);
+        foreach (var computer in Directory.EnumerateDirectories(folder, "*", options))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            ReadFolder(computer);
         }
         return list;
     }
 
     /// <summary>One month's file (unreadable lines and files are skipped).</summary>
-    internal static List<Entry> ReadFile(string file)
+    internal static List<Entry> ReadFile(string file, CancellationToken cancellation = default)
     {
         var list = new List<Entry>();
+        cancellation.ThrowIfCancellationRequested();
         try
         {
             using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream);
             while (reader.ReadLine() is { } line)
             {
+                cancellation.ThrowIfCancellationRequested();
                 if (line.Length == 0) continue;
                 try { if (JsonSerializer.Deserialize<Entry>(line) is { } e) list.Add(e); }
                 catch (JsonException) { }

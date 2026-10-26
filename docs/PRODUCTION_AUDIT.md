@@ -132,6 +132,8 @@ Watchdog jest rejestrowany tylko przez zainstalowany klient poza trybem testowym
 
 Usługa przegląda miesięczne pliki statystyk najwyżej raz dziennie zamiast po każdym zdarzeniu; błąd sprzątania nie zmienia wyniku zapisu zdarzenia. Pola tekstowe CSV, które Excel mógłby potraktować jako formułę (także po białych znakach), dostają tabulację wewnątrz cytowanego pola. Tabulacja pozostaje częścią danych przy późniejszym programowym imporcie CSV. Aktywny self-test sprawdza znaczniki `=`, `+`, `-`, `@`, pełnoszerokie `＝` i początkowe znaki kontrolne w eksportowanych polach.
 
+Widok statystyk czyta pliki tylko z własnego katalogu i z jednego poziomu folderów komputerów, zgodnie ze strukturą eksportu. Pomija dowiązania katalogów i po zmianie zakresu lub źródła anuluje poprzedni odczyt oraz odrzuca jego spóźniony wynik. Aktywny self-test sprawdza oba dozwolone poziomy, pominięcie głębszego folderu i anulowanie. Zablokowany odczyt pojedynczego pliku na niedostępnym udziale może nadal czekać na system plików, ale nie nadpisze nowszego widoku.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
