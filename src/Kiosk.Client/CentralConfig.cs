@@ -358,25 +358,43 @@ internal static class CentralConfig
     private static string? Newest(string? a, string? b) =>
         a == null ? b : b == null ? a : Directory.GetLastWriteTimeUtc(a) >= Directory.GetLastWriteTimeUtc(b) ? a : b;
 
-    /// <summary>Copy configuration assets, not exported statistics or linked directories outside the source tree.</summary>
+    /// <summary>Copy configuration assets, excluding monthly exports in the root Stats folder and linked directories.</summary>
     internal static void Copy(string from, string to, bool skipStatistics)
     {
         var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
-        var pending = new Stack<(string Source, string Destination, bool Root)>();
-        pending.Push((from, to, true));
+        var pending = new Stack<(string Source, string Destination, bool Root, int StatsDepth, string Computer)>();
+        pending.Push((from, to, true, -1, ""));
         while (pending.TryPop(out var next))
         {
             Directory.CreateDirectory(next.Destination);
             foreach (var file in Directory.EnumerateFiles(next.Source, "*", options))
-                if (!EditorFile(Path.GetFileName(file)))
-                    File.Copy(file, Path.Combine(next.Destination, Path.GetFileName(file)), true);
+            {
+                var name = Path.GetFileName(file);
+                if (EditorFile(name) || skipStatistics && next.StatsDepth == 1 && IsStatsExportFile(name, next.Computer)) continue;
+                File.Copy(file, Path.Combine(next.Destination, name), true);
+            }
             foreach (var folder in Directory.EnumerateDirectories(next.Source, "*", options))
             {
                 var name = Path.GetFileName(folder);
-                if (skipStatistics && next.Root && name.Equals("Stats", StringComparison.OrdinalIgnoreCase)) continue;
-                pending.Push((folder, Path.Combine(next.Destination, name), false));
+                var statsDepth = next.Root && name.Equals("Stats", StringComparison.OrdinalIgnoreCase) ? 0
+                    : next.StatsDepth >= 0 ? next.StatsDepth + 1 : -1;
+                pending.Push((folder, Path.Combine(next.Destination, name), false, statsDepth,
+                    statsDepth == 1 ? name : next.Computer));
             }
         }
+    }
+
+    private static bool IsStatsExportFile(string name, string computer)
+    {
+        if (IsOwnedStatsTemporary(name, computer)) return true;
+        var month = Path.GetFileNameWithoutExtension(name);
+        return Path.GetExtension(name).ToLowerInvariant() switch
+        {
+            ".jsonl" => IsMonthName(month),
+            ".csv" => month.StartsWith(computer + "-", StringComparison.OrdinalIgnoreCase) &&
+                      IsMonthName(month[(computer.Length + 1)..]),
+            _ => false
+        };
     }
 
     /// <summary>The messages editor (KioskKomunikaty.exe, its settings) and its .bak / .tmp files live next to kiosk-news.json, but are not for the kiosks.</summary>

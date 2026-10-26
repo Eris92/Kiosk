@@ -190,7 +190,14 @@ internal static class Program
                 var copySource = Path.Combine(copyRoot, "source");
                 var configCopy = Path.Combine(copyRoot, "config");
                 var newsCopy = Path.Combine(copyRoot, "news-copy");
-                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"), Path.Combine("Stats", "PC", "old.jsonl"), "KioskKomunikaty.tmp" };
+                var copiedMonthName = DateTime.Today.ToString("yyyy-MM");
+                var copiedMonth = copiedMonthName + ".jsonl";
+                var copiedCsv = "PC-" + copiedMonthName + ".csv";
+                var copiedTemporary = copiedMonth + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"),
+                    Path.Combine("Stats", "PC", copiedMonth), Path.Combine("Stats", "PC", copiedCsv),
+                    Path.Combine("Stats", "PC", copiedTemporary), Path.Combine("Stats", "PC", "asset.txt"),
+                    Path.Combine("Stats", "root-logo.txt"), "KioskKomunikaty.tmp" };
                 try
                 {
                     Directory.CreateDirectory(Path.Combine(copySource, "Stats", "PC"));
@@ -198,12 +205,16 @@ internal static class Program
                     foreach (var file in copiedFiles) File.WriteAllText(Path.Combine(copySource, file), file);
                     CentralConfig.Copy(copySource, configCopy, skipStatistics: true);
                     CentralConfig.Copy(copySource, newsCopy, skipStatistics: false);
-                    if (Directory.Exists(Path.Combine(configCopy, "Stats")) ||
-                        !File.Exists(Path.Combine(configCopy, "client.json")) ||
+                    if (!File.Exists(Path.Combine(configCopy, "client.json")) ||
                         !File.Exists(Path.Combine(configCopy, "news", "item.txt")) ||
+                        File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedMonth)) ||
+                        File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedCsv)) ||
+                        File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedTemporary)) ||
+                        !File.Exists(Path.Combine(configCopy, "Stats", "PC", "asset.txt")) ||
+                        !File.Exists(Path.Combine(configCopy, "Stats", "root-logo.txt")) ||
                         File.Exists(Path.Combine(configCopy, "KioskKomunikaty.tmp")) ||
-                        !File.Exists(Path.Combine(newsCopy, "Stats", "PC", "old.jsonl")))
-                        throw new InvalidOperationException("Central configuration copy included statistics or lost required assets.");
+                        !File.Exists(Path.Combine(newsCopy, "Stats", "PC", copiedMonth)))
+                        throw new InvalidOperationException("Central configuration copy included monthly exports or lost required assets.");
                 }
                 finally
                 {
