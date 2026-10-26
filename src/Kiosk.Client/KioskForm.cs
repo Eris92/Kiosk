@@ -18,6 +18,7 @@ internal sealed partial class KioskForm : Form
         internal required RdpHost Host { get; init; }
         internal long ConnectingSinceMilliseconds { get; init; }
         internal bool WasConnected { get; set; }
+        internal int StateReadFailures { get; set; }
     }
 
     private sealed record Window(string Key, string Title, Control View);
@@ -64,6 +65,7 @@ internal sealed partial class KioskForm : Form
     private SettingsView? settingsView;
     private Control? visibleView;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
+    private long nextWindowMonitorMilliseconds;
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
     private readonly System.Windows.Forms.Timer statsTimer = new() { Interval = 60 * 60_000 };
@@ -172,8 +174,7 @@ internal sealed partial class KioskForm : Form
             {
                 ShellTick();
                 if (shellSignOut.Reason != null) return;
-                MonitorRdp();
-                MonitorApplications();
+                MonitorWindows();
                 return;
             }
             if (SelfService)
@@ -199,8 +200,7 @@ internal sealed partial class KioskForm : Form
                 if (idle >= (uint)config.LockAfterSeconds * 1000u) Lock("idle_lock", idle);
             }
             ExpireSessions();
-            MonitorRdp();
-            MonitorApplications();
+            MonitorWindows();
             UpdateMainIdle();
         }
         catch (Exception ex)
@@ -1806,6 +1806,18 @@ internal sealed partial class KioskForm : Form
         return host;
     }
 
+    /// <summary>Poll hosted programs and RDP at a slower cadence than card presence and idle state.</summary>
+    private void MonitorWindows()
+    {
+        // Card and idle state still need the 250 ms tick. Enumerating desktop windows and querying every
+        // RDP ActiveX control that often adds unnecessary work to the UI thread.
+        var now = Environment.TickCount64;
+        if (now < nextWindowMonitorMilliseconds) return;
+        nextWindowMonitorMilliseconds = now + 1000;
+        MonitorRdp();
+        MonitorApplications();
+    }
+
     /// <summary>An application closed with its own × (or exited): remove its Kiosk window and taskbar button.</summary>
     private void MonitorApplications()
     {
@@ -1820,7 +1832,22 @@ internal sealed partial class KioskForm : Form
         foreach (var session in sessions.Values.ToArray())
         foreach (var (name, rdp) in session.Rdp.ToArray())
         {
-            int state = (int)rdp.Host.Client.Connected;
+            int state;
+            try
+            {
+                state = (int)rdp.Host.Client.Connected;
+                rdp.StateReadFailures = 0;
+            }
+            catch (Exception ex)
+            {
+                // A dying ActiveX control can reject Connected while it disconnects. One failed read
+                // must not be mistaken for a smart-card failure and park another person's session.
+                if (++rdp.StateReadFailures < 3) continue;
+                Audit.Write("rdp_monitor_error", name + ": " + ex.Message);
+                CloseWindow("rdp:" + name, "remote_control_error", session);
+                session.Notice = "Pulpit zdalny „" + name + "” przestał odpowiadać.";
+                continue;
+            }
             if (state == 1) rdp.WasConnected = true;
             if (rdp.WasConnected && state == 0)
             {
