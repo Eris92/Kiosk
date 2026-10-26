@@ -59,13 +59,23 @@ internal static class FirstSignIn
         catch (Exception ex) { Audit.Write("first_signin_failed", ex.Message); }
     }
 
-    private static bool DesktopStarted(int session) =>
-        Process.GetProcesses().Any(p =>
+    private static bool DesktopStarted(int session)
+    {
+        var processes = Process.GetProcesses();
+        try
         {
-            try { return p.SessionId == session && p.ProcessName is "explorer" or "Kiosk.Client"; }
-            catch (Exception) { return false; }
-            finally { p.Dispose(); }
-        });
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (process.SessionId == session && process.ProcessName is "explorer" or "Kiosk.Client") return true;
+                }
+                catch (Exception) { /* The process exited or cannot be inspected. */ }
+            }
+            return false;
+        }
+        finally { foreach (var process in processes) process.Dispose(); }
+    }
 
     [DllImport("kernel32.dll")] private static extern int WTSGetActiveConsoleSessionId();
     [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool WTSConnectSession(int logonId, int targetLogonId, string password, bool wait);

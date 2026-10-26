@@ -24,7 +24,8 @@ internal sealed class WindowsKey : IDisposable
     {
         this.pressed = pressed;
         proc = Callback;
-        using var module = Process.GetCurrentProcess().MainModule;
+        using var current = Process.GetCurrentProcess();
+        using var module = current.MainModule;
         hook = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(module?.ModuleName), 0);
         if (hook == IntPtr.Zero) Audit.Write("windows_key_unavailable", "Win32 " + Marshal.GetLastWin32Error());
     }

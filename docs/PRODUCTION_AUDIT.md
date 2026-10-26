@@ -140,6 +140,8 @@ Kopia konfiguracji z serwera pomija miesięczne pliki eksportu `Stats/<komputer>
 
 Analiza nieużywanych elementów w czterech projektach .NET wskazała trzy parametry w kliencie i dwa w brokerze FIDO. Usunięto je wraz z nieużywanym numerem kafelka Menu. Nazwa wybranej kategorii jest obliczana przy jej zmianie, więc rysowanie kafelków nie dzieli ścieżki kategorii na tablicę przy każdym odmalowaniu. W brokerze indeks wskazany przez Windows nadal wybiera poświadczenie; nie jest już przekazywany do widoku bez wyboru kafelków.
 
+Skanowanie procesów przy pierwszym logowaniu, restarcie watchdogu i przekazaniu przeglądarki zwalnia teraz wszystkie obiekty `Process`, również te pominięte po wcześniejszym trafieniu. Broker przy zamykaniu programów użytkownika pobiera własny PID tylko raz i zwalnia jego obiekt; uchwyt procesu użyty do instalacji haka klawisza Windows także jest zwalniany. Wykrywanie nowej sesji i decyzja o wznowieniu Kiosku zachowują dotychczasowe warunki.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

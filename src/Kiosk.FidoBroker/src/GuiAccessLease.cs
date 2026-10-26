@@ -252,35 +252,39 @@ namespace FidoRun
         }
         private static bool HasBrowserForLogon(string image, string logonSid)
         {
-            foreach (System.Diagnostics.Process candidate in System.Diagnostics.Process.GetProcessesByName("msedge"))
-            using (candidate)
+            System.Diagnostics.Process[] candidates = System.Diagnostics.Process.GetProcessesByName("msedge");
+            try
             {
-                IntPtr process = OpenProcess(0x1000, false, candidate.Id), token = IntPtr.Zero, groups = IntPtr.Zero;
-                try
+                foreach (System.Diagnostics.Process candidate in candidates)
                 {
-                    if (process == IntPtr.Zero || !String.Equals(image, ImagePath(process), StringComparison.OrdinalIgnoreCase)
-                        || !OpenProcessToken(process, 8, out token)) continue;
-                    int needed;
-                    GetTokenInformation(token, 2, IntPtr.Zero, 0, out needed);
-                    if (needed <= 0) continue;
-                    groups = Marshal.AllocHGlobal(needed);
-                    if (!GetTokenInformation(token, 2, groups, needed, out needed)) continue;
-                    for (int index = 0; index < Marshal.ReadInt32(groups); index++)
+                    IntPtr process = OpenProcess(0x1000, false, candidate.Id), token = IntPtr.Zero, groups = IntPtr.Zero;
+                    try
                     {
-                        IntPtr entry = IntPtr.Add(groups, 8 + index * 16);
-                        uint flags = unchecked((uint)Marshal.ReadInt32(entry, 8));
-                        if ((flags & 0xC0000000) == 0xC0000000
-                            && new SecurityIdentifier(Marshal.ReadIntPtr(entry)).Value == logonSid) return true;
+                        if (process == IntPtr.Zero || !String.Equals(image, ImagePath(process), StringComparison.OrdinalIgnoreCase)
+                            || !OpenProcessToken(process, 8, out token)) continue;
+                        int needed;
+                        GetTokenInformation(token, 2, IntPtr.Zero, 0, out needed);
+                        if (needed <= 0) continue;
+                        groups = Marshal.AllocHGlobal(needed);
+                        if (!GetTokenInformation(token, 2, groups, needed, out needed)) continue;
+                        for (int index = 0; index < Marshal.ReadInt32(groups); index++)
+                        {
+                            IntPtr entry = IntPtr.Add(groups, 8 + index * 16);
+                            uint flags = unchecked((uint)Marshal.ReadInt32(entry, 8));
+                            if ((flags & 0xC0000000) == 0xC0000000
+                                && new SecurityIdentifier(Marshal.ReadIntPtr(entry)).Value == logonSid) return true;
+                        }
+                    }
+                    finally
+                    {
+                        if (groups != IntPtr.Zero) Marshal.FreeHGlobal(groups);
+                        if (token != IntPtr.Zero) CloseHandle(token);
+                        if (process != IntPtr.Zero) CloseHandle(process);
                     }
                 }
-                finally
-                {
-                    if (groups != IntPtr.Zero) Marshal.FreeHGlobal(groups);
-                    if (token != IntPtr.Zero) CloseHandle(token);
-                    if (process != IntPtr.Zero) CloseHandle(process);
-                }
+                return false;
             }
-            return false;
+            finally { foreach (System.Diagnostics.Process candidate in candidates) candidate.Dispose(); }
         }
         internal void HoldUntilExit(IntPtr process, string browserImage = null)
         {

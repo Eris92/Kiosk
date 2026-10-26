@@ -206,7 +206,7 @@ internal static class Watchdog
         }
         // Windows may have started a shell Kiosk again itself (Shell Launcher, Winlogon): a second one would only fail.
         Thread.Sleep(5000);
-        if (Process.GetProcessesByName("Kiosk.Client").Any(p => p.SessionId == session))
+        if (KioskAlreadyRunning(session))
         {
             Audit.Write("watchdog_already_running", "session " + session + ": Kiosk " + reason);
             return;
@@ -225,6 +225,21 @@ internal static class Watchdog
             Audit.Write("watchdog_restart_kiosk", "session " + session + ": " + reason);
         }
         finally { DestroyEnvironmentBlock(environment); }
+    }
+
+    private static bool KioskAlreadyRunning(int session)
+    {
+        var processes = Process.GetProcessesByName("Kiosk.Client");
+        try
+        {
+            foreach (var process in processes)
+            {
+                try { if (process.SessionId == session) return true; }
+                catch (InvalidOperationException) { /* The process exited during the scan. */ }
+            }
+            return false;
+        }
+        finally { foreach (var process in processes) process.Dispose(); }
     }
 
     private static void Forget(int session)
