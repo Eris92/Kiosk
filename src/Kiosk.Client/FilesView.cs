@@ -26,6 +26,7 @@ internal sealed class FilesView : UserControl
     private readonly ImageList icons = new() { ColorDepth = ColorDepth.Depth32Bit };
     private readonly Stack<string> back = new();
     private readonly List<(string Name, string Path)> placeList = [];
+    private HashSet<string> listedFolders = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> typeNames = new(StringComparer.OrdinalIgnoreCase);
     private string folder = "";
     private string initialFolder = "";
@@ -34,6 +35,8 @@ internal sealed class FilesView : UserControl
     private readonly CancellationTokenSource placesCancellation = new();
     private int navigationVersion;
     private CancellationTokenSource? navigation;
+    private readonly CancellationTokenSource operationStop = new();
+    private bool operationBusy;
     private (string[] Paths, bool Move)? clipboard;
 
     /// <summary>A file to open in its program (the Kiosk hosts it like an application).</summary>
@@ -200,6 +203,7 @@ internal sealed class FilesView : UserControl
             if (remember && folder.Length > 0 && !string.Equals(folder, path, StringComparison.OrdinalIgnoreCase)) back.Push(folder);
             folder = path;
             address.Text = path;
+            listedFolders = entries.Where(e => e.IsFolder).Select(e => e.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
             list.BeginUpdate();
             try
             {
@@ -276,7 +280,7 @@ internal sealed class FilesView : UserControl
             menu.Items.Add(new ToolStripSeparator());
             Item("Kopiuj", () => Remember(move: false), keys: "Ctrl+C");
             Item("Wytnij", () => Remember(move: true), keys: "Ctrl+X");
-            if (paths.Length == 1 && As(() => Directory.Exists(paths[0])))
+            if (paths.Length == 1 && listedFolders.Contains(paths[0]))
                 Item("Wklej do tego folderu", () => Paste(paths[0]), clipboard != null);
             Item("Zmień nazwę", () => list.SelectedItems[0].BeginEdit(), paths.Length == 1, "F2");
             Item("Usuń", Delete, keys: "Delete");
@@ -306,52 +310,171 @@ internal sealed class FilesView : UserControl
         catch (Exception ex) { Problem(ex); }
     }
 
-    private void Zip(string[] paths)
+    /// <summary>Moves blocking filesystem work off the UI thread while retaining the signed-in person's token.</summary>
+    private async Task<bool> RunWorkAsync(string progress, Func<CancellationToken, string> work)
     {
+        if (operationBusy || IsDisposed) { if (!IsDisposed) status.Text = "Poczekaj na zakończenie bieżącej operacji."; return false; }
+        operationBusy = true;
+        var shownFolder = folder;
+        status.Text = progress + "…";
         try
         {
-            var name = paths.Length == 1 ? Path.GetFileNameWithoutExtension(paths[0].TrimEnd('\\')) : Path.GetFileName(folder.TrimEnd('\\'));
-            var target = Free(Path.Combine(folder, (name.Length > 0 ? name : "Archiwum") + ".zip"));
-            As<object?>(() =>
+            var result = await Task.Run(() => As(() => work(operationStop.Token))!, operationStop.Token);
+            if (IsDisposed || operationStop.IsCancellationRequested) return false;
+            if (string.Equals(folder, shownFolder, StringComparison.OrdinalIgnoreCase))
+                await NavigateAsync(folder, remember: false);
+            if (!IsDisposed) status.Text = result;
+            return true;
+        }
+        catch (OperationCanceledException) when (operationStop.IsCancellationRequested) { return false; }
+        catch (Exception ex) { if (!IsDisposed) Problem(ex); return false; }
+        finally { operationBusy = false; }
+    }
+
+    private void Zip(string[] paths) => _ = ZipAsync(paths);
+
+    private Task<bool> ZipAsync(string[] paths)
+    {
+        var destination = folder;
+        return RunWorkAsync("Kompresowanie plików", cancellation =>
+        {
+            var name = paths.Length == 1 ? Path.GetFileNameWithoutExtension(paths[0].TrimEnd('\\')) : Path.GetFileName(destination.TrimEnd('\\'));
+            var target = Free(Path.Combine(destination, (name.Length > 0 ? name : "Archiwum") + ".zip"));
+            var partial = target + ".partial-" + Guid.NewGuid().ToString("N");
+            try
             {
-                using var zip = System.IO.Compression.ZipFile.Open(target, System.IO.Compression.ZipArchiveMode.Create);
-                foreach (var path in paths)
+                using (var zip = ZipFile.Open(partial, ZipArchiveMode.Create))
                 {
-                    if (File.Exists(path)) { zip.CreateEntryFromFile(path, Path.GetFileName(path)); continue; }
-                    var root = Path.GetDirectoryName(path.TrimEnd('\\'))!;
-                    foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-                        zip.CreateEntryFromFile(file, Path.GetRelativePath(root, file));
+                    File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
+                    foreach (var path in paths)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                            throw new IOException("Nie można kompresować dowiązania: " + path);
+                        if (File.Exists(path)) { AddZipFile(zip, path, Path.GetFileName(path), cancellation); continue; }
+                        var root = Path.GetDirectoryName(path.TrimEnd('\\'))!;
+                        ZipFolder(zip, path, root, cancellation);
+                    }
                 }
-                return null;
-            });
-            Navigate(folder, remember: false);
-            status.Text = "Utworzono " + Path.GetFileName(target);
-        }
-        catch (Exception ex) { Problem(ex); }
+                cancellation.ThrowIfCancellationRequested();
+                File.SetAttributes(partial, File.GetAttributes(partial) & ~FileAttributes.Hidden);
+                File.Move(partial, target);
+            }
+            catch { DeletePartial(partial); throw; }
+            return "Utworzono " + Path.GetFileName(target);
+        });
     }
 
-    private void Unzip(string path)
-    {
-        try
-        {
-            var target = Free(Path.Combine(folder, Path.GetFileNameWithoutExtension(path)));
-            As<object?>(() => { System.IO.Compression.ZipFile.ExtractToDirectory(path, target); return null; });
-            Navigate(folder, remember: false);
-            status.Text = "Wyodrębniono do " + Path.GetFileName(target);
-        }
-        catch (Exception ex) { Problem(ex); }
-    }
+    private void Unzip(string path) => _ = UnzipAsync(path);
 
-    private void Properties(string[] paths)
+    private Task<bool> UnzipAsync(string path)
     {
-        try
+        var destination = folder;
+        return RunWorkAsync("Wyodrębnianie archiwum", cancellation =>
         {
-            var text = As(() =>
+            var target = Free(Path.Combine(destination, Path.GetFileNameWithoutExtension(path)));
+            var partial = target + ".partial-" + Guid.NewGuid().ToString("N");
+            cancellation.ThrowIfCancellationRequested();
+            try
             {
+                Directory.CreateDirectory(partial);
+                File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
+                using (var zip = ZipFile.OpenRead(path))
+                {
+                    var root = Path.GetFullPath(partial).TrimEnd('\\') + "\\";
+                    foreach (var entry in zip.Entries)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        var relative = entry.FullName.Replace('/', '\\');
+                        ValidateArchivePath(relative);
+                        var output = Path.GetFullPath(Path.Combine(partial, relative));
+                        if (!output.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("Archiwum zawiera ścieżkę poza wybranym folderem.");
+                        if (entry.Name.Length == 0) { Directory.CreateDirectory(output); continue; }
+                        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+                        using (var source = entry.Open())
+                        using (var destinationFile = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072))
+                        {
+                            CopyStream(source, destinationFile, cancellation);
+                            destinationFile.Flush(flushToDisk: true);
+                        }
+                        if (entry.LastWriteTime.Year is >= 1980 and <= 2107)
+                            File.SetLastWriteTime(output, entry.LastWriteTime.LocalDateTime);
+                    }
+                }
+                cancellation.ThrowIfCancellationRequested();
+                File.SetAttributes(partial, File.GetAttributes(partial) & ~FileAttributes.Hidden);
+                Directory.Move(partial, target);
+            }
+            catch { DeletePartial(partial, directory: true); throw; }
+            return "Wyodrębniono do " + Path.GetFileName(target);
+        });
+    }
+
+    private static void ZipFolder(ZipArchive zip, string folder, string root, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Nie można kompresować dowiązania: " + folder);
+        zip.CreateEntry(Path.GetRelativePath(root, folder).Replace('\\', '/') + "/");
+        foreach (var file in Directory.EnumerateFiles(folder))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Nie można kompresować dowiązania: " + file);
+            AddZipFile(zip, file, Path.GetRelativePath(root, file), cancellation);
+        }
+        foreach (var sub in Directory.EnumerateDirectories(folder)) ZipFolder(zip, sub, root, cancellation);
+    }
+
+    private static void AddZipFile(ZipArchive zip, string path, string name, CancellationToken cancellation)
+    {
+        var entry = zip.CreateEntry(name.Replace('\\', '/'), CompressionLevel.Optimal);
+        var modified = File.GetLastWriteTime(path);
+        if (modified.Year is >= 1980 and <= 2107) entry.LastWriteTime = modified;
+        using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 131072);
+        using var destination = entry.Open();
+        CopyStream(source, destination, cancellation);
+    }
+
+    private static void ValidateArchivePath(string relative)
+    {
+        var parts = relative.TrimEnd('\\').Split('\\');
+        if (parts.Length == 0 || parts.Any(p => p.Length == 0 || p is "." or ".." ||
+            p.EndsWith(' ') || p.EndsWith('.') || p.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || ReservedName(p)))
+            throw new InvalidDataException("Archiwum zawiera niebezpieczną nazwę pliku.");
+    }
+
+    private static bool ReservedName(string part)
+    {
+        var stem = part.Split('.')[0].ToUpperInvariant();
+        return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$" ||
+            stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal)) &&
+            stem[3] is >= '1' and <= '9';
+    }
+
+    private void Properties(string[] paths) => _ = PropertiesAsync(paths);
+
+    private async Task PropertiesAsync(string[] paths)
+    {
+        if (operationBusy || IsDisposed) { if (!IsDisposed) status.Text = "Poczekaj na zakończenie bieżącej operacji."; return; }
+        operationBusy = true;
+        var location = folder;
+        var type = paths.Length == 1
+            ? list.Items.Cast<ListViewItem>().FirstOrDefault(i => (string)i.Tag! == paths[0])?.SubItems[2].Text ?? "Folder"
+            : "";
+        status.Text = "Obliczanie właściwości…";
+        try
+        {
+            var text = await Task.Run(() => As(() =>
+            {
+                operationStop.Token.ThrowIfCancellationRequested();
                 if (paths.Length > 1)
                 {
-                    long total = paths.Where(File.Exists).Sum(p => new FileInfo(p).Length);
-                    return paths.Length + " elementów\nRozmiar plików: " + FormatSize(total) + "\nLokalizacja: " + folder;
+                    long total = 0;
+                    foreach (var selected in paths)
+                    { operationStop.Token.ThrowIfCancellationRequested(); if (File.Exists(selected)) total += new FileInfo(selected).Length; }
+                    return paths.Length + " elementów\nRozmiar plików: " + FormatSize(total) + "\nLokalizacja: " + location;
                 }
                 var path = paths[0];
                 FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
@@ -361,17 +484,22 @@ internal sealed class FilesView : UserControl
                 {
                     // A folder's size: its files, as far as this account may read them.
                     long bytes = 0; int files = 0;
-                    foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
-                    { try { bytes += new FileInfo(file).Length; files++; } catch (IOException) { } }
+                    foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions
+                    { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                    { operationStop.Token.ThrowIfCancellationRequested(); try { bytes += new FileInfo(file).Length; files++; } catch (IOException) { } }
                     size = FormatSize(bytes) + " (" + files + " plików)";
                 }
-                return "Nazwa: " + info.Name + "\nTyp: " + (info is DirectoryInfo ? "Folder" : TypeName(path)) + "\nLokalizacja: " + Path.GetDirectoryName(path.TrimEnd('\\')) +
+                return "Nazwa: " + info.Name + "\nTyp: " + type + "\nLokalizacja: " + Path.GetDirectoryName(path.TrimEnd('\\')) +
                     "\nRozmiar: " + size + "\nUtworzono: " + info.CreationTime.ToString("yyyy-MM-dd HH:mm") + "\nZmodyfikowano: " + info.LastWriteTime.ToString("yyyy-MM-dd HH:mm") +
                     ((info.Attributes & FileAttributes.ReadOnly) != 0 ? "\nTylko do odczytu" : "");
-            });
+            })!, operationStop.Token);
+            if (IsDisposed || operationStop.IsCancellationRequested) return;
             MessageBox.Show(this, text, "Właściwości", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            status.Text = "Właściwości gotowe.";
         }
-        catch (Exception ex) { Problem(ex); }
+        catch (OperationCanceledException) when (operationStop.IsCancellationRequested) { }
+        catch (Exception ex) { if (!IsDisposed) Problem(ex); }
+        finally { operationBusy = false; }
     }
 
     private void GoBack() { if (back.Count > 0) Navigate(back.Pop(), remember: false); }
@@ -388,23 +516,32 @@ internal sealed class FilesView : UserControl
     {
         foreach (var path in Selected())
         {
-            if (As(() => Directory.Exists(path))) { Navigate(path); return; }
+            if (listedFolders.Contains(path)) { Navigate(path); return; }
             OpenRequested?.Invoke(path);
         }
     }
 
     private void NewFolder()
     {
-        try
+        _ = NewFolderAsync();
+    }
+
+    private async Task NewFolderAsync()
+    {
+        var destination = folder;
+        string? created = null;
+        var succeeded = await RunWorkAsync("Tworzenie folderu", cancellation =>
         {
             var name = "Nowy folder";
-            for (int i = 2; As(() => Directory.Exists(Path.Combine(folder, name)) || File.Exists(Path.Combine(folder, name))); i++) name = "Nowy folder (" + i + ")";
-            var path = Path.Combine(folder, name);
-            As<object?>(() => Directory.CreateDirectory(path));
-            Navigate(folder, remember: false);
-            list.Items.Cast<ListViewItem>().FirstOrDefault(i => (string)i.Tag! == path)?.BeginEdit();
-        }
-        catch (Exception ex) { Problem(ex); }
+            for (int i = 2; Directory.Exists(Path.Combine(destination, name)) || File.Exists(Path.Combine(destination, name)); i++)
+            { cancellation.ThrowIfCancellationRequested(); name = "Nowy folder (" + i + ")"; }
+            cancellation.ThrowIfCancellationRequested();
+            created = Path.Combine(destination, name);
+            Directory.CreateDirectory(created);
+            return "Utworzono " + name;
+        });
+        if (succeeded && created != null && string.Equals(folder, destination, StringComparison.OrdinalIgnoreCase))
+            list.Items.Cast<ListViewItem>().FirstOrDefault(i => (string)i.Tag! == created)?.BeginEdit();
     }
 
     private void Rename(LabelEditEventArgs e)
@@ -412,13 +549,15 @@ internal sealed class FilesView : UserControl
         if (string.IsNullOrWhiteSpace(e.Label)) { e.CancelEdit = true; return; }
         var from = (string)list.Items[e.Item].Tag!;
         var to = Path.Combine(Path.GetDirectoryName(from)!, e.Label.Trim());
-        try
+        e.CancelEdit = true; // The operation finishes asynchronously; refresh with the actual filesystem result.
+        if (e.Label.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { Problem(new IOException("Nazwa zawiera niedozwolone znaki.")); return; }
+        if (string.Equals(from, to, StringComparison.Ordinal)) return;
+        _ = RunWorkAsync("Zmiana nazwy", cancellation =>
         {
-            if (e.Label.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new IOException("Nazwa zawiera niedozwolone znaki.");
-            As<object?>(() => { if (Directory.Exists(from)) Directory.Move(from, to); else File.Move(from, to); return null; });
-            list.Items[e.Item].Tag = to;
-        }
-        catch (Exception ex) { e.CancelEdit = true; Problem(ex); }
+            cancellation.ThrowIfCancellationRequested();
+            if (Directory.Exists(from)) Directory.Move(from, to); else File.Move(from, to);
+            return "Zmieniono nazwę na " + Path.GetFileName(to);
+        });
     }
 
     private void Delete()
@@ -427,13 +566,23 @@ internal sealed class FilesView : UserControl
         if (paths.Length == 0) return;
         var what = paths.Length == 1 ? "„" + Path.GetFileName(paths[0]) + "”" : paths.Length + " elementów";
         if (MessageBox.Show(this, "Usunąć " + what + "? Tego nie można cofnąć.", "Pliki", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        try
+        _ = DeleteAsync(paths);
+    }
+
+    private async Task<bool> DeleteAsync(string[] paths)
+    {
+        var success = await RunWorkAsync("Usuwanie plików", cancellation =>
         {
-            As<object?>(() => { foreach (var p in paths) { if (Directory.Exists(p)) Directory.Delete(p, true); else File.Delete(p); } return null; });
-            Audit.Write("files_deleted", paths.Length.ToString());
-        }
-        catch (Exception ex) { Problem(ex); }
-        Navigate(folder, remember: false);
+            foreach (var path in paths)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (Directory.Exists(path)) Directory.Delete(path, recursive: (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0);
+                else File.Delete(path);
+            }
+            return "Usunięto " + paths.Length + " elementów";
+        });
+        if (success) Audit.Write("files_deleted", paths.Length.ToString());
+        return success;
     }
 
     private void Remember(bool move)
@@ -444,33 +593,64 @@ internal sealed class FilesView : UserControl
         status.Text = "W schowku: " + paths.Length + (move ? " (wytnij)" : " (kopiuj)") + " – wybierz folder i „Wklej”.";
     }
 
-    private void Paste(string? into = null)
+    private void Paste(string? into = null) => _ = PasteAsync(into);
+
+    private async Task<bool> PasteAsync(string? into)
     {
-        if (clipboard is not { } c) return;
-        var folder = into ?? this.folder;
-        try
+        if (clipboard is not { } c) return false;
+        var destination = into ?? folder;
+        var success = await RunWorkAsync(c.Move ? "Przenoszenie plików" : "Kopiowanie plików", cancellation =>
         {
-            As<object?>(() =>
+            foreach (var from in c.Paths)
             {
-                foreach (var from in c.Paths)
+                cancellation.ThrowIfCancellationRequested();
+                var to = Free(Path.Combine(destination, Path.GetFileName(from.TrimEnd('\\'))));
+                if (Directory.Exists(from))
                 {
-                    var to = Free(Path.Combine(folder, Path.GetFileName(from.TrimEnd('\\'))));
-                    if (Directory.Exists(from))
+                    var source = Path.GetFullPath(from).TrimEnd('\\') + "\\";
+                    var targetFolder = Path.GetFullPath(destination).TrimEnd('\\') + "\\";
+                    if (targetFolder.StartsWith(source, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("Nie można wkleić folderu do niego samego.");
+                    if (c.Move && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
+                        Directory.Move(from, to);
+                    else
                     {
-                        if ((folder + "\\").StartsWith(from.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)) throw new IOException("Nie można wkleić folderu do niego samego.");
-                        if (c.Move && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(folder), StringComparison.OrdinalIgnoreCase)) Directory.Move(from, to);
-                        else { CopyFolder(from, to); if (c.Move) Directory.Delete(from, true); }
+                        var partial = to + ".partial-" + Guid.NewGuid().ToString("N");
+                        try
+                        {
+                            Directory.CreateDirectory(partial);
+                            File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
+                            CopyFolder(from, partial, cancellation, stagingRoot: true);
+                            cancellation.ThrowIfCancellationRequested();
+                            Directory.SetLastWriteTimeUtc(partial, Directory.GetLastWriteTimeUtc(from));
+                            File.SetAttributes(partial, File.GetAttributes(from) & ~FileAttributes.ReparsePoint);
+                            Directory.Move(partial, to);
+                        }
+                        catch { DeletePartial(partial, directory: true); throw; }
+                        if (c.Move) Directory.Delete(from, recursive: true);
                     }
-                    else if (c.Move) File.Move(from, to);
-                    else File.Copy(from, to);
                 }
-                return null;
-            });
-            if (c.Move) clipboard = null;
-        }
-        catch (Exception ex) { Problem(ex); }
-        Navigate(this.folder, remember: false);
+                else if (c.Move && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
+                    File.Move(from, to);
+                else
+                {
+                    CopyFile(from, to, cancellation);
+                    if (c.Move) File.Delete(from);
+                }
+            }
+            return (c.Move ? "Przeniesiono " : "Skopiowano ") + c.Paths.Length + " elementów";
+        });
+        if (success && c.Move && clipboard is { } current && ReferenceEquals(current.Paths, c.Paths)) clipboard = null;
+        return success;
     }
+
+#if KIOSK_SELF_TEST
+    internal Task<bool> PasteForSmokeTestAsync(string[] paths, string destination, bool move)
+    { clipboard = (paths, move); return PasteAsync(destination); }
+    internal Task<bool> ZipForSmokeTestAsync(string[] paths) => ZipAsync(paths);
+    internal Task<bool> UnzipForSmokeTestAsync(string path) => UnzipAsync(path);
+    internal Task<bool> DeleteForSmokeTestAsync(string[] paths) => DeleteAsync(paths);
+#endif
 
     /// <summary>"Raport.docx" → "Raport (2).docx" when the name is taken.</summary>
     private static string Free(string path)
@@ -484,11 +664,75 @@ internal sealed class FilesView : UserControl
         }
     }
 
-    private static void CopyFolder(string from, string to)
+    private static void CopyFolder(string from, string to, CancellationToken cancellation, bool stagingRoot = false)
     {
+        cancellation.ThrowIfCancellationRequested();
+        var attributes = File.GetAttributes(from);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Nie można kopiować dowiązania: " + from);
         Directory.CreateDirectory(to);
-        foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
-        foreach (var sub in Directory.GetDirectories(from)) CopyFolder(sub, Path.Combine(to, Path.GetFileName(sub)));
+        foreach (var file in Directory.EnumerateFiles(from))
+        { cancellation.ThrowIfCancellationRequested(); CopyFile(file, Path.Combine(to, Path.GetFileName(file)), cancellation); }
+        foreach (var sub in Directory.EnumerateDirectories(from))
+        { cancellation.ThrowIfCancellationRequested(); CopyFolder(sub, Path.Combine(to, Path.GetFileName(sub)), cancellation); }
+        if (!stagingRoot)
+        {
+            Directory.SetLastWriteTimeUtc(to, Directory.GetLastWriteTimeUtc(from));
+            File.SetAttributes(to, attributes);
+        }
+    }
+
+    private static void CopyFile(string from, string to, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        var attributes = File.GetAttributes(from);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Nie można kopiować dowiązania: " + from);
+        var partial = to + ".partial-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (var source = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read, 131072))
+            using (var target = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072))
+            {
+                File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
+                CopyStream(source, target, cancellation);
+                target.Flush(flushToDisk: true);
+            }
+            File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(from));
+            cancellation.ThrowIfCancellationRequested();
+            File.SetAttributes(partial, attributes);
+            File.Move(partial, to);
+        }
+        catch { DeletePartial(partial); throw; }
+    }
+
+    private static void CopyStream(Stream source, Stream destination, CancellationToken cancellation)
+    {
+        var buffer = new byte[131072];
+        int read;
+        while ((read = source.Read(buffer)) > 0)
+        { cancellation.ThrowIfCancellationRequested(); destination.Write(buffer, 0, read); }
+    }
+
+    private static void DeletePartial(string path, bool directory = false)
+    {
+        try
+        {
+            if (directory && Directory.Exists(path))
+            {
+                var options = new EnumerationOptions
+                { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+                foreach (var file in Directory.EnumerateFiles(path, "*", options))
+                    File.SetAttributes(file, FileAttributes.Normal);
+                foreach (var sub in Directory.EnumerateDirectories(path, "*", options).OrderByDescending(p => p.Length))
+                    File.SetAttributes(sub, FileAttributes.Directory);
+                File.SetAttributes(path, FileAttributes.Directory);
+                Directory.Delete(path, recursive: true);
+            }
+            else if (File.Exists(path)) { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); }
+        }
+        catch (IOException ex) { Audit.Write("files_partial_cleanup_failed", path + ": " + ex.Message); }
+        catch (UnauthorizedAccessException ex) { Audit.Write("files_partial_cleanup_failed", path + ": " + ex.Message); }
     }
 
     private void Problem(Exception ex)
@@ -502,7 +746,7 @@ internal sealed class FilesView : UserControl
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { navigationVersion++; navigation?.Cancel(); placesCancellation.Cancel(); icons.Dispose(); }
+        if (disposing) { navigationVersion++; navigation?.Cancel(); placesCancellation.Cancel(); operationStop.Cancel(); icons.Dispose(); }
         base.Dispose(disposing);
     }
 

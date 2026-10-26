@@ -103,7 +103,7 @@ internal static class Program
                         await form.EmbeddedSmokeTestAsync();
                         await form.ApplicationSmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, owned application window, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, owned application window, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

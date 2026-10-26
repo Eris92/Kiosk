@@ -2792,6 +2792,65 @@ internal sealed partial class KioskForm : Form
             await stale.WaitAsync(TimeSpan.FromSeconds(10));
             if (files.FolderForSmokeTest != first || !files.ItemsForSmokeTest.SequenceEqual(["visible.txt"]))
                 throw new InvalidOperationException("A stale folder result replaced the current folder.");
+
+            // Exercise the real file commands on an isolated tree, including their impersonated worker path.
+            var source = Path.Combine(root, "source");
+            var nested = Path.Combine(source, "nested");
+            var destination = Path.Combine(root, "destination");
+            Directory.CreateDirectory(nested);
+            Directory.CreateDirectory(Path.Combine(source, "empty"));
+            Directory.CreateDirectory(destination);
+            File.WriteAllText(Path.Combine(nested, "data.txt"), "Kiosk file work");
+            var hiddenSource = Path.Combine(nested, "hidden.txt");
+            File.WriteAllText(hiddenSource, "hidden");
+            File.SetAttributes(hiddenSource, File.GetAttributes(hiddenSource) | FileAttributes.Hidden);
+            await files.NavigateForSmokeTestAsync(root);
+            if (!await files.PasteForSmokeTestAsync([source], destination, move: false) ||
+                File.ReadAllText(Path.Combine(destination, "source", "nested", "data.txt")) != "Kiosk file work" ||
+                (File.GetAttributes(Path.Combine(destination, "source", "nested", "hidden.txt")) & FileAttributes.Hidden) == 0)
+                throw new InvalidOperationException("Background folder copy failed.");
+            if (!await files.ZipForSmokeTestAsync([source])) throw new InvalidOperationException("Background ZIP failed.");
+            var archive = Path.Combine(root, "source.zip");
+            if (!File.Exists(archive) || !await files.UnzipForSmokeTestAsync(archive) ||
+                File.ReadAllText(Path.Combine(root, "source (2)", "source", "nested", "data.txt")) != "Kiosk file work" ||
+                !Directory.Exists(Path.Combine(root, "source (2)", "source", "empty")))
+                throw new InvalidOperationException("Background ZIP extraction failed.");
+            var unsafeArchive = Path.Combine(root, "unsafe.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(unsafeArchive, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                using (var writer = new StreamWriter(zip.CreateEntry("safe.txt").Open())) writer.Write("temporary");
+                zip.CreateEntry("../outside.txt");
+            }
+            if (await files.UnzipForSmokeTestAsync(unsafeArchive) || File.Exists(Path.Combine(root, "outside.txt")) ||
+                Directory.Exists(Path.Combine(root, "unsafe")) || Directory.GetDirectories(root, "unsafe.partial-*").Length != 0)
+                throw new InvalidOperationException("Unsafe ZIP path or partial extraction was accepted.");
+            if (!await files.PasteForSmokeTestAsync([source], destination, move: true) || Directory.Exists(source) ||
+                !await files.DeleteForSmokeTestAsync([Path.Combine(destination, "source (2)")]) ||
+                Directory.Exists(Path.Combine(destination, "source (2)")))
+                throw new InvalidOperationException("Background move or delete failed.");
+
+            // A pending copy must leave the UI free to navigate, then finish in the captured destination.
+            entered.Reset(); release.Reset();
+            Volatile.Write(ref hold, 1);
+            var copying = files.PasteForSmokeTestAsync([archive], destination, move: false);
+            if (!await Task.Run(() => entered.Wait(5000))) throw new InvalidOperationException("Slow file operation test did not start.");
+            Volatile.Write(ref hold, 0);
+            await files.NavigateForSmokeTestAsync(first).WaitAsync(TimeSpan.FromSeconds(10));
+            release.Set();
+            if (!await copying.WaitAsync(TimeSpan.FromSeconds(10)) || files.FolderForSmokeTest != first ||
+                !File.Exists(Path.Combine(destination, "source.zip")))
+                throw new InvalidOperationException("A file operation blocked navigation or lost its destination.");
+
+            entered.Reset(); release.Reset();
+            Volatile.Write(ref hold, 1);
+            var cancelled = files.PasteForSmokeTestAsync([archive], destination, move: false);
+            if (!await Task.Run(() => entered.Wait(5000))) throw new InvalidOperationException("Cancellation test did not start.");
+            files.Dispose(); // A closed card session must not publish a queued file operation.
+            release.Set();
+            if (await cancelled.WaitAsync(TimeSpan.FromSeconds(10)) ||
+                File.Exists(Path.Combine(destination, "source (2).zip")) ||
+                Directory.EnumerateFileSystemEntries(destination, "*.partial-*").Any())
+                throw new InvalidOperationException("File work continued after its view was closed.");
         }
         finally
         {
