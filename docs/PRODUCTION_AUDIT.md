@@ -160,6 +160,8 @@ Broker FIDO odczytuje własny PID i numer sesji Windows raz na proces, zwalniaj�
 
 Menedżer „Konfiguracje Kiosków” tworzy nową konfigurację w katalogu tymczasowym na tym samym udziale i pokazuje ją dopiero po udanym przeniesieniu. Kopiuje drzewo iteracyjnie i odrzuca dowiązania zamiast przechodzić poza wybraną konfigurację lub tworzyć niepełną kopię. Test tworzy kopię z zasobem w podfolderze, wymusza błąd kopiowania przez zablokowany plik i sprawdza usunięcie katalogu tymczasowego. Dowiązanie sprawdza, jeżeli system pozwala je utworzyć bez podniesienia uprawnień.
 
+Eksport miesięcznych statystyk zapisuje CSV wiersz po wierszu z kopii dziennika JSONL w kolejności dopisania zdarzeń. Nie tworzy już w pamięci listy całego miesiąca i drugiej kopii jako tekst CSV. Oba pliki wynikowe pochodzą z tej samej migawki; błąd odczytu kopii przerywa publikację zamiast wystawiać pusty CSV. Format pól, ochrona przed formułami Excela oraz atomowe zastąpienie gotowych plików pozostają sprawdzane przez self-test z uszkodzonym wierszem między poprawnymi zdarzeniami.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

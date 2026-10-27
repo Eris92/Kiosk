@@ -121,24 +121,35 @@ internal static class Stats
 
     /// <summary>One month's file (unreadable lines and files are skipped).</summary>
     internal static List<Entry> ReadFile(string file, CancellationToken cancellation = default)
+        => FileEntries(file, cancellation).ToList();
+
+    private static IEnumerable<Entry> FileEntries(string file, CancellationToken cancellation, bool tolerateReadErrors = true)
     {
-        var list = new List<Entry>();
         cancellation.ThrowIfCancellationRequested();
-        try
+        FileStream? stream = null;
+        try { stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
+        catch (IOException) { if (!tolerateReadErrors) throw; }
+        catch (UnauthorizedAccessException) { if (!tolerateReadErrors) throw; }
+        if (stream == null) yield break;
+        using (stream)
+        using (var reader = new StreamReader(stream))
         {
-            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream);
-            while (reader.ReadLine() is { } line)
+            while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
+                string? line = null;
+                bool failed = false;
+                try { line = reader.ReadLine(); }
+                catch (IOException) { if (!tolerateReadErrors) throw; failed = true; }
+                catch (UnauthorizedAccessException) { if (!tolerateReadErrors) throw; failed = true; }
+                if (failed || line == null) break;
                 if (line.Length == 0) continue;
-                try { if (JsonSerializer.Deserialize<Entry>(line) is { } e) list.Add(e); }
+                Entry? entry = null;
+                try { entry = JsonSerializer.Deserialize<Entry>(line); }
                 catch (JsonException) { }
+                if (entry != null) yield return entry;
             }
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        return list;
     }
 
     // ------------------------------------------------------------------ the export folder's account
@@ -174,23 +185,43 @@ internal static class Stats
         finally { Array.Clear(plain); }
     }
 
+    private const string CsvHeader = "Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n";
+
+    private static string CsvCell(string s)
+    {
+        // Quotes delimit CSV fields, but Excel still evaluates a field whose first visible character is a formula marker.
+        // A leading tab inside the quoted field keeps it as text when the CSV is opened in Excel.
+        var first = 0;
+        while (first < s.Length && (char.IsWhiteSpace(s[first]) || char.IsControl(s[first]) || s[first] == '\uFEFF')) first++;
+        if ((s.Length > 0 && s[0] is '\t' or '\r' or '\n' or '\0') ||
+            (first < s.Length && s[first] is '=' or '+' or '-' or '@' or '＝' or '＋' or '－' or '＠')) s = "\t" + s;
+        return "\"" + s.Replace("\"", "\"\"") + "\"";
+    }
+
+    private static void WriteCsvRow(TextWriter output, Entry e)
+    {
+        output.Write(CsvCell(e.Time.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")));
+        output.Write(';'); output.Write(CsvCell(e.Pc));
+        output.Write(';'); output.Write(CsvCell(e.Kind));
+        output.Write(';'); output.Write(CsvCell(e.Name));
+        output.Write(';'); output.Write(CsvCell(e.Category));
+        output.Write(';'); output.Write(CsvCell(e.Who));
+        output.Write("\r\n");
+    }
+
     /// <summary>A table for Excel (semicolon, as Polish Excel expects).</summary>
     internal static string Csv(IEnumerable<Entry> entries)
     {
-        static string Cell(string s)
-        {
-            // Quotes delimit CSV fields, but Excel still evaluates a field whose first visible character is a formula marker.
-            // A leading tab inside the quoted field keeps it as text when the CSV is opened in Excel.
-            var first = 0;
-            while (first < s.Length && (char.IsWhiteSpace(s[first]) || char.IsControl(s[first]) || s[first] == '\uFEFF')) first++;
-            if ((s.Length > 0 && s[0] is '\t' or '\r' or '\n' or '\0') ||
-                (first < s.Length && s[first] is '=' or '+' or '-' or '@' or '＝' or '＋' or '－' or '＠')) s = "\t" + s;
-            return "\"" + s.Replace("\"", "\"\"") + "\"";
-        }
-        var text = new StringBuilder("Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n");
-        foreach (var e in entries.OrderBy(e => e.Time))
-            text.Append(Cell(e.Time.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(';').Append(Cell(e.Pc)).Append(';').Append(Cell(e.Kind)).Append(';')
-                .Append(Cell(e.Name)).Append(';').Append(Cell(e.Category)).Append(';').Append(Cell(e.Who)).Append("\r\n");
-        return text.ToString();
+        using var output = new StringWriter();
+        output.Write(CsvHeader);
+        foreach (var entry in entries.OrderBy(e => e.Time)) WriteCsvRow(output, entry);
+        return output.ToString();
+    }
+
+    /// <summary>Export one service log in append order, without retaining the month's entries or CSV in memory.</summary>
+    internal static void WriteCsvFile(string file, TextWriter output)
+    {
+        output.Write(CsvHeader);
+        foreach (var entry in FileEntries(file, CancellationToken.None, tolerateReadErrors: false)) WriteCsvRow(output, entry);
     }
 }

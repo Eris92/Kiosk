@@ -226,7 +226,8 @@ internal static class CentralConfig
         try
         {
             File.Copy(source, jsonTemporary);
-            File.WriteAllText(csvTemporary, Stats.Csv(Stats.ReadFile(source)), new UTF8Encoding(true));
+            using (var writer = new StreamWriter(csvTemporary, append: false, new UTF8Encoding(true)))
+                Stats.WriteCsvFile(jsonTemporary, writer); // The CSV and JSON describe the same copied snapshot.
             File.Move(jsonTemporary, jsonDestination, true);
             File.Move(csvTemporary, csvDestination, true);
         }

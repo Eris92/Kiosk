@@ -157,13 +157,23 @@ internal static class Program
                         File.Exists(Path.Combine(exportRoot, abandonedTemporary)) ||
                         !File.Exists(Path.Combine(exportRoot, unrelatedTemporary)))
                         throw new InvalidOperationException("Statistics export removed a file outside its own expired months.");
-                    File.WriteAllText(sourceFile, JsonSerializer.Serialize(new Stats.Entry { Time = month, Kind = Stats.Option, Name = "published" }) + Environment.NewLine);
+                    var publishedEntries = new[]
+                    {
+                        new Stats.Entry { Time = month.AddSeconds(-1), Kind = Stats.SignIn, Name = "published" },
+                        new Stats.Entry { Time = month, Kind = Stats.Option, Name = "=SUM(1;2)" }
+                    };
+                    File.WriteAllLines(sourceFile,
+                    [
+                        JsonSerializer.Serialize(publishedEntries[0]), "{broken json",
+                        JsonSerializer.Serialize(publishedEntries[1])
+                    ]);
                     CentralConfig.PublishStatsMonth(sourceFile, exportRoot, "PC1", currentMonth);
                     var publishedJson = File.ReadAllText(Path.Combine(exportRoot, currentMonth + ".jsonl"));
                     var publishedCsv = File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"));
                     if (!publishedJson.Contains("published", StringComparison.Ordinal) ||
-                        !publishedCsv.Contains("published", StringComparison.Ordinal))
-                        throw new InvalidOperationException("Statistics export did not publish both files.");
+                        publishedCsv != Stats.Csv(Stats.ReadFile(Path.Combine(exportRoot, currentMonth + ".jsonl"))) ||
+                        publishedCsv != Stats.Csv(publishedEntries))
+                        throw new InvalidOperationException("Streaming statistics export changed CSV contents or lost an event.");
                     try
                     {
                         CentralConfig.PublishStatsMonth(Path.Combine(exportRoot, "missing.jsonl"), exportRoot, "PC1", currentMonth);
