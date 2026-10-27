@@ -184,6 +184,8 @@ W starszym `SelfService/CardBroker` polecenia `park` i `open` do okna strony jed
 
 Reguła dozwolonych domen przeglądarki porównuje nazwy hostów przez `OrdinalIgnoreCase`, bez zmiany ich zapisu na małe litery. Test obejmuje wielkie litery, kropkę końcową, poddomeny oraz hosty podszywające się przez prefiks lub dopisany sufiks. To sprawdza porównanie adresów; przejście przez faktyczne przekierowania SSO nadal wymaga testu na docelowym stanowisku.
 
+Odczyt odpowiedzi usługi karty jest ograniczony do 1 MiB znaków, a polecenia strony uruchomionej w koncie użytkownika do 65 535 znaków; sprawdzenie limitu odbywa się podczas odbierania danych, przed deserializacją JSON. Dwuznakowa odpowiedź okna strony ma limit 16 znaków. Odczyty zachowują dotychczasowe terminy anulowania. Self-test sprawdza granicę długości z CRLF oraz odrzucenie za długich danych także wtedy, gdy nadawca pozostaje podłączony i nie kończy wiersza; rzeczywiste operacje z kartą pozostają do sprawdzenia na stanowisku.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

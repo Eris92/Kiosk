@@ -93,7 +93,8 @@ internal static class Program
                 pipeName = "KioskImmediateReply-" + Guid.NewGuid().ToString("N");
                 using (var replyServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
                     System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous, 4096, 4096))
-                using (var replyClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut))
+                using (var replyClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.PipeOptions.Asynchronous))
                 {
                     var accepting = replyServer.WaitForConnectionAsync();
                     replyClient.Connect(1000);
@@ -103,8 +104,50 @@ internal static class Program
                     replyServer.Flush();
                     replyServer.Dispose();
                     using var replyReader = new StreamReader(replyClient);
-                    if (replyReader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult() != expected)
+                    if (BoundedPipeLine.Read(replyReader, 4096, TimeSpan.FromSeconds(2)) != expected)
                         throw new InvalidOperationException("A buffered pipe reply was lost when the server closed.");
+                }
+                var largestPageCommand = new string('x', 65535);
+                using (var lineReader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(largestPageCommand + "\r\n"))))
+                    if (BoundedPipeLine.Read(lineReader, 65535, TimeSpan.FromSeconds(2)) != largestPageCommand)
+                        throw new InvalidOperationException("A valid page command was truncated.");
+                using (var lineReader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(largestPageCommand + "x\n"))))
+                {
+                    try
+                    {
+                        BoundedPipeLine.Read(lineReader, 65535, TimeSpan.FromSeconds(2));
+                        throw new InvalidOperationException("An oversized page command was accepted.");
+                    }
+                    catch (InvalidDataException) { }
+                }
+                pipeName = "KioskOversizedLine-" + Guid.NewGuid().ToString("N");
+                using (var oversizedServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
+                using (var oversizedClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.PipeOptions.Asynchronous))
+                {
+                    var accepting = oversizedServer.WaitForConnectionAsync();
+                    oversizedClient.Connect(1000);
+                    if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Oversized-line pipe did not connect.");
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(largestPageCommand + "x");
+                    var sending = oversizedClient.WriteAsync(bytes, 0, bytes.Length);
+                    using var lineReader = new StreamReader(oversizedServer, System.Text.Encoding.UTF8, false, 4096, leaveOpen: true);
+                    try
+                    {
+                        BoundedPipeLine.Read(lineReader, 65535, TimeSpan.FromSeconds(5));
+                        throw new InvalidOperationException("An oversized pipe line without a terminator was accepted.");
+                    }
+                    catch (InvalidDataException) { }
+                    if (!sending.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Oversized-line sender remained blocked.");
+                }
+                using (var lineReader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(new string('x', 1024 * 1024 + 1) + "\n"))))
+                {
+                    try
+                    {
+                        CardService.ReadLine(lineReader, TimeSpan.FromSeconds(2));
+                        throw new InvalidOperationException("An oversized card service response was accepted.");
+                    }
+                    catch (InvalidDataException) { }
                 }
                 var configSnapshot = Path.Combine(Path.GetTempPath(), "kiosk-config-test-" + Guid.NewGuid().ToString("N") + ".json");
                 try

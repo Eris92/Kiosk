@@ -102,9 +102,8 @@ internal static class CardPageHost
                 // account could otherwise open any site as the person.
                 if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var caller) || caller != kiosk) { Audit.Write("card_page_rejected", caller.ToString()); continue; }
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                var line = reader.ReadLineAsync(deadline.Token).GetAwaiter().GetResult();
-                var command = line is { Length: < 65536 } ? JsonSerializer.Deserialize<Command>(line) : null;
+                var line = BoundedPipeLine.Read(reader, 65535, TimeSpan.FromSeconds(10));
+                var command = line == null ? null : JsonSerializer.Deserialize<Command>(line);
                 var answer = command?.Op switch
                 {
                     "open" when Uri.TryCreate(command.Url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps =>
@@ -136,7 +135,7 @@ internal static class CardPageHost
     {
         try
         {
-            using var client = new NamedPipeClientStream(".", PipeName(Environment.ProcessId, host), PipeDirection.InOut);
+            using var client = new NamedPipeClientStream(".", PipeName(Environment.ProcessId, host), PipeDirection.InOut, PipeOptions.Asynchronous);
             client.Connect(2000);
             // Only the window this Kiosk started answers (a program that took the name first never gets the page).
             if (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var server) || server != host) return false;
@@ -144,10 +143,9 @@ internal static class CardPageHost
             try { client.Write(bytes); client.WriteByte((byte)'\n'); client.Flush(); }
             finally { CryptographicOperations.ZeroMemory(bytes); }
             using var reader = new StreamReader(client, Encoding.UTF8);
-            var read = reader.ReadLineAsync();
-            return read.Wait(5000) && read.Result == "OK";
+            return BoundedPipeLine.Read(reader, 16, TimeSpan.FromSeconds(5)) == "OK";
         }
-        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or AggregateException)
+        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or OperationCanceledException)
         {
             Audit.Write("card_page_send_failed", op + ": " + ex.Message);
             return false;

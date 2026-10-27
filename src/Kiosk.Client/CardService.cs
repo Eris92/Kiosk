@@ -22,6 +22,7 @@ internal static class CardService
     internal const string ServiceName = "KioskCard";
     internal const string Argument = "--card-service";
     private const string PipeName = "KioskCard";
+    private const int MaxResponseChars = 1024 * 1024;
 
     internal sealed class Request
     {
@@ -88,8 +89,7 @@ internal static class CardService
 
     internal static string? ReadLine(StreamReader reader, TimeSpan timeout)
     {
-        using var cancellation = new CancellationTokenSource(timeout);
-        return reader.ReadLineAsync(cancellation.Token).GetAwaiter().GetResult();
+        return BoundedPipeLine.Read(reader, MaxResponseChars, timeout);
     }
 
     // ------------------------------------------------------------------ the work
