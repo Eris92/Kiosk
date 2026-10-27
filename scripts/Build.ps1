@@ -49,7 +49,8 @@ try {
     & dotnet publish $configTool -c Release -r win-x64 --self-contained false -o $staging --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Building the configuration manager failed; the previous build was retained.' }
     $newsEditor = Join-Path $repository 'src\Kiosk.NewsEditor\KioskKomunikaty.csproj'
-    & dotnet publish $newsEditor -c Release -r win-x64 --self-contained false -o (Join-Path $staging 'news-example') --nologo
+    $editorSelfTest = if ($SelfTest) { 'true' } else { 'false' }
+    & dotnet publish $newsEditor -c Release -r win-x64 --self-contained false -o (Join-Path $staging 'news-example') --nologo "-p:KioskSelfTest=$editorSelfTest"
     if ($LASTEXITCODE -ne 0) { throw 'Building the news editor failed; the previous build was retained.' }
     $fido = Join-Path $repository 'src\Kiosk.FidoBroker\FidoRun.csproj'
     & dotnet build $fido -c Release -o (Join-Path $staging 'fido') --nologo

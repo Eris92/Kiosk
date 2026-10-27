@@ -15,6 +15,9 @@
     <!-- Designer serialization of public control properties: the windows are built in code, never in the designer. -->
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(KioskSelfTest)' == 'true'">
+    <DefineConstants>$(DefineConstants);KIOSK_SELF_TEST</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <None Include="KioskKomunikaty.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

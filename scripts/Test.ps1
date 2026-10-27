@@ -20,6 +20,16 @@ try {
     Get-Content -LiteralPath $result
     if ($process.ExitCode -ne 0) { throw "Embedded UI self-test failed: $($process.ExitCode)." }
 } finally { $process.Dispose() }
+$newsDirectory = Join-Path $directory 'news-example'
+$newsResult = Join-Path $newsDirectory 'self-test-news.txt'
+if (Test-Path -LiteralPath $newsResult) { Remove-Item -LiteralPath $newsResult -Force }
+$newsProcess = Start-Process -FilePath (Join-Path $newsDirectory 'KioskKomunikaty.exe') -ArgumentList '--self-test' -WorkingDirectory $newsDirectory -WindowStyle Hidden -PassThru
+try {
+    if (-not $newsProcess.WaitForExit($TimeoutSeconds * 1000)) { $newsProcess.Kill(); throw 'News editor self-test timed out.' }
+    if (-not (Test-Path -LiteralPath $newsResult)) { throw 'News editor self-test did not produce its result file.' }
+    Get-Content -LiteralPath $newsResult
+    if ($newsProcess.ExitCode -ne 0) { throw "News editor self-test failed: $($newsProcess.ExitCode)." }
+} finally { $newsProcess.Dispose() }
 $invalidConfig = Join-Path $directory 'invalid-client.json'
 try {
     [IO.File]::WriteAllText($invalidConfig, '{"BrowserUrl":"file:///C:/Windows"}')
