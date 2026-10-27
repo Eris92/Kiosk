@@ -414,18 +414,24 @@ internal sealed class FilesView : UserControl
 
     private static void ZipFolder(ZipArchive zip, string folder, string root, CancellationToken cancellation)
     {
-        cancellation.ThrowIfCancellationRequested();
-        if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("Nie można kompresować dowiązania: " + folder);
-        zip.CreateEntry(Path.GetRelativePath(root, folder).Replace('\\', '/') + "/");
-        foreach (var file in Directory.EnumerateFiles(folder))
+        var pending = new Stack<string>();
+        pending.Push(folder);
+        while (pending.TryPop(out var current))
         {
             cancellation.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Nie można kompresować dowiązania: " + file);
-            AddZipFile(zip, file, Path.GetRelativePath(root, file), cancellation);
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Nie można kompresować dowiązania: " + current);
+            zip.CreateEntry(Path.GetRelativePath(root, current).Replace('\\', '/') + "/");
+            foreach (var file in Directory.EnumerateFiles(current))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Nie można kompresować dowiązania: " + file);
+                AddZipFile(zip, file, Path.GetRelativePath(root, file), cancellation);
+            }
+            foreach (var sub in Directory.EnumerateDirectories(current))
+            { cancellation.ThrowIfCancellationRequested(); pending.Push(sub); }
         }
-        foreach (var sub in Directory.EnumerateDirectories(folder)) ZipFolder(zip, sub, root, cancellation);
     }
 
     private static void AddZipFile(ZipArchive zip, string path, string name, CancellationToken cancellation)
