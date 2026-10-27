@@ -146,6 +146,8 @@ Analiza nieużywanych elementów w czterech projektach .NET wskazała trzy param
 
 Skanowanie procesów przy pierwszym logowaniu, restarcie watchdogu i przekazaniu przeglądarki zwalnia teraz wszystkie obiekty `Process`, również te pominięte po wcześniejszym trafieniu. Broker przy zamykaniu programów użytkownika pobiera własny PID tylko raz i zwalnia jego obiekt; uchwyt procesu użyty do instalacji haka klawisza Windows także jest zwalniany. Wykrywanie nowej sesji i decyzja o wznowieniu Kiosku zachowują dotychczasowe warunki.
 
+Monitor okien osadzonych sprawdza proces o danym PID tylko raz w obrębie pojedynczej enumeracji okien. Dotyczy to zarówno kontroli zadania Windows, jak i rozpoznawania programu uruchomionego poza zadaniem. Program bez dostępu do nazwy obcego procesu jest pomijany zamiast przerywać skan; kolejny przebieg ponownie sprawdza wszystkie PID, więc cache nie przeżywa zmiany procesów.
+
 Podczas przebudowy menu samoobsługowego ikona panelu jest ustalana tylko przy utworzeniu panelu, a nie ponownie dla każdego należącego do niego kafelka. Kolejne kafelki używają tej samej ikony jak wcześniej, bez powtarzania przeszukiwania listy akcji.
 
 Znormalizowana ścieżka kategorii akcji jest obliczana przy jej utworzeniu i aktualizowana również dla kopii rekordu ze zmienioną kategorią. Układ kafelków zapisuje ich kolor i glif przy przebudowie, zamiast ponownie parsować je przy każdym odmalowaniu. Zmiana kategorii lub akcentu w Konfiguracji wymusza przebudowę menu i kafelków nawet wtedy, gdy lista akcji nie uległa zmianie. Aktywny self-test sprawdza normalizację ścieżki po skopiowaniu akcji.

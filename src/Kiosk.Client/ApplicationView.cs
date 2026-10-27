@@ -357,20 +357,35 @@ internal sealed class ApplicationView : Panel
     private List<IntPtr> UntrackedWindows()
     {
         var found = new List<IntPtr>();
-        AppNative.EnumWindows((window, _) =>
+        var matchingProcesses = new Dictionary<uint, bool>();
+        var openedProcesses = new List<System.Diagnostics.Process>();
+        try
         {
-            if (untrackedBefore.Contains(window) || hostedWindows.Contains(window) || !AppNative.IsWindowVisible(window)) return true;
-            if (AppNative.GetWindow(window, 4) != IntPtr.Zero || (AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true;
-            AppNative.GetWindowThreadProcessId(window, out var pid);
-            if (pid == Environment.ProcessId) return true;   // The Kiosk's own windows, when the program is the Kiosk itself.
-            // The person's page (the Kiosk again, as the person) never hands over: only its own process counts, so a
-            // second page opened quickly never takes the first one's window (or the Konfiguracja window).
-            if (AlwaysOverlay && untrackedPid != 0 && pid != untrackedPid) return true;
-            try { using var process = System.Diagnostics.Process.GetProcessById((int)pid); if (process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase)) found.Add(window); }
-            catch (ArgumentException) { }
-            catch (InvalidOperationException) { }
-            return true;
-        }, IntPtr.Zero);
+            AppNative.EnumWindows((window, _) =>
+            {
+                if (untrackedBefore.Contains(window) || hostedWindows.Contains(window) || !AppNative.IsWindowVisible(window)) return true;
+                if (AppNative.GetWindow(window, 4) != IntPtr.Zero || (AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true;
+                AppNative.GetWindowThreadProcessId(window, out var pid);
+                if (pid == Environment.ProcessId) return true;   // The Kiosk's own windows, when the program is the Kiosk itself.
+                // The person's page (the Kiosk again, as the person) never hands over: only its own process counts, so a
+                // second page opened quickly never takes the first one's window (or the Konfiguracja window).
+                if (AlwaysOverlay && untrackedPid != 0 && pid != untrackedPid) return true;
+                if (!matchingProcesses.TryGetValue(pid, out var matches))
+                {
+                    try
+                    {
+                        var process = System.Diagnostics.Process.GetProcessById((int)pid);
+                        openedProcesses.Add(process); // Reuse one process object for its windows in this scan.
+                        matches = process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception) { matches = false; }
+                    matchingProcesses[pid] = matches;
+                }
+                if (matches) found.Add(window);
+                return true;
+            }, IntPtr.Zero);
+        }
+        finally { foreach (var process in openedProcesses) process.Dispose(); }
         return found;
     }
 
@@ -390,17 +405,29 @@ internal sealed class ApplicationView : Panel
     {
         var found = new List<IntPtr>();
         if (job == null) return found;
-        AppNative.EnumWindows((window, _) =>
+        var ownedProcesses = new Dictionary<uint, bool>();
+        var openedProcesses = new List<SafeFileHandle>();
+        try
         {
-            if (!AppNative.IsWindowVisible(window)) return true;
-            if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) return true;
-            if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true; // WS_EX_TOOLWINDOW
-            AppNative.GetWindowThreadProcessId(window, out var pid);
-            using var process = AppNative.OpenProcess(0x1000, false, pid);
-            if (process.IsInvalid || !AppNative.IsProcessInJob(process, job, out var owned) || !owned) return true;
-            found.Add(window);
-            return true;
-        }, IntPtr.Zero);
+            AppNative.EnumWindows((window, _) =>
+            {
+                if (!AppNative.IsWindowVisible(window)) return true;
+                if (!includeOwned && AppNative.GetWindow(window, 4) != IntPtr.Zero) return true;
+                if ((AppNative.GetWindowLongPtr(window, -20).ToInt64() & 0x80) != 0) return true; // WS_EX_TOOLWINDOW
+                AppNative.GetWindowThreadProcessId(window, out var pid);
+                if (!ownedProcesses.TryGetValue(pid, out var owned))
+                {
+                    var process = AppNative.OpenProcess(0x1000, false, pid);
+                    openedProcesses.Add(process); // Reuse this handle for the process's other windows in this scan.
+                    owned = !process.IsInvalid && AppNative.IsProcessInJob(process, job, out var member) && member;
+                    ownedProcesses[pid] = owned;
+                }
+                if (!owned) return true;
+                found.Add(window);
+                return true;
+            }, IntPtr.Zero);
+        }
+        finally { foreach (var process in openedProcesses) process.Dispose(); }
         return found;
     }
 
