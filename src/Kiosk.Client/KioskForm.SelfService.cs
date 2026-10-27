@@ -241,42 +241,51 @@ internal sealed partial class KioskForm
 
     /// <summary>The page open as the signed-in person, over the Kiosk's screen; null = the start screen.</summary>
     private ApplicationView? cardPage;
+    private readonly CardPageCommandQueue cardPageCommands = new();
+    private int cardPageRequestVersion;
 
     /// <summary>A Szybka pomoc page as the signed-in person (their account, SSO): a clean page inside the Kiosk.</summary>
     private bool OpenPageAsCardPerson(string title, string url, string side = "")
     {
         if (cardLogon == null) return false;
-        _ = OpenCardPageAsync(cardLogon, title, url, side);
+        CloseCardPage();
+        _ = OpenCardPageAsync(cardLogon, title, url, side, cardPageRequestVersion);
         return true;
     }
 
-    private async Task OpenCardPageAsync(UserLogon logon, string title, string url, string side = "")
+    private async Task OpenCardPageAsync(UserLogon logon, string title, string url, string side, int requestVersion)
     {
-        CloseCardPage();
+        bool Latest() => !IsDisposed && cardPageRequestVersion == requestVersion && cardLogon == logon;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         helpBrowser?.Close();
         // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.
-        if (reusableStarting is { IsCompleted: false } starting) { await starting; if (cardLogon != logon) return; }
+        if (reusableStarting is { IsCompleted: false } starting) { await starting; if (!Latest()) return; }
+        if (!Latest()) return;
         if (reusablePage is { Started: true } reusable && reusableHost > 0 && reusable.RefreshHostedWindow())
         {
             ShowSideFor(side);
             var domains = HelpBrowserForm.SignInDomains.Concat(HelpPageDomains()).Append(host).ToArray();
             int seconds = config.HelpCloseSeconds, hostPid = reusableHost;
             bool onlyListed = config.BrowserOnlyBookmarks;
-            if (await Task.Run(() => CardPageHost.Send(hostPid, "open", title, url, seconds, domains, onlyListed)) && reusablePage == reusable && cardLogon == logon)
-            {
-                cardPage = reusable;
-                if (visibleView != desktop) ShowView(desktop);
-                desktop.ShowPage(reusable);
-                desktop.SetPageTitle(title);
-                reusable.BringToUser();
-                desktop.RefreshSide();
-                Audit.Write("selfservice_page_as_person", "reused");
-                return;
-            }
+            bool HostCurrent() => Latest() && reusablePage == reusable && reusableHost == hostPid;
+            var opened = await cardPageCommands.OpenAsync(
+                () => CardPageHost.Send(hostPid, "open", title, url, seconds, domains, onlyListed),
+                () => CardPageHost.Send(hostPid, "park"), HostCurrent, () =>
+                {
+                    cardPage = reusable;
+                    if (visibleView != desktop) ShowView(desktop);
+                    desktop.ShowPage(reusable);
+                    desktop.SetPageTitle(title);
+                    reusable.BringToUser();
+                    desktop.RefreshSide();
+                    Audit.Write("selfservice_page_as_person", "reused");
+                });
+            if (!Latest()) return;
+            if (opened) return;
             // It did not answer: this page (and the next ones) in a program of its own, as before.
             DropReusablePage();
         }
+        if (!Latest()) return;
         // The second element first: the person's page is laid over the left part only.
         ShowSideFor(side);
         var page = new ApplicationView { AlwaysOverlay = true };
@@ -294,11 +303,13 @@ internal sealed partial class KioskForm
         try
         {
             await page.StartAsync(entry, logon);
+            if (!Latest()) return;
             if (cardPage == page) { page.BringToUser(); desktop.RefreshSide(); }   // Now its window can leave room for the element beside it.
             Audit.Write("selfservice_page_as_person");
         }
         catch (Exception ex)
         {
+            if (!Latest()) return;
             Audit.Write("selfservice_page_as_person_error", ex.Message);
             if (cardPage == page) CloseCardPage();
             notice = "Nie udało się otworzyć strony na Twoim koncie: " + ex.Message;
@@ -309,6 +320,7 @@ internal sealed partial class KioskForm
     /// <summary>Back to the start screen: the page closes (the card session's own window only leaves the screen).</summary>
     private void CloseCardPage()
     {
+        cardPageRequestVersion++; // A pending open must not restore a page after Close or sign-out.
         if (cardPage is not { } page) return;
         cardPage = null;
         if (desktop.Page == page) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
@@ -317,7 +329,7 @@ internal sealed partial class KioskForm
         if (HelpBrowserForm.GetProp(page.HostedWindow, HelpBrowserForm.ParkedProperty) == IntPtr.Zero)
         {
             var hostPid = reusableHost;
-            _ = Task.Run(() => CardPageHost.Send(hostPid, "park"));
+            _ = cardPageCommands.ParkAsync(() => CardPageHost.Send(hostPid, "park"));
         }
     }
 
@@ -413,5 +425,38 @@ internal sealed partial class KioskForm
         // The card sign-in waits on Strona główna all the time (as in build-176); the button only signs out.
         if (cardLogon != null) EndCardSession("selfservice_signed_out");
         RefreshChrome();
+    }
+}
+
+/// <summary>Orders commands to one reusable card page; a stale open is parked before the next request runs.</summary>
+internal sealed class CardPageCommandQueue
+{
+    private readonly SemaphoreSlim gate = new(1, 1);
+
+    internal async Task<bool> OpenAsync(Func<bool> open, Func<bool> park, Func<bool> current, Action onOpened)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (!current()) return false;
+            var opened = await Task.Run(open);
+            if (current())
+            {
+                if (opened) onOpened(); // Commit on the UI thread before another close can interleave.
+                return opened;
+            }
+            if (opened) await Task.Run(park);
+            return false;
+        }
+        catch (Exception ex) { Audit.Write("card_page_command_failed", ex.Message); return false; }
+        finally { gate.Release(); }
+    }
+
+    internal async Task ParkAsync(Func<bool> park)
+    {
+        await gate.WaitAsync();
+        try { await Task.Run(park); }
+        catch (Exception ex) { Audit.Write("card_page_park_failed", ex.Message); }
+        finally { gate.Release(); }
     }
 }

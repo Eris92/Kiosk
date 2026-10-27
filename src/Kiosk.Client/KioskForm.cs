@@ -2533,6 +2533,7 @@ internal sealed partial class KioskForm : Form
 
     internal async Task EmbeddedSmokeTestAsync()
     {
+        await CardPageCommandSmokeTestAsync();
         if (BrowserView.SecureCredentialOrigin("https://help.example:8443/private") != "https://help.example:8443" ||
             BrowserView.SecureCredentialOrigin("http://help.example/") != null ||
             BrowserView.SecureCredentialOrigin("https://user:password@help.example/") != null)
@@ -2758,6 +2759,55 @@ internal sealed partial class KioskForm : Form
         CloseAllSessions("fresh_notes_smoke_test");
         identifyCard = IdentifyPresentCard;
         cardPresent = () => reader.Snapshot(config.ReaderName) != null;
+    }
+
+    private static async Task CardPageCommandSmokeTestAsync()
+    {
+        var commands = new CardPageCommandQueue();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new List<string>();
+        var version = 1;
+        var old = commands.OpenAsync(() =>
+        {
+            order.Add("open-old");
+            entered.TrySetResult();
+            return release.Task.Wait(TimeSpan.FromSeconds(5));
+        }, () => { order.Add("park-old"); return true; }, () => version == 1, () => order.Add("show-old"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            version = 2;
+            var next = commands.OpenAsync(() => { order.Add("open-new"); return true; },
+                () => { order.Add("park-new"); return true; }, () => version == 2, () => order.Add("show-new"));
+            release.TrySetResult();
+            if (await old.WaitAsync(TimeSpan.FromSeconds(8)) || !await next.WaitAsync(TimeSpan.FromSeconds(8)) ||
+                !order.SequenceEqual(["open-old", "park-old", "open-new", "show-new"]))
+                throw new InvalidOperationException("A late card page open hid or replaced the newer page.");
+        }
+        finally { release.TrySetResult(); }
+
+        order.Clear();
+        var parkEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePark = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var parking = commands.ParkAsync(() =>
+        {
+            order.Add("park-current");
+            parkEntered.TrySetResult();
+            return releasePark.Task.Wait(TimeSpan.FromSeconds(5));
+        });
+        try
+        {
+            await parkEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var opening = commands.OpenAsync(() => { order.Add("open-next"); return true; },
+                () => { order.Add("park-next"); return true; }, () => version == 2, () => order.Add("show-next"));
+            releasePark.TrySetResult();
+            await parking.WaitAsync(TimeSpan.FromSeconds(8));
+            if (!await opening.WaitAsync(TimeSpan.FromSeconds(8)) ||
+                !order.SequenceEqual(["park-current", "open-next", "show-next"]))
+                throw new InvalidOperationException("Closing a reusable card page hid the next page.");
+        }
+        finally { releasePark.TrySetResult(); }
     }
 
     internal async Task ApplicationSmokeTestAsync()
