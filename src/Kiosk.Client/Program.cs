@@ -56,6 +56,7 @@ internal static class Program
             if (selfTest)
             {
                 ConfigManager.SelfTest();
+                CtapCard.SelfTest();
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
                     throw new InvalidOperationException("Card service health probe touched a reader or returned an unexpected response.");
                 if (CardService.Handle(new CardService.Request { Op = "update" }).Code != -2 ||
@@ -310,7 +311,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response and page-host request, buffered reply after server close, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded CTAP NFC responses and CBOR parsing, bounded card-service pipe response and page-host request, buffered reply after server close, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

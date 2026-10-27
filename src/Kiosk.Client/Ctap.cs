@@ -17,6 +17,10 @@ internal sealed class CtapException(int code, string message) : Exception(messag
 /// </summary>
 internal sealed class CtapCard : IDisposable
 {
+    private const int MaxOperationMilliseconds = 75_000;
+    private const int MaxResponseBytes = 1024 * 1024;
+    private const int MaxFollowUps = 8192;
+    private readonly long startedMilliseconds = Environment.TickCount64;
     private IntPtr context, card;
     private uint protocol;
     private bool transactionActive;
@@ -252,26 +256,57 @@ internal sealed class CtapCard : IDisposable
     };
 
     /// <summary>NFCCTAP_MSG with command chaining for long requests, GET RESPONSE and keep-alive for long answers.</summary>
-    private byte[] Exchange(byte[] request)
+    private byte[] Exchange(byte[] request) => ExchangeCore(request, Apdu, static () => Environment.TickCount64, startedMilliseconds);
+
+    internal static byte[] ExchangeCore(byte[] request, Func<byte[], (byte[] Data, bool Ok, int Sw)> transmit,
+        Func<long> nowMilliseconds, long startedMilliseconds)
     {
+        void CheckTime()
+        {
+            if (nowMilliseconds() - startedMilliseconds >= MaxOperationMilliseconds)
+                throw new CtapException(-1, "Karta nie odpowiedziała w wyznaczonym czasie.");
+        }
+
+        static void Append(List<byte> result, byte[] data)
+        {
+            if (data.Length > MaxResponseBytes - result.Count)
+                throw new CtapException(-1, "Odpowiedź karty jest za duża.");
+            result.AddRange(data);
+        }
+
         (byte[] Data, bool Ok, int Sw) answer = ([], false, 0);
         for (int offset = 0; offset < request.Length || offset == 0;)
         {
+            CheckTime();
             int size = Math.Min(255, request.Length - offset);
             bool last = offset + size >= request.Length;
             var apdu = new byte[5 + size + (last ? 1 : 0)];
             apdu[0] = (byte)(last ? 0x80 : 0x90); apdu[1] = 0x10; apdu[4] = (byte)size;
             Array.Copy(request, offset, apdu, 5, size);
-            answer = Apdu(apdu);
+            answer = transmit(apdu);
             offset += size;
             if (!last && !answer.Ok) throw new CtapException(-1, "Karta odrzuciła dane (" + answer.Sw.ToString("X4") + ").");
             if (size == 0) break;
         }
-        var result = new List<byte>(answer.Data);
+        var result = new List<byte>();
+        Append(result, answer.Data);
+        var followUps = 0;
         while (true)
         {
-            if (answer.Sw == 0x9100) { Thread.Sleep(100); answer = Apdu([0x80, 0x11, 0x00, 0x00, 0x00]); result.Clear(); result.AddRange(answer.Data); continue; }
-            if (answer.Sw >> 8 == 0x61) { answer = Apdu([0x00, 0xC0, 0x00, 0x00, (byte)(answer.Sw & 0xFF)]); result.AddRange(answer.Data); continue; }
+            CheckTime();
+            if (answer.Sw == 0x9100 || answer.Sw >> 8 == 0x61)
+            {
+                if (++followUps > MaxFollowUps) throw new CtapException(-1, "Karta zwróciła zbyt wiele części odpowiedzi.");
+                if (answer.Sw == 0x9100)
+                {
+                    // NFCCTAP_GETRESPONSE must follow 0x9100 promptly; sleeping here can miss the card's window.
+                    answer = transmit([0x80, 0x11, 0x00, 0x00, 0x00]);
+                    result.Clear();
+                }
+                else answer = transmit([0x00, 0xC0, 0x00, 0x00, (byte)(answer.Sw & 0xFF)]);
+                Append(result, answer.Data);
+                continue;
+            }
             break;
         }
         if (!answer.Ok) throw new CtapException(-1, "Karta odpowiedziała błędem " + answer.Sw.ToString("X4") + ".");
@@ -293,6 +328,55 @@ internal sealed class CtapCard : IDisposable
     {
         if (result != 0) throw new CtapException(-1, what + " (0x" + result.ToString("X8") + ").");
     }
+
+#if KIOSK_SELF_TEST
+    internal static void SelfTest()
+    {
+        var step = 0;
+        var response = ExchangeCore([0x04], command =>
+        {
+            var result = step++ switch
+            {
+                0 when command[1] == 0x10 => (new byte[] { 0x01 }, false, 0x9100),
+                1 when command[1] == 0x11 => (new byte[] { 0x00, 0xA1 }, false, 0x6101),
+                2 when command[1] == 0xC0 => (new byte[] { 0x01 }, true, 0x9000),
+                _ => throw new InvalidOperationException("CTAP NFC response sequence changed.")
+            };
+            return result;
+        }, static () => 0, 0);
+        if (step != 3 || !response.SequenceEqual(new byte[] { 0x00, 0xA1, 0x01 }))
+            throw new InvalidOperationException("CTAP NFC keep-alive or response chaining failed.");
+
+        long now = 0;
+        Reject(() => ExchangeCore([0x04], _ => { now = 75_000; return ([], false, 0x9100); }, () => now, 0), "wyznaczonym czasie");
+        Reject(() => ExchangeCore([0x04], _ => (new byte[1024 * 1024 + 1], true, 0x9000), static () => 0, 0), "za duża");
+        var calls = 0;
+        Reject(() => ExchangeCore([0x04], _ =>
+        {
+            if (++calls > MaxFollowUps + 1) throw new InvalidOperationException("CTAP follow-up test did not terminate.");
+            return ([], false, 0x9100);
+        }, static () => 0, 0), "zbyt wiele części");
+        if (calls != 8193) throw new InvalidOperationException("CTAP NFC follow-up limit changed.");
+
+        var decoded = (Dictionary<object, object>)Cbor.Decode([0xA1, 0x01, 0x81, 0xF5], out var used);
+        if (used != 4 || decoded[1L] is not List<object> { Count: 1 } values || values[0] is not true)
+            throw new InvalidOperationException("Valid CTAP CBOR response failed to decode.");
+        RejectCbor([0x43, 0x01]);
+        RejectCbor([0x9A, 0xFF, 0xFF, 0xFF, 0xFF]);
+        RejectCbor(Enumerable.Repeat((byte)0x81, 34).Append((byte)0xF5).ToArray());
+
+        static void Reject(Action work, string expectedMessage)
+        {
+            try { work(); throw new InvalidOperationException("Unbounded CTAP response was accepted."); }
+            catch (CtapException ex) when (ex.Message.Contains(expectedMessage, StringComparison.Ordinal)) { }
+        }
+        static void RejectCbor(byte[] bytes)
+        {
+            try { Cbor.Decode(bytes, out _); throw new InvalidOperationException("Malformed CTAP CBOR was accepted."); }
+            catch (InvalidDataException) { }
+        }
+    }
+#endif
 
     public void Dispose()
     {
@@ -321,6 +405,8 @@ internal sealed class CtapCard : IDisposable
 /// <summary>Just enough CBOR for CTAP2: canonical maps (keys in the order given), ints, byte/text strings, arrays, bools.</summary>
 internal static class Cbor
 {
+    private const int MaxDepth = 32;
+
     internal static Dictionary<object, object> Map(params (object Key, object Value)[] items)
     {
         var map = new Dictionary<object, object>();
@@ -369,25 +455,31 @@ internal static class Cbor
     internal static object Decode(byte[] data, out int used)
     {
         int position = 0;
-        var value = Read(data, ref position);
+        var value = Read(data, ref position, 0);
         used = position;
         return value;
     }
 
-    private static object Read(byte[] d, ref int p)
+    private static object Read(byte[] d, ref int p, int depth)
     {
+        if (depth > MaxDepth || p >= d.Length) throw new InvalidDataException("Nieprawidłowa odpowiedź CBOR karty.");
         int initial = d[p++], major = initial >> 5, info = initial & 31;
         int bytes = info switch { < 24 => 0, 24 => 1, 25 => 2, 26 => 4, 27 => 8, _ => throw new InvalidDataException("CBOR") };
+        if (bytes > d.Length - p) throw new InvalidDataException("Niepełna odpowiedź CBOR karty.");
         ulong n = bytes == 0 ? (ulong)info : 0;
         for (int i = 0; i < bytes; i++) n = n << 8 | d[p++];
         switch (major)
         {
-            case 0: return (long)n;
-            case 1: return -1 - (long)n;
-            case 2: { var b = d.AsSpan(p, (int)n).ToArray(); p += (int)n; return b; }
-            case 3: { var s = Encoding.UTF8.GetString(d, p, (int)n); p += (int)n; return s; }
-            case 4: { var a = new List<object>(); for (ulong i = 0; i < n; i++) a.Add(Read(d, ref p)); return a; }
-            case 5: { var m = new Dictionary<object, object>(); for (ulong i = 0; i < n; i++) { var k = Read(d, ref p); m[k] = Read(d, ref p); } return m; }
+            case 0 when n <= long.MaxValue: return (long)n;
+            case 1 when n <= long.MaxValue: return -1 - (long)n;
+            case 2 when n <= (ulong)(d.Length - p):
+                { var b = d.AsSpan(p, (int)n).ToArray(); p += (int)n; return b; }
+            case 3 when n <= (ulong)(d.Length - p):
+                { var s = Encoding.UTF8.GetString(d, p, (int)n); p += (int)n; return s; }
+            case 4 when n <= (ulong)(d.Length - p):
+                { var a = new List<object>(); for (ulong i = 0; i < n; i++) a.Add(Read(d, ref p, depth + 1)); return a; }
+            case 5 when n <= (ulong)(d.Length - p) / 2:
+                { var m = new Dictionary<object, object>(); for (ulong i = 0; i < n; i++) { var k = Read(d, ref p, depth + 1); m[k] = Read(d, ref p, depth + 1); } return m; }
             case 7: return info == 21 ? true : info == 20 ? false : (object)n;
             default: throw new InvalidDataException("CBOR");
         }
