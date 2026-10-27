@@ -70,6 +70,13 @@ internal static class Program
                     var accepting = silentServer.WaitForConnectionAsync();
                     timeoutClient.Connect(1000);
                     if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Synthetic pipe did not connect.");
+                    using var serverReader = new StreamReader(silentServer, System.Text.Encoding.UTF8, false, 4096, leaveOpen: true);
+                    try
+                    {
+                        CardService.ReadLine(serverReader, TimeSpan.FromMilliseconds(250));
+                        throw new InvalidOperationException("A silent page-host request did not time out.");
+                    }
+                    catch (OperationCanceledException) { }
                     using var timeoutReader = new StreamReader(timeoutClient);
                     var elapsed = System.Diagnostics.Stopwatch.StartNew();
                     try
@@ -303,7 +310,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response and buffered reply after server close, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response and page-host request, buffered reply after server close, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

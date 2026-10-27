@@ -166,6 +166,8 @@ Klient usługi `KioskCard` nie czeka już bez końca na odpowiedź po wysłaniu 
 
 Serwer usługi karty i serwer okna pomocy nie czekają już po zapisie odpowiedzi, aż klient opróżni potok. Taki klient mógł zatrzymać wątek obsługi usługi albo jedyny nasłuch okna pomocy bez limitu czasu. Lokalna próba wykonała 30 odczytów po natychmiastowym zamknięciu serwera; aktywny self-test sprawdza też odbiór odpowiedzi o długości 3072 bajtów po zamknięciu potoku. Rzeczywiste operacje karty i okna pomocy nadal wymagają próby na stanowisku.
 
+Nasłuch okna pomocy używa asynchronicznego potoku i kończy odczyt żądania po 10 sekundach ciszy. Dzięki temu przerwane połączenie nie blokuje jedynego nasłuchu, gdy proces Kiosku nadal działa. Self-test sprawdza anulowanie odczytu po stronie serwera; rzeczywiste przełączanie stron po awarii klienta wymaga próby na stanowisku.
+
 Broker FIDO odczytuje własny PID i numer sesji Windows raz na proces, zwalniając obiekt `Process` po inicjalizacji. Nazwy potoków, ścieżki logów i katalogów GUI używają tych samych wartości bez kolejnych otwarć procesu. Edytor komunikatów korzysta ze stałych ustawień zapisu JSON; ponowne sprawdzenie reguły `CA1869` nie zgłosiło ostrzeżenia.
 
 Menedżer „Konfiguracje Kiosków” tworzy nową konfigurację w katalogu tymczasowym na tym samym udziale i pokazuje ją dopiero po udanym przeniesieniu. Kopiuje drzewo iteracyjnie i odrzuca dowiązania zamiast przechodzić poza wybraną konfigurację lub tworzyć niepełną kopię. Test tworzy kopię z zasobem w podfolderze, wymusza błąd kopiowania przez zablokowany plik i sprawdza usunięcie katalogu tymczasowego. Dowiązanie sprawdza, jeżeli system pozwala je utworzyć bez podniesienia uprawnień.

@@ -96,13 +96,14 @@ internal static class CardPageHost
             try
             {
                 using var pipe = NamedPipeServerStreamAcl.Create(PipeName(kiosk, Environment.ProcessId), PipeDirection.InOut, 1,
-                    PipeTransmissionMode.Byte, PipeOptions.None, 4096, 4096, security);
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, security);
                 pipe.WaitForConnection();
                 // Only the Kiosk that started this window (Windows names the caller): another program of the Kiosk's
                 // account could otherwise open any site as the person.
                 if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var caller) || caller != kiosk) { Audit.Write("card_page_rejected", caller.ToString()); continue; }
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                var line = reader.ReadLine();
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var line = reader.ReadLineAsync(deadline.Token).GetAwaiter().GetResult();
                 var command = line is { Length: < 65536 } ? JsonSerializer.Deserialize<Command>(line) : null;
                 var answer = command?.Op switch
                 {
@@ -115,7 +116,7 @@ internal static class CardPageHost
                 pipe.Flush();
                 // Closing leaves the reply available to the client; do not let it hold the only listener.
             }
-            catch (Exception ex) when (ex is IOException or JsonException or ObjectDisposedException or InvalidOperationException) { Thread.Sleep(200); }
+            catch (Exception ex) when (ex is IOException or JsonException or ObjectDisposedException or InvalidOperationException or OperationCanceledException) { Thread.Sleep(200); }
         }
     }
 
