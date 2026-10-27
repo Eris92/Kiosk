@@ -236,10 +236,23 @@ internal sealed class CtapCard : IDisposable
         var request = new byte[body.Length + 1];
         request[0] = command;
         body.CopyTo(request, 1);
-        var response = Exchange(request);
+        byte[] response;
+        try { response = Exchange(request); }
+        finally { CryptographicOperations.ZeroMemory(body); CryptographicOperations.ZeroMemory(request); }
+        try { return DecodeResponse(response); }
+        finally { CryptographicOperations.ZeroMemory(response); }
+    }
+
+    internal static Dictionary<object, object> DecodeResponse(ReadOnlySpan<byte> response)
+    {
         if (response.Length == 0) throw new CtapException(-1, "Pusta odpowiedź karty.");
         if (response[0] != 0) throw new CtapException(response[0], CtapMessage(response[0]));
-        return response.Length == 1 ? new() : (Dictionary<object, object>)Cbor.Decode(response.AsSpan(1).ToArray(), out _);
+        if (response.Length == 1) return new();
+        var data = response[1..];
+        var decoded = Cbor.Decode(data, out var used);
+        if (used != data.Length || decoded is not Dictionary<object, object> map)
+            throw new InvalidDataException("Nieprawidłowa odpowiedź CBOR karty.");
+        return map;
     }
 
     private static string CtapMessage(int code) => code switch
@@ -361,6 +374,9 @@ internal sealed class CtapCard : IDisposable
         var decoded = (Dictionary<object, object>)Cbor.Decode([0xA1, 0x01, 0x81, 0xF5], out var used);
         if (used != 4 || decoded[1L] is not List<object> { Count: 1 } values || values[0] is not true)
             throw new InvalidOperationException("Valid CTAP CBOR response failed to decode.");
+        if (DecodeResponse([0x00, 0xA1, 0x01, 0xF5])[1L] is not true)
+            throw new InvalidOperationException("Valid CTAP response failed to decode.");
+        RejectResponse([0x00, 0xA1, 0x01, 0xF5, 0x00]);
         RejectCbor([0x43, 0x01]);
         RejectCbor([0x9A, 0xFF, 0xFF, 0xFF, 0xFF]);
         RejectCbor(Enumerable.Repeat((byte)0x81, 34).Append((byte)0xF5).ToArray());
@@ -373,6 +389,11 @@ internal sealed class CtapCard : IDisposable
         static void RejectCbor(byte[] bytes)
         {
             try { Cbor.Decode(bytes, out _); throw new InvalidOperationException("Malformed CTAP CBOR was accepted."); }
+            catch (InvalidDataException) { }
+        }
+        static void RejectResponse(byte[] bytes)
+        {
+            try { DecodeResponse(bytes); throw new InvalidOperationException("Trailing CTAP response data was accepted."); }
             catch (InvalidDataException) { }
         }
     }
@@ -452,7 +473,7 @@ internal static class Cbor
 
     private static long Rank(KeyValuePair<object, object> p) => p.Key is long n ? (n >= 0 ? n : 0x10000 - n) : 0x100000;
 
-    internal static object Decode(byte[] data, out int used)
+    internal static object Decode(ReadOnlySpan<byte> data, out int used)
     {
         int position = 0;
         var value = Read(data, ref position, 0);
@@ -460,7 +481,7 @@ internal static class Cbor
         return value;
     }
 
-    private static object Read(byte[] d, ref int p, int depth)
+    private static object Read(ReadOnlySpan<byte> d, ref int p, int depth)
     {
         if (depth > MaxDepth || p >= d.Length) throw new InvalidDataException("Nieprawidłowa odpowiedź CBOR karty.");
         int initial = d[p++], major = initial >> 5, info = initial & 31;
@@ -473,9 +494,9 @@ internal static class Cbor
             case 0 when n <= long.MaxValue: return (long)n;
             case 1 when n <= long.MaxValue: return -1 - (long)n;
             case 2 when n <= (ulong)(d.Length - p):
-                { var b = d.AsSpan(p, (int)n).ToArray(); p += (int)n; return b; }
+                { var b = d.Slice(p, (int)n).ToArray(); p += (int)n; return b; }
             case 3 when n <= (ulong)(d.Length - p):
-                { var s = Encoding.UTF8.GetString(d, p, (int)n); p += (int)n; return s; }
+                { var s = Encoding.UTF8.GetString(d.Slice(p, (int)n)); p += (int)n; return s; }
             case 4 when n <= (ulong)(d.Length - p):
                 { var a = new List<object>(); for (ulong i = 0; i < n; i++) a.Add(Read(d, ref p, depth + 1)); return a; }
             case 5 when n <= (ulong)(d.Length - p) / 2:

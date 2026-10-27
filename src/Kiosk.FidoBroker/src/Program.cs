@@ -8,6 +8,9 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
+// All P/Invokes use Windows system DLLs; explicit LoadLibraryEx paths are separate.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace FidoRun
 {
     internal sealed class Options

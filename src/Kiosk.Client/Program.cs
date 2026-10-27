@@ -2,6 +2,9 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
+// Every P/Invoke in this assembly targets a Windows system DLL.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace Kiosk.Client;
 
 internal static class Program
