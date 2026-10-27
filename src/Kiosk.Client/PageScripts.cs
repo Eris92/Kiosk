@@ -92,10 +92,12 @@ internal static class PageScripts
               root.querySelectorAll('*').forEach(e => { if (e.shadowRoot) deep(e.shadowRoot, selector, out); });
               return out;
             };
+            let choices = null;
             const find = t => {
               t = norm(t);
-              const all = deep(document, 'button, a, [role=button], input[type=submit], input[type=button]', []).filter(visible);
-              return all.find(b => label(b) === t) || all.find(b => label(b).includes(t));
+              if (!choices) choices = deep(document, 'button, a, [role=button], input[type=submit], input[type=button]', [])
+                .filter(visible).map(el => ({ el, text: label(el) }));
+              return (choices.find(b => b.text === t) || choices.find(b => b.text.includes(t)))?.el;
             };
             const set = (el, v) => {
               const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
@@ -104,6 +106,7 @@ internal static class PageScripts
               el.dispatchEvent(new Event('change', { bubbles: true }));
             };
             const send = form => setTimeout(() => {
+              choices = null; // The page may have changed since the login field was filled.
               const s = submit ? find(submit) : null;
               if (s) s.click();
               else if (form) { if (form.requestSubmit) form.requestSubmit(); else form.submit(); }
@@ -112,7 +115,8 @@ internal static class PageScripts
             const done = {};
             let tries = 0;
             const step = () => {
-              for (const t of clicks) if ((done[t] || 0) < most) { const b = find(t); if (b) { b.click(); done[t] = (done[t] || 0) + 1; } }
+              choices = null;
+              for (const t of clicks) if ((done[t] || 0) < most) { const b = find(t); if (b) { b.click(); done[t] = (done[t] || 0) + 1; choices = null; } }
               if (pass !== null) {
                 const p = [...document.querySelectorAll('input[type=password]')].find(visible);
                 if (p && !sessionStorage.getItem(page + ':pass')) {

@@ -302,7 +302,8 @@ internal sealed class BrowserView : UserControl
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
         // The card's web sign-in (security key) only without a Windows account: with it the page signs in by itself (SSO).
-        PageScripts.Attach(core, kiosk: singlePage && !windowsAccount, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);   // singlePage: the Szybka pomoc guest window (nobody signed in)
+        // A single help page belongs to Kiosk scope even when Windows signed the person in for SSO.
+        PageScripts.Attach(core, kiosk: singlePage, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);
         core.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark; // Sites that support it match the shell.
         core.Settings.AreDevToolsEnabled = false;
         // A crashed or hung page shows itself again instead of staying blank until someone closes it.

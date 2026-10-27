@@ -2580,6 +2580,45 @@ internal sealed partial class KioskForm : Form
         var text = await browserView.Web.ExecuteScriptAsync("document.body.innerText");
         if (!text.Contains("Kiosku") || !browserView.Web.CoreWebView2.Profile.IsInPrivateModeEnabled)
             throw new InvalidOperationException("Embedded page or InPrivate profile failed.");
+        // SelfService's Windows-account help page still uses Kiosk actions, not the person's browser actions.
+        var actionPage = Path.Combine(AppContext.BaseDirectory, "self-test-page-actions.html");
+        var actionProfile = Path.Combine(AppContext.BaseDirectory, "self-test-page-actions-profile");
+        var actionUrl = new Uri(actionPage).AbsoluteUri;
+        var originalActions = PageScripts.Actions;
+        File.WriteAllText(actionPage, "<html><body><button id='kiosk' onclick=\"this.dataset.clicked='yes'\">Kiosk action</button><button id='user' onclick=\"this.dataset.clicked='yes'\">User action</button></body></html>");
+        try
+        {
+            PageScripts.Actions =
+            [
+                new PageAction { Url = actionUrl, Scope = PageScope.Kiosk, Click = "Kiosk action", Once = true },
+                new PageAction { Url = actionUrl, Scope = PageScope.Users, Click = "User action", Once = true }
+            ];
+            var actionPolicy = new SitePolicy(false, [], []);
+            actionPolicy.Trust(actionUrl);
+            var actionView = new BrowserView(policy: actionPolicy, windowsAccount: true, singlePage: true, profileFolder: actionProfile);
+            AddWindow(aliceSession, "self-test-actions", "Szybka pomoc", actionView);
+            try
+            {
+                await actionView.InitializeAsync(actionUrl).WaitAsync(TimeSpan.FromSeconds(25));
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (DateTime.UtcNow < deadline &&
+                    await actionView.Web.ExecuteScriptAsync("document.querySelector('#kiosk')?.dataset.clicked || ''") != "\"yes\"")
+                    await Task.Delay(100);
+                var kioskClick = await actionView.Web.ExecuteScriptAsync("document.querySelector('#kiosk')?.dataset.clicked || ''");
+                var userClick = await actionView.Web.ExecuteScriptAsync("document.querySelector('#user')?.dataset.clicked || ''");
+                if (kioskClick != "\"yes\"" || userClick != "\"\"")
+                    throw new InvalidOperationException("Windows-account SelfService page used the wrong page action scope.");
+            }
+            finally { CloseWindow("self-test-actions", "self_test_actions_closed", aliceSession); }
+        }
+        finally
+        {
+            PageScripts.Actions = originalActions;
+            File.Delete(actionPage);
+            try { Directory.Delete(actionProfile, recursive: true); }
+            catch (IOException) { } // WebView2 can release its profile after the view closes.
+            catch (UnauthorizedAccessException) { }
+        }
         // A real HTTP Basic challenge must be cancelled before WebView2 can show a password prompt.
         var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
         listener.Start();
