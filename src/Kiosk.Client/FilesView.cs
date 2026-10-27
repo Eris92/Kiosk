@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 
@@ -666,19 +667,26 @@ internal sealed class FilesView : UserControl
 
     private static void CopyFolder(string from, string to, CancellationToken cancellation, bool stagingRoot = false)
     {
-        cancellation.ThrowIfCancellationRequested();
-        var attributes = File.GetAttributes(from);
-        if ((attributes & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("Nie można kopiować dowiązania: " + from);
-        Directory.CreateDirectory(to);
-        foreach (var file in Directory.EnumerateFiles(from))
-        { cancellation.ThrowIfCancellationRequested(); CopyFile(file, Path.Combine(to, Path.GetFileName(file)), cancellation); }
-        foreach (var sub in Directory.EnumerateDirectories(from))
-        { cancellation.ThrowIfCancellationRequested(); CopyFolder(sub, Path.Combine(to, Path.GetFileName(sub)), cancellation); }
-        if (!stagingRoot)
+        var pending = new Stack<(string From, string To, bool Finish, bool StagingRoot, FileAttributes Attributes)>();
+        pending.Push((from, to, false, stagingRoot, default));
+        while (pending.TryPop(out var item))
         {
-            Directory.SetLastWriteTimeUtc(to, Directory.GetLastWriteTimeUtc(from));
-            File.SetAttributes(to, attributes);
+            cancellation.ThrowIfCancellationRequested();
+            if (item.Finish)
+            {
+                Directory.SetLastWriteTimeUtc(item.To, Directory.GetLastWriteTimeUtc(item.From));
+                File.SetAttributes(item.To, item.Attributes);
+                continue;
+            }
+            var attributes = File.GetAttributes(item.From);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Nie można kopiować dowiązania: " + item.From);
+            Directory.CreateDirectory(item.To);
+            if (!item.StagingRoot) pending.Push((item.From, item.To, true, false, attributes));
+            foreach (var file in Directory.EnumerateFiles(item.From))
+            { cancellation.ThrowIfCancellationRequested(); CopyFile(file, Path.Combine(item.To, Path.GetFileName(file)), cancellation); }
+            foreach (var sub in Directory.EnumerateDirectories(item.From))
+            { cancellation.ThrowIfCancellationRequested(); pending.Push((sub, Path.Combine(item.To, Path.GetFileName(sub)), false, false, default)); }
         }
     }
 
@@ -708,10 +716,19 @@ internal sealed class FilesView : UserControl
 
     private static void CopyStream(Stream source, Stream destination, CancellationToken cancellation)
     {
-        var buffer = new byte[131072];
-        int read;
-        while ((read = source.Read(buffer)) > 0)
-        { cancellation.ThrowIfCancellationRequested(); destination.Write(buffer, 0, read); }
+        var size = source is FileStream file ? (int)Math.Clamp(file.Length - file.Position, 4096, 131072) : 131072;
+        var buffer = ArrayPool<byte>.Shared.Rent(size);
+        try
+        {
+            while (true)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var read = source.Read(buffer);
+                if (read == 0) break;
+                destination.Write(buffer, 0, read);
+            }
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
 
     private static void DeletePartial(string path, bool directory = false)

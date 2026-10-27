@@ -2936,10 +2936,15 @@ internal sealed partial class KioskForm : Form
             var hiddenSource = Path.Combine(nested, "hidden.txt");
             File.WriteAllText(hiddenSource, "hidden");
             File.SetAttributes(hiddenSource, File.GetAttributes(hiddenSource) | FileAttributes.Hidden);
+            var directoryTime = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+            Directory.SetLastWriteTimeUtc(nested, directoryTime);
+            File.SetAttributes(nested, File.GetAttributes(nested) | FileAttributes.Hidden);
             await files.NavigateForSmokeTestAsync(root);
             if (!await files.PasteForSmokeTestAsync([source], destination, move: false) ||
                 File.ReadAllText(Path.Combine(destination, "source", "nested", "data.txt")) != "Kiosk file work" ||
-                (File.GetAttributes(Path.Combine(destination, "source", "nested", "hidden.txt")) & FileAttributes.Hidden) == 0)
+                (File.GetAttributes(Path.Combine(destination, "source", "nested", "hidden.txt")) & FileAttributes.Hidden) == 0 ||
+                (File.GetAttributes(Path.Combine(destination, "source", "nested")) & FileAttributes.Hidden) == 0 ||
+                Math.Abs((Directory.GetLastWriteTimeUtc(Path.Combine(destination, "source", "nested")) - directoryTime).TotalSeconds) > 2)
                 throw new InvalidOperationException("Background folder copy failed.");
             if (!await files.ZipForSmokeTestAsync([source])) throw new InvalidOperationException("Background ZIP failed.");
             var archive = Path.Combine(root, "source.zip");
