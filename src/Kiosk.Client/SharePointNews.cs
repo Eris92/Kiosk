@@ -168,6 +168,7 @@ internal sealed class SharePointNews : IDisposable
     private static string Script(Uri site, int count) => """
         (async () => {
           try {
+            const bannerLimit = 4000000;
             const web = new URL(SITE).pathname.replace(/\/+$/, '');
             const api = location.origin + web + "/_api/web/GetList(@u)/items?@u='" + encodeURIComponent(web + '/SitePages') + "'" +
               "&$select=Title,Description,BannerImageUrl,FileRef,FirstPublishedDate&$filter=PromotedState eq 2&$orderby=FirstPublishedDate desc&$top=" + COUNT;
@@ -181,9 +182,25 @@ internal sealed class SharePointNews : IDisposable
               if (typeof src === 'string' && src) {
                 try {
                   const b = await fetch(new URL(src, location.origin));
-                  const blob = b.ok ? await b.blob() : null;
-                  if (blob && blob.size < 4000000)
-                    image = await new Promise(done => { const f = new FileReader(); f.onload = () => done(f.result); f.onerror = () => done(''); f.readAsDataURL(blob); });
+                  const declared = b.headers.get('content-length');
+                  if (b.ok && b.body && (declared === null || Number(declared) < bannerLimit)) {
+                    const reader = b.body.getReader();
+                    const chunks = [];
+                    let size = 0;
+                    try {
+                      while (true) {
+                        const part = await reader.read();
+                        if (part.done) break;
+                        size += part.value.byteLength;
+                        if (size >= bannerLimit) { await reader.cancel(); break; }
+                        chunks.push(part.value);
+                      }
+                    } finally { reader.releaseLock(); }
+                    if (size > 0 && size < bannerLimit) {
+                      const blob = new Blob(chunks, { type: b.headers.get('content-type') || '' });
+                      image = await new Promise(done => { const f = new FileReader(); f.onload = () => done(f.result); f.onerror = () => done(''); f.readAsDataURL(blob); });
+                    }
+                  } else if (b.body) await b.body.cancel();
                 } catch (e) { }
               }
               items.push({ title: p.Title || '', text: p.Description || '', url: new URL(p.FileRef, location.origin).href, image });
