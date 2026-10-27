@@ -16,7 +16,8 @@ internal static class BoundedPipeLine
         {
             while (true)
             {
-                var count = reader.ReadAsync(buffer.AsMemory(0, 4096), cancellation.Token).GetAwaiter().GetResult();
+                var pending = reader.ReadAsync(buffer.AsMemory(0, 4096), cancellation.Token);
+                var count = pending.IsCompletedSuccessfully ? pending.Result : pending.AsTask().GetAwaiter().GetResult();
                 if (count == 0) return line.Length == 0 ? null : line.ToString();
 
                 var end = buffer.AsSpan(0, count).IndexOfAny('\r', '\n');

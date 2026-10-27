@@ -107,6 +107,24 @@ internal static class Program
                     if (BoundedPipeLine.Read(replyReader, 4096, TimeSpan.FromSeconds(2)) != expected)
                         throw new InvalidOperationException("A buffered pipe reply was lost when the server closed.");
                 }
+                pipeName = "KioskDelayedReply-" + Guid.NewGuid().ToString("N");
+                using (var delayedServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
+                using (var delayedClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.PipeOptions.Asynchronous))
+                {
+                    var accepting = delayedServer.WaitForConnectionAsync();
+                    delayedClient.Connect(1000);
+                    if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Delayed reply pipe did not connect.");
+                    using var replyReader = new StreamReader(delayedClient, System.Text.Encoding.UTF8);
+                    using var readingStarted = new ManualResetEventSlim();
+                    var reading = Task.Run(() => { readingStarted.Set(); return BoundedPipeLine.Read(replyReader, 16, TimeSpan.FromSeconds(2)); });
+                    if (!readingStarted.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Delayed reply read did not start.");
+                    Thread.Sleep(50);
+                    delayedServer.Write(System.Text.Encoding.UTF8.GetBytes("OK\n"));
+                    if (!reading.Wait(TimeSpan.FromSeconds(2)) || reading.Result != "OK")
+                        throw new InvalidOperationException("A delayed pipe reply was not read.");
+                }
                 var largestPageCommand = new string('x', 65535);
                 using (var lineReader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(largestPageCommand + "\r\n"))))
                     if (BoundedPipeLine.Read(lineReader, 65535, TimeSpan.FromSeconds(2)) != largestPageCommand)
