@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Kiosk.Client;
@@ -130,8 +131,8 @@ internal sealed class FidoSignIn : IDisposable
         if (server != 0 && (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var answering) || answering != server))
             return "ERROR Logowanie kartą: odpowiedział nieznany program.";
         var bytes = Encoding.UTF8.GetBytes(request + "\n");
-        client.Write(bytes);
-        client.Flush();
+        try { client.Write(bytes); client.Flush(); }
+        finally { CryptographicOperations.ZeroMemory(bytes); } // A launched program's arguments may contain secrets.
         using var reader = new StreamReader(client, new UTF8Encoding(false));
         var read = reader.ReadLineAsync();
         if (answerMs != Timeout.Infinite && !read.Wait(answerMs)) throw new TimeoutException("Logowanie kartą nie odpowiada.");

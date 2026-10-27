@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -26,7 +27,12 @@ internal static class CardPageHost
         bool OnlyListed = true, int SideInset = 0, int Kiosk = 0, string KioskSid = "");
 
     /// <summary>The command-line argument for <paramref name="request"/>: one token, nothing for a shell to split.</summary>
-    internal static string Encode(Request request) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(request));
+    internal static string Encode(Request request)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(request);
+        try { return Convert.ToBase64String(bytes); }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
 
     internal static int Run(string encoded)
     {
@@ -133,9 +139,9 @@ internal static class CardPageHost
             client.Connect(2000);
             // Only the window this Kiosk started answers (a program that took the name first never gets the page).
             if (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var server) || server != host) return false;
-            client.Write(JsonSerializer.SerializeToUtf8Bytes(new Command(op, title, url, seconds, domains, onlyListed)));
-            client.WriteByte((byte)'\n');
-            client.Flush();
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(new Command(op, title, url, seconds, domains, onlyListed));
+            try { client.Write(bytes); client.WriteByte((byte)'\n'); client.Flush(); }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
             using var reader = new StreamReader(client, Encoding.UTF8);
             var read = reader.ReadLineAsync();
             return read.Wait(5000) && read.Result == "OK";

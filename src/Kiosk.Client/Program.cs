@@ -61,6 +61,24 @@ internal static class Program
                 if (CardService.Handle(new CardService.Request { Op = "update" }).Code != -2 ||
                     CardService.Handle(new CardService.Request { Op = "dotnet" }).Code != -2)
                     throw new InvalidOperationException("Removed service update commands must be rejected before opening a card reader.");
+                var pipeName = "KioskResponseTimeout-" + Guid.NewGuid().ToString("N");
+                using (var silentServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
+                using (var timeoutClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.PipeOptions.Asynchronous))
+                {
+                    var accepting = silentServer.WaitForConnectionAsync();
+                    timeoutClient.Connect(1000);
+                    if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Synthetic pipe did not connect.");
+                    using var timeoutReader = new StreamReader(timeoutClient);
+                    var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        CardService.ReadLine(timeoutReader, TimeSpan.FromMilliseconds(250));
+                        throw new InvalidOperationException("A silent card service response did not time out.");
+                    }
+                    catch (OperationCanceledException) when (elapsed.Elapsed < TimeSpan.FromSeconds(3)) { }
+                }
                 var configSnapshot = Path.Combine(Path.GetTempPath(), "kiosk-config-test-" + Guid.NewGuid().ToString("N") + ".json");
                 try
                 {
@@ -269,7 +287,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }

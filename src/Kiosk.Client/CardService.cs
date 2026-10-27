@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -49,19 +50,17 @@ internal static class CardService
         try
         {
             // Impersonation (Windows' default, said out loud): runas starts the program as this Kiosk's account.
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Impersonation);
+            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Impersonation);
             pipe.Connect(3000);
             // Only the real service answers (it runs in session 0, where a signed-in user cannot start anything):
             // a program that took the pipe's name first never sees a PIN.
             // Windows names the server's session itself (a standard user may not open a SYSTEM process to ask it).
             if (!GetNamedPipeServerSessionId(pipe.SafePipeHandle, out var serverSession) || serverSession != 0)
                 return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie odpowiada (nieznany serwer potoku)." };
-            var line = JsonSerializer.SerializeToUtf8Bytes(request);
-            pipe.Write(line);
-            pipe.WriteByte((byte)'\n');
-            pipe.Flush();
+            WriteLine(pipe, request);
             using var reader = new StreamReader(pipe, Encoding.UTF8);
-            return JsonSerializer.Deserialize<Response>(reader.ReadLine() ?? "{}") ?? new Response { Code = -1, Message = "Pusta odpowiedź usługi." };
+            return JsonSerializer.Deserialize<Response>(ReadLine(reader, ResponseTimeout(request.Op)) ?? "{}")
+                ?? new Response { Code = -1, Message = "Pusta odpowiedź usługi." };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -73,7 +72,24 @@ internal static class CardService
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) return Handle(request);
             return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie działa. Zainstaluj ją: scripts\\Install-KioskCardService.ps1." };
         }
+        catch (OperationCanceledException)
+        {
+            return new Response { Code = -1, Message = "Usługa „Kiosk Card” nie odpowiedziała w wyznaczonym czasie." };
+        }
         finally { request.Pin = ""; request.NewPin = ""; }
+    }
+
+    private static TimeSpan ResponseTimeout(string op) => op switch
+    {
+        "watch" or "unwatch" => TimeSpan.FromSeconds(10),
+        "stat" or "syncconfig" or "syncnews" or "syncstats" or "testconfig" or "testnetwork" => TimeSpan.FromMinutes(5),
+        _ => TimeSpan.FromSeconds(90)
+    };
+
+    internal static string? ReadLine(StreamReader reader, TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        return reader.ReadLineAsync(cancellation.Token).GetAwaiter().GetResult();
     }
 
     // ------------------------------------------------------------------ the work
@@ -303,9 +319,7 @@ internal static class CardService
                     : request.Op == "fidosignin" ? FidoSignIn.Launch(GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var client) ? (int)client : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, clientProgram, request.Embed)
                     : Locked(Gate(request.Op), () => Handle(request));
-                pipe.Write(JsonSerializer.SerializeToUtf8Bytes(response));
-                pipe.WriteByte((byte)'\n');
-                pipe.Flush();
+                WriteLine(pipe, response);
                 pipe.WaitForPipeDrain();
             }
             catch (Exception) { } // One bad client must not stop the service.
@@ -313,6 +327,18 @@ internal static class CardService
     }
 
     private static Response Locked(object gate, Func<Response> action) { lock (gate) return action(); }
+
+    private static void WriteLine<T>(Stream pipe, T value)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value);
+        try
+        {
+            pipe.Write(bytes);
+            pipe.WriteByte((byte)'\n');
+            pipe.Flush();
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); } // Requests may contain a PIN; responses may contain a password.
+    }
 
     internal static bool AuthorizedClient(string? clientProgram, bool administrator) =>
         administrator || SharedAccounts.IsInstalledKiosk(clientProgram);
