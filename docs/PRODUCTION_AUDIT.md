@@ -192,6 +192,8 @@ Szerszy przebieg analizatora .NET wskazał nieużywaną stałą flagi klawiatury
 
 Przegląd synchronizacji potwierdził, że konfiguracja z serwera jest kopiowana do nowej migawki przy każdym starcie, a komunikaty z udziału przy każdym odświeżeniu. To może wydłużać start i obciążać udział z dużymi plikami. Obecny format źródła nie zawiera wersji ani manifestu zmian; samo porównanie czasu i rozmiaru plików mogłoby pominąć aktualizację treści z zachowanymi metadanymi. Bez wiarygodnego protokołu publikacji i unieważniania migawki nie pominięto kopiowania.
 
+Edytor komunikatów sortuje odczytane wpisy statystyk na wątku roboczym. Eksport CSV zapisuje je potem wiersz po wierszu do pliku tymczasowego, również poza wątkiem UI; po pełnym zapisie zastępuje plik wybrany przez użytkownika. Zamknięcie widoku anuluje zapis i usuwa niepełny plik. Self-test sprawdza kolejność czasową, ochronę pól przed formułami, poprawny zapis oraz zachowanie poprzedniego CSV po anulowaniu. Widok nadal przechowuje odczytane wpisy w pamięci do agregacji tabel; zmiana usuwa dodatkowy duży łańcuch CSV i blokowanie okna podczas zapisu.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

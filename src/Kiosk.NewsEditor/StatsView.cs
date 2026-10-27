@@ -17,8 +17,10 @@ internal sealed class StatsView : TabPage
     private readonly Label summary = new() { Dock = DockStyle.Top, Height = 40, Font = new Font("Segoe UI", 12, FontStyle.Bold), Padding = new Padding(4, 8, 4, 0) };
     private readonly DataGridView computers = Grid(("Pc", "Komputer", 120), ("SignIns", "Logowania", 80), ("People", "Osoby", 60), ("Opened", "Otwarcia", 70), ("Last", "Ostatnio", 110));
     private readonly DataGridView options = Grid(("Name", "Opcja / komunikat", 220), ("Kind", "Rodzaj", 80), ("Count", "Otwarcia", 70), ("People", "Osoby", 60));
+    private readonly Button export = new() { Text = "Eksportuj do Excela (CSV)", AutoSize = true };
     private List<Entry> shown = [];
     private CancellationTokenSource? loading;
+    private CancellationTokenSource? exporting;
     private int loadGeneration;
 
     internal StatsView(EditorSettings settings)
@@ -29,7 +31,6 @@ internal sealed class StatsView : TabPage
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
         var refresh = new Button { Text = "Odśwież", AutoSize = true };
         var choose = new Button { Text = "Zmień folder…", AutoSize = true };
-        var export = new Button { Text = "Eksportuj do Excela (CSV)", AutoSize = true };
         bar.Controls.AddRange([period, refresh, choose, export, folder]);
         var split = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
@@ -49,13 +50,13 @@ internal sealed class StatsView : TabPage
             try { settings.Save(); } catch (Exception) { }
             await LoadAsync();
         };
-        export.Click += (_, _) => Export();
+        export.Click += async (_, _) => await ExportAsync();
         Enter += async (_, _) => { if (shown.Count == 0) await LoadAsync(); };
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { loadGeneration++; loading?.Cancel(); }
+        if (disposing) { loadGeneration++; loading?.Cancel(); exporting?.Cancel(); }
         base.Dispose(disposing);
     }
 
@@ -171,19 +172,49 @@ internal sealed class StatsView : TabPage
             cancellation.ThrowIfCancellationRequested();
             ReadFolder(computer);
         }
+        list.Sort((a, b) => a.Time.CompareTo(b.Time));
         return list;
     }
 
-    private void Export()
+    private async Task ExportAsync()
     {
+        if (exporting != null || IsDisposed) return;
         if (shown.Count == 0) { MessageBox.Show(this, "Brak danych do eksportu.", "Statystyki"); return; }
         using var dialog = new SaveFileDialog { Filter = "CSV (Excel)|*.csv", FileName = "kiosk-statystyki-" + DateTime.Today.ToString("yyyy-MM-dd") + ".csv" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        try { File.WriteAllText(dialog.FileName, Csv(shown), new UTF8Encoding(true)); }
-        catch (Exception ex) { MessageBox.Show(this, "Nie udało się zapisać: " + ex.Message, "Statystyki"); }
+        var entries = shown; // Read replaces this list; it never changes a completed snapshot.
+        var target = dialog.FileName;
+        using var stop = new CancellationTokenSource();
+        exporting = stop;
+        export.Enabled = false;
+        export.Text = "Eksportowanie…";
+        try
+        {
+            await Task.Run(() => SaveCsv(target, entries, stop.Token), stop.Token);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, "Nie udało się zapisać: " + ex.Message, "Statystyki"); }
+        finally
+        {
+            if (ReferenceEquals(exporting, stop)) exporting = null;
+            if (!IsDisposed) { export.Enabled = true; export.Text = "Eksportuj do Excela (CSV)"; }
+        }
     }
 
-    private static string Csv(IEnumerable<Entry> entries)
+    private static void SaveCsv(string target, IEnumerable<Entry> entries, CancellationToken cancellation)
+    {
+        var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536))
+            using (var writer = new StreamWriter(file, new UTF8Encoding(true))) WriteCsv(writer, entries, cancellation);
+            cancellation.ThrowIfCancellationRequested();
+            File.Move(temporary, target, overwrite: true);
+        }
+        finally { try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+    }
+
+    private static void WriteCsv(TextWriter writer, IEnumerable<Entry> entries, CancellationToken cancellation)
     {
         static string Cell(string s)
         {
@@ -194,11 +225,15 @@ internal sealed class StatsView : TabPage
                 (first < s.Length && s[first] is '=' or '+' or '-' or '@' or '＝' or '＋' or '－' or '＠')) s = "\t" + s;
             return "\"" + s.Replace("\"", "\"\"") + "\"";
         }
-        var text = new StringBuilder("Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n");
-        foreach (var e in entries.OrderBy(e => e.Time))
-            text.Append(Cell(e.Time.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"))).Append(';').Append(Cell(e.Pc)).Append(';').Append(Cell(e.Kind)).Append(';')
-                .Append(Cell(e.Name)).Append(';').Append(Cell(e.Category)).Append(';').Append(Cell(e.Who)).Append("\r\n");
-        return text.ToString();
+        writer.Write("Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n");
+        foreach (var e in entries)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            writer.Write(Cell(e.Time.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")));
+            writer.Write(';'); writer.Write(Cell(e.Pc)); writer.Write(';'); writer.Write(Cell(e.Kind));
+            writer.Write(';'); writer.Write(Cell(e.Name)); writer.Write(';'); writer.Write(Cell(e.Category));
+            writer.Write(';'); writer.Write(Cell(e.Who)); writer.Write("\r\n");
+        }
     }
 
 #if KIOSK_SELF_TEST
@@ -212,21 +247,41 @@ internal sealed class StatsView : TabPage
         {
             var time = new DateTimeOffset(2026, 10, 25, 12, 0, 0, TimeSpan.Zero);
             var line = JsonSerializer.Serialize(new { Time = time, Pc = "PC1", Kind = "opcja", Name = "Przykład", Category = "Pomoc", Who = "abc" });
+            var earlier = JsonSerializer.Serialize(new { Time = time.AddHours(-1), Pc = "PC1", Kind = "opcja", Name = "Wcześniej", Category = "Pomoc", Who = "abc" });
             File.WriteAllText(Path.Combine(root, "2026-10.jsonl"), line + "\n{\"Time\":42}\n[]\n");
-            File.WriteAllText(Path.Combine(computer, "2026-10.jsonl"), line);
+            File.WriteAllText(Path.Combine(computer, "2026-10.jsonl"), earlier);
             File.WriteAllText(Path.Combine(deeper, "2026-10.jsonl"), line);
             File.WriteAllText(Path.Combine(computer, "2026-09.jsonl"), line);
-            if (Read(root, time.AddDays(-1), CancellationToken.None).Count != 2)
+            var read = Read(root, time.AddDays(-1), CancellationToken.None);
+            if (read.Count != 2 || read[0].Time != time.AddHours(-1) || read[1].Time != time)
                 throw new InvalidOperationException("Statistics read escaped the month or one-folder boundary.");
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
             try { Read(root, time.AddDays(-1), cancelled.Token); throw new InvalidOperationException("Statistics read ignored cancellation."); }
             catch (OperationCanceledException) { }
-            var csv = Csv([new Entry(time, "PC1", "opcja", "=1+1", " \r+2", "＠SUM")]);
+            using var csvWriter = new StringWriter();
+            WriteCsv(csvWriter, [new Entry(time, "PC1", "opcja", "=1+1", " \r+2", "＠SUM")], CancellationToken.None);
+            var csv = csvWriter.ToString();
             if (!csv.Contains("\"\t=1+1\"", StringComparison.Ordinal) ||
                 !csv.Contains("\"\t \r+2\"", StringComparison.Ordinal) ||
                 !csv.Contains("\"\t＠SUM\"", StringComparison.Ordinal))
                 throw new InvalidOperationException("Statistics CSV accepted a spreadsheet formula.");
+            using var cancelledCsv = new StringWriter();
+            try { WriteCsv(cancelledCsv, read, cancelled.Token); throw new InvalidOperationException("Statistics CSV ignored cancellation."); }
+            catch (OperationCanceledException) { }
+            var exported = Path.Combine(root, "export.csv");
+            SaveCsv(exported, read, CancellationToken.None);
+            var saved = File.ReadAllText(exported);
+            var earlierPosition = saved.IndexOf("Wcześniej", StringComparison.Ordinal);
+            var laterPosition = saved.IndexOf("Przykład", StringComparison.Ordinal);
+            if (!saved.StartsWith("Czas;Komputer;Rodzaj;Nazwa;Kategoria;Osoba\r\n", StringComparison.Ordinal) ||
+                earlierPosition < 0 || laterPosition < 0 || earlierPosition > laterPosition)
+                throw new InvalidOperationException("Statistics CSV did not preserve chronological order.");
+            File.WriteAllText(exported, "previous export");
+            try { SaveCsv(exported, read, cancelled.Token); throw new InvalidOperationException("Cancelled statistics CSV replaced the previous export."); }
+            catch (OperationCanceledException) { }
+            if (File.ReadAllText(exported) != "previous export" || Directory.EnumerateFiles(root, "export.csv.*.tmp").Any())
+                throw new InvalidOperationException("Cancelled statistics CSV damaged the previous export or left a temporary file.");
         }
         finally
         {
