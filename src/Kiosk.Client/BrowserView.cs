@@ -575,9 +575,9 @@ internal sealed class SitePolicy
         // A bookmark for www.example.com also allows example.com and its subdomains (sign-in pages, redirects).
         hosts = bookmarks.Select(b => Uri.TryCreate(b.Url, UriKind.Absolute, out var uri) ? uri.Host : "")
             .Concat(extraDomains)
-            .Select(h => h.Trim().TrimEnd('.').ToLowerInvariant())
-            .Select(h => h.StartsWith("www.") ? h[4..] : h)
-            .Where(h => h.Length > 0).Distinct().ToArray();
+            .Select(h => h.Trim().TrimEnd('.'))
+            .Select(h => h.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? h[4..] : h)
+            .Where(h => h.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     internal bool Restricted => hosts != null;
@@ -597,8 +597,9 @@ internal sealed class SitePolicy
         if (uri.IsFile) return trustedFolders.Any(f => uri.LocalPath.StartsWith(f, StringComparison.OrdinalIgnoreCase));
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
         if (hosts == null) return true;
-        var host = uri.Host.TrimEnd('.').ToLowerInvariant();
+        var host = uri.Host.TrimEnd('.');
         if (trustedHosts.Contains(host)) return true;
-        return hosts.Any(h => host == h || host.EndsWith("." + h, StringComparison.Ordinal));
+        return hosts.Any(h => string.Equals(host, h, StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith("." + h, StringComparison.OrdinalIgnoreCase));
     }
 }

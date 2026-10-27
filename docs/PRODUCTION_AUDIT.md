@@ -182,6 +182,8 @@ Eksport miesięcznych statystyk zapisuje CSV wiersz po wierszu z kopii dziennika
 
 W starszym `SelfService/CardBroker` polecenia `park` i `open` do okna strony jednej sesji są wykonywane kolejno. Zamknięcie strony i wybór następnej nie mogą już dotrzeć do procesu w odwrotnej kolejności. Żądanie, które po oczekiwaniu stało się nieaktualne (nowy wybór, zamknięcie lub wylogowanie), nie pokazuje poprzedniej strony; jeżeli zdążyło ją otworzyć, parkuje ją przed następnym poleceniem. Test wymusza oba przeploty przy użyciu kontrolowanych opóźnień. Rzeczywisty proces z kontem karty pozostaje do próby na stanowisku testowym.
 
+Reguła dozwolonych domen przeglądarki porównuje nazwy hostów przez `OrdinalIgnoreCase`, bez zmiany ich zapisu na małe litery. Test obejmuje wielkie litery, kropkę końcową, poddomeny oraz hosty podszywające się przez prefiks lub dopisany sufiks. To sprawdza porównanie adresów; przejście przez faktyczne przekierowania SSO nadal wymaga testu na docelowym stanowisku.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

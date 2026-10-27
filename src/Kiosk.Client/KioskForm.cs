@@ -2487,8 +2487,10 @@ internal sealed partial class KioskForm : Form
 
         var sites = new SitePolicy(true, [new Bookmark { Name = "Portal", Url = "https://www.portal.example.pl/start" }], ["login.microsoftonline.com"]);
         if (!sites.Allows("https://portal.example.pl/") || !sites.Allows("https://app.portal.example.pl/x") ||
-            !sites.Allows("https://login.microsoftonline.com/common") || sites.Allows("https://www.google.com/") ||
-            sites.Allows("https://evilportal.example.pl/") || sites.Allows("file:///C:/") || !new SitePolicy(false, [], []).Allows("https://any.example/"))
+            !sites.Allows("https://APP.PORTAL.EXAMPLE.PL./x") ||
+            !sites.Allows("https://LOGIN.MICROSOFTONLINE.COM/common") || sites.Allows("https://www.google.com/") ||
+            sites.Allows("https://evilportal.example.pl/") || sites.Allows("https://portal.example.pl.evil.test/") ||
+            sites.Allows("file:///C:/") || !new SitePolicy(false, [], []).Allows("https://any.example/"))
             throw new InvalidOperationException("Browser site policy failed.");
         using (var restricted = new BrowserView([new Bookmark { Name = "Portal", Url = "https://portal.example.pl/" }], sites))
             if (restricted.Controls.OfType<FlowLayoutPanel>().Any() || restricted.Controls.OfType<Panel>().SelectMany(p => p.Controls.OfType<TextBox>()).Any())
