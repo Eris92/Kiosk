@@ -39,6 +39,10 @@ internal static class ConfigManager
 
     private sealed class Settings { public string Root { get; set; } = ""; }
 
+#if KIOSK_SELF_TEST
+    internal static void SelfTest() => ManagerForm.SelfTest();
+#endif
+
     private sealed class ManagerForm : Form
     {
         private readonly TextBox rootBox = new() { Width = 520 };
@@ -104,8 +108,12 @@ internal static class ConfigManager
             Remember(Root);
             try
             {
-                foreach (var folder in Directory.GetDirectories(Root).OrderBy(f => f, StringComparer.CurrentCultureIgnoreCase))
+                var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
+                foreach (var folder in Directory.EnumerateDirectories(Root, "*", options).OrderBy(f => f, StringComparer.CurrentCultureIgnoreCase))
                 {
+                    var name = Path.GetFileName(folder);
+                    if (name.StartsWith(".kiosk-config-", StringComparison.OrdinalIgnoreCase) &&
+                        Guid.TryParseExact(name[".kiosk-config-".Length..], "N", out _)) continue;
                     var file = Path.Combine(folder, CentralConfig.FileName);
                     if (!File.Exists(file)) continue;   // Other folders (pictures, messages, statistics) are not configurations.
                     string note;
@@ -140,16 +148,7 @@ internal static class ConfigManager
             var folder = Path.Combine(Root, name);
             try
             {
-                if (Directory.Exists(folder)) throw new IOException("Konfiguracja „" + name + "” już jest.");
-                if (source != null) CopyFolder(source, folder);
-                else
-                {
-                    Directory.CreateDirectory(folder);
-                    // The example shipped with the Kiosk, else the built-in defaults.
-                    var example = Path.Combine(AppContext.BaseDirectory, CentralConfig.FileName);
-                    var config = File.Exists(example) ? Configuration.Load(example) : new Config();
-                    Configuration.Save(Path.Combine(folder, CentralConfig.FileName), config with { ConfigSource = "" });
-                }
+                CreateFolder(folder, source);
                 Audit.Write("config_created", folder);
                 Reload(folder);
                 Edit();
@@ -157,12 +156,106 @@ internal static class ConfigManager
             catch (Exception ex) { MessageBox.Show(this, "Nie udało się utworzyć konfiguracji: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
 
+        private static void CreateFolder(string destination, string? source)
+        {
+            var parent = Path.GetDirectoryName(destination) ?? throw new ArgumentException("Configuration folder must have a parent.", nameof(destination));
+            if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("Konfiguracja „" + Path.GetFileName(destination) + "” już jest.");
+            var staging = Path.Combine(parent, ".kiosk-config-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                if (source != null) CopyFolder(source, staging);
+                else
+                {
+                    Directory.CreateDirectory(staging);
+                    // The example shipped with the Kiosk, else the built-in defaults.
+                    var example = Path.Combine(AppContext.BaseDirectory, CentralConfig.FileName);
+                    var config = File.Exists(example) ? Configuration.Load(example) : new Config();
+                    Configuration.Save(Path.Combine(staging, CentralConfig.FileName), config with { ConfigSource = "" });
+                }
+                Directory.Move(staging, destination);
+            }
+            finally
+            {
+                if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+            }
+        }
+
         private static void CopyFolder(string from, string to)
         {
-            Directory.CreateDirectory(to);
-            foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
-            foreach (var folder in Directory.GetDirectories(from)) CopyFolder(folder, Path.Combine(to, Path.GetFileName(folder)));
+            if ((File.GetAttributes(from) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Nie można kopiować konfiguracji przez dowiązanie folderu.");
+            var options = new EnumerationOptions { AttributesToSkip = 0 };
+            var pending = new Stack<(string Source, string Target)>();
+            pending.Push((from, to));
+            while (pending.TryPop(out var item))
+            {
+                Directory.CreateDirectory(item.Target);
+                foreach (var child in new DirectoryInfo(item.Source).EnumerateFileSystemInfos("*", options))
+                {
+                    if ((child.Attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new IOException("Nie można skopiować konfiguracji z dowiązaniem: " + child.FullName);
+                    if (child is DirectoryInfo) pending.Push((child.FullName, Path.Combine(item.Target, child.Name)));
+                    else if (child is FileInfo) File.Copy(child.FullName, Path.Combine(item.Target, child.Name));
+                }
+            }
         }
+
+#if KIOSK_SELF_TEST
+        internal static void SelfTest()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "Kiosk.ConfigManager.Test-" + Guid.NewGuid().ToString("N"));
+            var source = Path.Combine(root, "source");
+            var outside = Path.Combine(root, "outside");
+            var copied = Path.Combine(root, "copied");
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(source, "assets"));
+                Directory.CreateDirectory(outside);
+                File.WriteAllText(Path.Combine(source, CentralConfig.FileName), "{}");
+                File.WriteAllText(Path.Combine(source, "assets", "logo.txt"), "logo");
+                File.WriteAllText(Path.Combine(outside, "private.txt"), "outside");
+                var fresh = Path.Combine(root, "fresh");
+                CreateFolder(fresh, null);
+                if (!File.Exists(Path.Combine(fresh, CentralConfig.FileName)) ||
+                    Configuration.Load(Path.Combine(fresh, CentralConfig.FileName)).ConfigSource.Length != 0)
+                    throw new InvalidOperationException("Fresh configuration was not published or kept a server source.");
+                CreateFolder(copied, source);
+                if (File.ReadAllText(Path.Combine(copied, "assets", "logo.txt")) != "logo")
+                    throw new InvalidOperationException("Configuration copy lost an asset.");
+
+                var link = Path.Combine(source, "linked");
+                var linked = false;
+                try { Directory.CreateSymbolicLink(link, outside); linked = true; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { }
+                if (linked)
+                {
+                    var rejected = false;
+                    try { CreateFolder(Path.Combine(root, "linked-copy"), source); }
+                    catch (IOException) { rejected = true; }
+                    if (!rejected || Directory.Exists(Path.Combine(root, "linked-copy")))
+                        throw new InvalidOperationException("Configuration copy followed or silently skipped a directory link.");
+                    Directory.Delete(link);
+                }
+
+                var locked = Path.Combine(source, "locked.txt");
+                File.WriteAllText(locked, "in use");
+                using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    var failed = false;
+                    try { CreateFolder(Path.Combine(root, "partial"), source); }
+                    catch (IOException) { failed = true; }
+                    if (!failed || Directory.Exists(Path.Combine(root, "partial")) ||
+                        Directory.EnumerateDirectories(root, ".kiosk-config-*").Any())
+                        throw new InvalidOperationException("Failed configuration copy left a partial or staging folder.");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(root) && Path.GetFileName(root).StartsWith("Kiosk.ConfigManager.Test-", StringComparison.Ordinal))
+                    Directory.Delete(root, recursive: true);
+            }
+        }
+#endif
 
         private string? Ask(string question)
         {

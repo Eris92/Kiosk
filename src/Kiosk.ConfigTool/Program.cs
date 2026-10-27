@@ -28,7 +28,11 @@ internal static class Program
 
     private static bool IsConfigRoot(string folder)
     {
-        try { return Directory.GetDirectories(folder).Any(d => File.Exists(Path.Combine(d, "client.json"))); }
+        try
+        {
+            var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
+            return Directory.EnumerateDirectories(folder, "*", options).Any(d => File.Exists(Path.Combine(d, "client.json")));
+        }
         catch (Exception) { return false; }
     }
 }

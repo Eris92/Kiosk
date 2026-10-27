@@ -1,4 +1,4 @@
-# Audyt wydania Kiosk — 2026-10-23–26
+# Audyt wydania Kiosk — 2026-10-23–27
 
 ## Zakres i wynik
 
@@ -153,6 +153,8 @@ W ścieżce CTAP transakcja PC/SC zaczyna się teraz przed wyborem apletu FIDO2,
 Trzy operacje PIN korzystają z jednego kodu uzgadniania klucza ECDH. Tymczasowy klucz karty i jego publiczny uchwyt są zwalniane po wyprowadzeniu sekretu, a bufor nowego sekretu zastępuje poprzedni dopiero po udanym uzgodnieniu. Jawne bufory UTF-8 PIN-u, skrótu PIN-u i wyściełanej wartości są czyszczone również wtedy, gdy operacja kończy się błędem. Test z fizyczną kartą nadal jest konieczny dla `setpin`, `changepin` i `verify`.
 
 Broker FIDO odczytuje własny PID i numer sesji Windows raz na proces, zwalniając obiekt `Process` po inicjalizacji. Nazwy potoków, ścieżki logów i katalogów GUI używają tych samych wartości bez kolejnych otwarć procesu. Edytor komunikatów korzysta ze stałych ustawień zapisu JSON; ponowne sprawdzenie reguły `CA1869` nie zgłosiło ostrzeżenia.
+
+Menedżer „Konfiguracje Kiosków” tworzy nową konfigurację w katalogu tymczasowym na tym samym udziale i pokazuje ją dopiero po udanym przeniesieniu. Kopiuje drzewo iteracyjnie i odrzuca dowiązania zamiast przechodzić poza wybraną konfigurację lub tworzyć niepełną kopię. Test tworzy kopię z zasobem w podfolderze, wymusza błąd kopiowania przez zablokowany plik i sprawdza usunięcie katalogu tymczasowego. Dowiązanie sprawdza, jeżeli system pozwala je utworzyć bez podniesienia uprawnień.
 
 ## Bramka akceptacyjna przed produkcją
 
