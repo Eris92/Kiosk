@@ -113,7 +113,7 @@ internal static class CardPageHost
                 };
                 pipe.Write(Encoding.UTF8.GetBytes(answer + "\n"));
                 pipe.Flush();
-                pipe.WaitForPipeDrain();
+                // Closing leaves the reply available to the client; do not let it hold the only listener.
             }
             catch (Exception ex) when (ex is IOException or JsonException or ObjectDisposedException or InvalidOperationException) { Thread.Sleep(200); }
         }

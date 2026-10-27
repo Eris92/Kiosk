@@ -320,7 +320,8 @@ internal static class CardService
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var clientSession) ? clientSession : -1, clientProgram, request.Embed)
                     : Locked(Gate(request.Op), () => Handle(request));
                 WriteLine(pipe, response);
-                pipe.WaitForPipeDrain();
+                // The reply is buffered for the client after close; waiting for a client that never reads
+                // would pin this service worker indefinitely.
             }
             catch (Exception) { } // One bad client must not stop the service.
         }

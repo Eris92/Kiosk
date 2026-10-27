@@ -79,6 +79,22 @@ internal static class Program
                     }
                     catch (OperationCanceledException) when (elapsed.Elapsed < TimeSpan.FromSeconds(3)) { }
                 }
+                pipeName = "KioskImmediateReply-" + Guid.NewGuid().ToString("N");
+                using (var replyServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous, 4096, 4096))
+                using (var replyClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut))
+                {
+                    var accepting = replyServer.WaitForConnectionAsync();
+                    replyClient.Connect(1000);
+                    if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Synthetic reply pipe did not connect.");
+                    var expected = new string('x', 3072);
+                    replyServer.Write(System.Text.Encoding.UTF8.GetBytes(expected + "\n"));
+                    replyServer.Flush();
+                    replyServer.Dispose();
+                    using var replyReader = new StreamReader(replyClient);
+                    if (replyReader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult() != expected)
+                        throw new InvalidOperationException("A buffered pipe reply was lost when the server closed.");
+                }
                 var configSnapshot = Path.Combine(Path.GetTempPath(), "kiosk-config-test-" + Guid.NewGuid().ToString("N") + ".json");
                 try
                 {
@@ -287,7 +303,7 @@ internal static class Program
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();
-                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
+                        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), "Config migration and transactional configuration copy, bounded card-service pipe response and buffered reply after server close, RDP sign-in modes, PCSC, taskbar, menu, lock/resume, per-card sessions (park/switch/return/expire), ordered card page commands, card PIN plumbing, browser, notes, asynchronous file navigation and file commands, bounded and reused news pictures, SharePoint news request ordering, settings round-trip, responsive application launch, owned application window, idle screen recovery, watchdog late-watch rejection, bounded and cancellable statistics reading, atomic statistics export, safe export pruning, statistics CSV formula protection, bounded central configuration copy, background command and session cleanup passed.");
                         result = 0;
                     }
                     catch (Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "self-test.txt"), ex.ToString()); }
