@@ -156,10 +156,10 @@ internal sealed class SharePointNews : IDisposable
             try
             {
                 await core.ExecuteScriptAsync(Script(site, count));
-                await answer.Task.WaitAsync(Limit, stopped.Token);
+                var json = await answer.Task.WaitAsync(Limit, stopped.Token);
+                return Parse(json);
             }
             finally { core.WebMessageReceived -= Received; }
-            return Parse(answer.Task.Result);
         }
         finally { try { core.Navigate("about:blank"); } catch (Exception) { } }
     }

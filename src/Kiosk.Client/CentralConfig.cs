@@ -90,13 +90,13 @@ internal static class CentralConfig
         var machine = Task.Run(() => CardService.Call(new CardService.Request { Op = "testconfig", Source = source }));
         var person = Task.Run(() => Test(source, savedAccount: false));
         var account = typed is { User.Length: > 0 } ? Task.Run(() => Test(source, savedAccount: false, typed: typed)) : null;
-        await Task.WhenAll(machine, person, account ?? Task.FromResult(new CardService.Response()));
+        var results = await Task.WhenAll(machine, person, account ?? Task.FromResult(new CardService.Response()));
         // A service from before "testconfig" treats it as a card request and answers about the card.
         static string Line(CardService.Response r) => (r.Code == 0 ? "✔ " : "✖ ") +
             (r.Message.EndsWith("[połączenie]", StringComparison.Ordinal) ? "usługa Kiosk Card jest w starszej wersji – poproś administratora o wdrożenie nowej paczki" : r.Message);
-        return "Komputer (usługa Kiosk Card): " + Line(machine.Result) +
-            (account != null ? "\nKonto " + typed!.User.Trim() + " (zapisze się po Zapisz): " + Line(account.Result) : "") +
-            "\nTwoje konto (" + Environment.UserName + "): " + Line(person.Result);
+        return "Komputer (usługa Kiosk Card): " + Line(results[0]) +
+            (account != null ? "\nKonto " + typed!.User.Trim() + " (zapisze się po Zapisz): " + Line(results[2]) : "") +
+            "\nTwoje konto (" + Environment.UserName + "): " + Line(results[1]);
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ internal static class CentralConfig
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("brak dostępu do " + source);
         if (!File.Exists(Path.Combine(source, required))) throw new FileNotFoundException("w " + source + " nie ma " + required);
         Directory.CreateDirectory(cache);
-        var folder = Path.Combine(cache, DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N")[..8]);
+        var folder = Path.Combine(cache, DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
             Copy(source, folder, skipStatistics: required == FileName);

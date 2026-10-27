@@ -55,7 +55,7 @@ internal static class CardPin
             {
                 try { process.Kill(); }
                 catch (InvalidOperationException) { } // Exited between the check and Kill.
-                await process.WaitForExitAsync();
+                await process.WaitForExitAsync(CancellationToken.None);
             }
             throw;
         }

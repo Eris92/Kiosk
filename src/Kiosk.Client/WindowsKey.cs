@@ -12,7 +12,7 @@ internal sealed class WindowsKey : IDisposable
 {
     private const int WH_KEYBOARD_LL = 13, WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
     private const int VK_LWIN = 0x5B, VK_RWIN = 0x5C;
-    private const uint LLKHF_INJECTED = 0x10, KEYEVENTF_KEYUP = 0x2;
+    private const uint LLKHF_INJECTED = 0x10;
 
     private readonly HookProc proc;   // kept alive for the native callback
     private readonly IntPtr hook;

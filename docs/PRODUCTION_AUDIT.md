@@ -188,6 +188,10 @@ Odczyt odpowiedzi usługi karty jest ograniczony do 1 MiB znaków, a polecenia s
 
 Wykrywanie klasy okna przy osadzaniu aplikacji i zamykaniu jej dialogów używa krótkiego bufora na stosie zamiast `StringBuilder` i tymczasowych łańcuchów. Nazwa klasy jest porównywana bez tworzenia tekstu zarządzanego. Aktywny test UI odczytuje klasę własnego okna WinForms; natywny `GetClassNameW` zwraca długość zapisu bez końcowego zera. To usuwa alokacje w wielokrotnym skanowaniu okien; nie zmienia sposobu osadzania ani reguły rozpoznawania dialogów.
 
+Szerszy przebieg analizatora .NET wskazał nieużywaną stałą flagi klawiatury; została usunięta. Nazwa katalogu migawki konfiguracji używa teraz kultury niezmiennej. Test dostępu do udziału wykorzystuje wyniki jednego `Task.WhenAll`, a odbiór wiadomości SharePoint zwraca wynik zakończonego oczekiwania bez ponownego odczytu `Task.Result`. Po anulowaniu pomocnika PIN końcowe oczekiwanie jawnie używa `CancellationToken.None`, ponieważ proces został już zatrzymany. Ostrzeżenia o klasach tworzonych przez deserializator JSON nie są dowodem, że te klasy są nieużywane.
+
+Przegląd synchronizacji potwierdził, że konfiguracja z serwera jest kopiowana do nowej migawki przy każdym starcie, a komunikaty z udziału przy każdym odświeżeniu. To może wydłużać start i obciążać udział z dużymi plikami. Obecny format źródła nie zawiera wersji ani manifestu zmian; samo porównanie czasu i rozmiaru plików mogłoby pominąć aktualizację treści z zachowanymi metadanymi. Bez wiarygodnego protokołu publikacji i unieważniania migawki nie pominięto kopiowania.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
