@@ -186,6 +186,8 @@ Reguła dozwolonych domen przeglądarki porównuje nazwy hostów przez `OrdinalI
 
 Odczyt odpowiedzi usługi karty jest ograniczony do 1 MiB znaków, a polecenia strony uruchomionej w koncie użytkownika do 65 535 znaków; sprawdzenie limitu odbywa się podczas odbierania danych, przed deserializacją JSON. Dwuznakowa odpowiedź okna strony ma limit 16 znaków. Odczyty zachowują dotychczasowe terminy anulowania. Dla danych, których jeszcze nie ma w potoku, czytnik czeka na zakończenie `ValueTask`; szybka ścieżka dla już gotowego odczytu nie tworzy zadania. Self-test sprawdza opóźnioną odpowiedź, granicę długości z CRLF oraz odrzucenie za długich danych także wtedy, gdy nadawca pozostaje podłączony i nie kończy wiersza; rzeczywiste operacje z kartą pozostają do sprawdzenia na stanowisku.
 
+Wykrywanie klasy okna przy osadzaniu aplikacji i zamykaniu jej dialogów używa krótkiego bufora na stosie zamiast `StringBuilder` i tymczasowych łańcuchów. Nazwa klasy jest porównywana bez tworzenia tekstu zarządzanego. Aktywny test UI odczytuje klasę własnego okna WinForms; natywny `GetClassNameW` zwraca długość zapisu bez końcowego zera. To usuwa alokacje w wielokrotnym skanowaniu okien; nie zmienia sposobu osadzania ani reguły rozpoznawania dialogów.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

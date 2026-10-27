@@ -198,9 +198,7 @@ internal sealed class ApplicationView : Panel
 
     private void Embed(IntPtr window)
     {
-        var className = new StringBuilder(64);
-        AppNative.GetClassName(window, className, className.Capacity);
-        if (AlwaysOverlay || className.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) { Overlay(window); return; }
+        if (AlwaysOverlay || HasWindowClass(window, "Chrome_WidgetWin", prefix: true)) { Overlay(window); return; }
         var style = AppNative.GetWindowLongPtr(window, -16).ToInt64();
         // Remove popup, caption, sizing frame, min/max boxes and the minimised state; make it a child.
         style = (style & ~(0x80000000L | 0x00C00000L | 0x00040000L | 0x00080000L | 0x00030000L | 0x20000000L)) | 0x40000000L;
@@ -395,10 +393,16 @@ internal sealed class ApplicationView : Panel
             AppNative.GetWindowRect(w, out var r) && r.Right - r.Left >= 200 && r.Bottom - r.Top >= 100));
 
     /// <summary>Message boxes and dialogs (class #32770) are centred over the Kiosk, never embedded as the main window.</summary>
-    private static bool IsDialog(IntPtr window)
+    private static bool IsDialog(IntPtr window) => HasWindowClass(window, "#32770", prefix: false);
+
+    /// <summary>Compare the native window class without a marshalled StringBuilder or a temporary string.</summary>
+    internal static unsafe bool HasWindowClass(IntPtr window, ReadOnlySpan<char> expected, bool prefix)
     {
-        var name = new StringBuilder(64);
-        return AppNative.GetClassName(window, name, name.Capacity) > 0 && name.ToString() == "#32770";
+        char* buffer = stackalloc char[64];
+        var length = AppNative.GetClassName(window, buffer, 64);
+        if (length == 0) return false;
+        var actual = new ReadOnlySpan<char>(buffer, length);
+        return prefix ? actual.StartsWith(expected, StringComparison.Ordinal) : actual.SequenceEqual(expected);
     }
 
     private List<IntPtr> JobWindows(bool includeOwned)
@@ -612,7 +616,7 @@ internal static class AppNative
     [DllImport("user32.dll")] internal static extern bool EnableWindow(IntPtr window, bool enable);
     [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(IntPtr window, StringBuilder name, int length);
+    [DllImport("user32.dll", EntryPoint = "GetClassNameW", ExactSpelling = true)] internal static extern unsafe int GetClassName(IntPtr window, char* name, int length);
     [DllImport("user32.dll")] internal static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] internal static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] internal static extern bool RedrawWindow(IntPtr window, IntPtr rect, IntPtr region, uint flags);

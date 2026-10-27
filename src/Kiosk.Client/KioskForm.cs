@@ -547,8 +547,7 @@ internal sealed partial class KioskForm : Form
         taskMenu?.Close();
         AppNative.EnumThreadWindows(AppNative.GetCurrentThreadId(), (window, _) =>
         {
-            var name = new System.Text.StringBuilder(16);
-            if (AppNative.GetClassName(window, name, name.Capacity) > 0 && name.ToString() == "#32770")
+            if (ApplicationView.HasWindowClass(window, "#32770", prefix: false))
             {
                 AppNative.PostMessage(window, 0x0111, (IntPtr)7, IntPtr.Zero);   // WM_COMMAND IDNO (a Tak/Nie box has no Anuluj)
                 AppNative.PostMessage(window, 0x0111, (IntPtr)2, IntPtr.Zero);   // IDCANCEL: other questions, file dialogs
@@ -2536,6 +2535,9 @@ internal sealed partial class KioskForm : Form
     internal async Task EmbeddedSmokeTestAsync()
     {
         await CardPageCommandSmokeTestAsync();
+        if (!ApplicationView.HasWindowClass(Handle, "WindowsForms", prefix: true) ||
+            ApplicationView.HasWindowClass(Handle, "#32770", prefix: false))
+            throw new InvalidOperationException("Native window class lookup failed.");
         if (BrowserView.SecureCredentialOrigin("https://help.example:8443/private") != "https://help.example:8443" ||
             BrowserView.SecureCredentialOrigin("http://help.example/") != null ||
             BrowserView.SecureCredentialOrigin("https://user:password@help.example/") != null)
