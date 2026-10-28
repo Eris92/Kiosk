@@ -33,6 +33,9 @@ internal sealed class MainForm : Form
     private readonly Button save = new() { Text = "Zapisz na serwerze", AutoSize = true };
     private readonly TableLayoutPanel fields = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(8) };
     private Image? previewImage;
+    private CancellationTokenSource? previewLoadStop;
+    private int previewLoadVersion;
+    private CancellationTokenSource? mediaCopyStop;
 
     internal MainForm(EditorSettings settings)
     {
@@ -98,7 +101,12 @@ internal sealed class MainForm : Form
         kind.SelectedIndexChanged += (_, _) => Changed();
         from.ValueChanged += (_, _) => Changed();
         until.ValueChanged += (_, _) => Changed();
-        FormClosing += (_, e) => { if (dirty && !AskSave()) e.Cancel = true; };
+        FormClosing += (_, e) =>
+        {
+            if (mediaCopyStop != null) { mediaCopyStop.Cancel(); Status("Anuluję kopiowanie pliku. Zamknij okno ponownie po zakończeniu."); e.Cancel = true; return; }
+            if (dirty && !AskSave()) e.Cancel = true;
+        };
+        FormClosed += (_, _) => mediaCopyStop?.Cancel();
         Shown += (_, _) => Reload();
     }
 
@@ -130,6 +138,7 @@ internal sealed class MainForm : Form
 
     private void Reload()
     {
+        if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return; }
         if (dirty && !AskSave()) return;
         folderLabel.Text = "Folder: " + file.Folder;
         try
@@ -168,6 +177,7 @@ internal sealed class MainForm : Form
 
     private void ChangeFolder()
     {
+        if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return; }
         using var dialog = new FolderBrowserDialog { Description = "Folder z " + NewsFile.FileName + " (zwykle udział na serwerze)", InitialDirectory = file.Folder, UseDescriptionForTitle = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (dirty && !AskSave()) return;
@@ -293,35 +303,56 @@ internal sealed class MainForm : Form
     private static DateTime Minute(DateTime t) => new(t.Year, t.Month, t.Day, t.Hour, t.Minute, 0);
 
     /// <summary>A picture or film from anywhere: copied into the messages folder (the kiosks read it from there), named by its file name.</summary>
-    private void PickMedia(TextBox target, string filter)
+    private async void PickMedia(TextBox target, string filter)
     {
+        if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return; }
         using var dialog = new OpenFileDialog { Filter = filter, Title = "Wybierz plik – zostanie skopiowany do folderu komunikatów" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        var source = dialog.FileName;
-        var name = Path.GetFileName(source);
-        var destination = Path.Combine(file.Folder, name);
+        var entry = Current;
+        var selectedFile = file;
+        mediaCopyStop = new CancellationTokenSource();
         try
         {
-            if (target == image) using (ReadPreviewImage(source)) { }
-            if (!string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
+            var source = dialog.FileName;
+            var name = Path.GetFileName(source);
+            var destination = Path.Combine(file.Folder, name);
+            var sameFile = string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase);
+            var overwrite = false;
+            if (!sameFile)
             {
-                if (File.Exists(destination) && MessageBox.Show(this, "W folderze jest już " + name + ". Zastąpić go?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                if (File.Exists(destination))
                 {
-                    var stem = Path.GetFileNameWithoutExtension(name);
-                    var ext = Path.GetExtension(name);
-                    for (var i = 2; File.Exists(destination); i++) { name = stem + "-" + i + ext; destination = Path.Combine(file.Folder, name); }
+                    overwrite = MessageBox.Show(this, "W folderze jest już " + name + ". Zastąpić go?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+                    if (!overwrite)
+                    {
+                        var stem = Path.GetFileNameWithoutExtension(name);
+                        var ext = Path.GetExtension(name);
+                        for (var i = 2; File.Exists(destination); i++) { name = stem + "-" + i + ext; destination = Path.Combine(file.Folder, name); }
+                    }
                 }
                 Cursor = Cursors.WaitCursor;
                 Status("Kopiuję " + name + "…");
-                Refresh();
-                File.Copy(source, destination, true);
+                await MediaCopy.CopyAsync(source, destination, overwrite, target == image ? ValidatePicture : null, mediaCopyStop.Token);
+                if (IsDisposed) return;
                 Status("Skopiowano " + name + " do folderu komunikatów.");
             }
-            target.Text = name;
+            else if (target == image) await Task.Run(() => ValidatePicture(source), mediaCopyStop.Token);
+            if (IsDisposed || mediaCopyStop.IsCancellationRequested) return;
+            if (!ReferenceEquals(file, selectedFile) || entry == null || !file.Entries.Contains(entry)) return;
+            if (ReferenceEquals(Current, entry)) target.Text = name;
+            else
+            {
+                if (target == image) entry.Image = name; else entry.Video = name;
+                list.RefreshEntry(file.Entries.IndexOf(entry));
+                SetDirty(true);
+            }
         }
-        catch (Exception ex) { MessageBox.Show(this, "Nie udało się skopiować: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
-        finally { Cursor = Cursors.Default; }
+        catch (OperationCanceledException) when (mediaCopyStop.IsCancellationRequested) { }
+        catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, "Nie udało się skopiować: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally { mediaCopyStop.Dispose(); mediaCopyStop = null; if (!IsDisposed) Cursor = Cursors.Default; }
     }
+
+    private static void ValidatePicture(string path) { using var picture = ReadPreviewImage(path); }
 
     private void PickColor(TextBox target)
     {
@@ -347,15 +378,37 @@ internal sealed class MainForm : Form
 
     private void LoadPreviewImage(NewsEntry e)
     {
+        previewLoadStop?.Cancel();
+        previewLoadStop = null;
+        var version = ++previewLoadVersion;
         previewImage?.Dispose();
         previewImage = null;
+        preview.Invalidate();
         if (e.Image.Length == 0) return;
         try
         {
             var path = Path.IsPathFullyQualified(e.Image) ? e.Image : Path.Combine(file.Folder, e.Image);
-            previewImage = ReadPreviewImage(path);
+            var stop = new CancellationTokenSource();
+            previewLoadStop = stop;
+            _ = LoadPreviewImageAsync(path, version, stop);
         }
-        catch (Exception ex) { previewImage = null; Status("Nie można wyświetlić obrazu: " + ex.Message); }
+        catch (Exception ex) { Status("Nie można wyświetlić obrazu: " + ex.Message); }
+    }
+
+    private async Task LoadPreviewImageAsync(string path, int version, CancellationTokenSource stop)
+    {
+        try
+        {
+            // Typing an image path fires TextChanged for every character. Only decode the latest one.
+            await Task.Delay(150, stop.Token);
+            var picture = await Task.Run(() => ReadPreviewImage(path), stop.Token);
+            if (IsDisposed || stop.IsCancellationRequested || version != previewLoadVersion) { picture.Dispose(); return; }
+            previewImage = picture;
+            preview.Invalidate();
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (Exception ex) { if (!IsDisposed && version == previewLoadVersion) Status("Nie można wyświetlić obrazu: " + ex.Message); }
+        finally { if (ReferenceEquals(previewLoadStop, stop)) previewLoadStop = null; stop.Dispose(); }
     }
 
     private static Image ReadPreviewImage(string path)
@@ -380,7 +433,7 @@ internal sealed class MainForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { previewImage?.Dispose(); previewImage = null; }
+        if (disposing) { previewLoadStop?.Cancel(); previewImage?.Dispose(); previewImage = null; }
         base.Dispose(disposing);
     }
 

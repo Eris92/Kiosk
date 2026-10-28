@@ -197,6 +197,8 @@ Przegląd synchronizacji potwierdził, że konfiguracja z serwera jest kopiowana
 
 Edytor komunikatów sortuje odczytane wpisy statystyk na wątku roboczym. Eksport CSV zapisuje je potem wiersz po wierszu do pliku tymczasowego, również poza wątkiem UI; po pełnym zapisie zastępuje plik wybrany przez użytkownika. Zamknięcie widoku anuluje zapis i usuwa niepełny plik. Self-test sprawdza kolejność czasową, ochronę pól przed formułami, poprawny zapis oraz zachowanie poprzedniego CSV po anulowaniu. Widok nadal przechowuje odczytane wpisy w pamięci do agregacji tabel; zmiana usuwa dodatkowy duży łańcuch CSV i blokowanie okna podczas zapisu.
 
+Edytor kopiuje obrazy i filmy do folderu komunikatów poza wątkiem UI. Najpierw zapisuje plik tymczasowy w tym samym folderze, sprawdza skopiowany obraz i dopiero potem podmienia nazwę docelową. Próba zamknięcia okna anuluje trwające kopiowanie i wymaga ponownego zamknięcia po sprzątnięciu pliku; błąd walidacji również zostawia wcześniejszy plik docelowy. Self-test sprawdza anulowanie, błąd walidacji, pełną publikację i usunięcie pliku tymczasowego. Podgląd obrazu także jest odczytywany poza wątkiem UI; szybkie zmiany pola anulują poprzednie żądanie i opóźniają dekodowanie o 150 ms, żeby wyświetlić tylko najnowszy wybór.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
