@@ -501,7 +501,7 @@ internal sealed partial class KioskForm : Form
         if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; }
         session.Commands.Dispose();
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
-        session.Logon?.Dispose(); // Forget the password with the session.
+        session.Logon?.Dispose(); // End the person's broker sign-in and its programs.
         session.Logon = null;
         sessions.Remove(session.Identity.Id);
         Audit.Write(reason, session.Identity.Name);
@@ -1269,7 +1269,6 @@ internal sealed partial class KioskForm : Form
         switch (item.Action.ToLowerInvariant())
         {
             case HelpAction.ChangePin: await ChangeCardPinAsync(); break;
-            case HelpAction.Reenroll: await ForgetCardAsync(); break;
             case HelpAction.ResetCard: await ResetCardAsync(); break;
             case HelpAction.FirstSignIn: await FirstSignInAsync(); break;
             default:
@@ -1411,35 +1410,6 @@ internal sealed partial class KioskForm : Form
         catch (Exception ex) { ShowHelpResult("Nie udało się pokazać ekranu logowania Windows: " + ex.Message); }
     }
 
-    /// <summary>Szybka pomoc → Skonfiguruj kartę od nowa: Kiosk forgets the account saved for this card.</summary>
-    private async Task ForgetCardAsync()
-    {
-        if (!CardForHelp(out _)) return;
-        var id = (identifyCard() ?? UncertifiedCard()).Id;
-        if (id == null) { ShowHelpResult("Nie udało się odczytać karty."); return; }
-        // While the question is open the card and idle screens wait (taking the card away must not switch the desktop under it).
-        verifying = true;
-        bool confirmed;
-        try
-        {
-            confirmed = await desktop.AskAsync("Skonfiguruj kartę od nowa", "Kiosk zapomni konto zapisane dla tej karty. Przy następnym logowaniu podasz login, hasło i PIN karty, " +
-                "a karta zostanie zapamiętana od nowa (np. po zmianie hasła). Kontynuować?", config.HelpCloseSeconds);
-        }
-        finally { verifying = false; } // A card taken away meanwhile is handled on the next tick.
-        if (!confirmed) { ShowHelpResult("Anulowano: karta zostaje bez zmian."); return; }
-        CardVault.Forget(id);
-        Audit.Write("card_forgotten");
-        // The account stays signed in for an open session of this card: close it, so the next sign-in really asks again.
-        if (sessions.TryGetValue(id, out var session) && (!session.HasWork || ConfirmEnd([session])))
-        {
-            bool wasCurrent = session == current;
-            CloseSession(session, "card_forgotten");
-            if (wasCurrent) requireRemoval = cardKey != null;
-            RefreshChrome();
-        }
-        ShowHelpResult("Kiosk zapomniał konto tej karty. Wyjmij kartę i przyłóż ją ponownie: podasz login, hasło i PIN.");
-    }
-
     /// <summary>
     /// Szybka pomoc → Resetuj kartę: the card's own FIDO2 reset (no PIN, no keys), then a new PIN right away.
     /// Cards allow it only just after they got power: Kiosk powers the card again, or asks to put it on the reader again.
@@ -1480,8 +1450,8 @@ internal sealed partial class KioskForm : Form
             if (id != null) CardVault.Forget(id);
             var pin = await EnsureCardPinAsync(readerName, config.HelpCloseSeconds);
             ShowHelpResult(pin != null
-                ? "Karta zresetowana i ma nowy PIN. Przy logowaniu podasz login, hasło i nowy PIN; klucz do logowania w Windows dodaj ponownie."
-                : "Karta zresetowana. Przy następnym logowaniu ustawisz nowy PIN.");
+                ? "Karta zresetowana i ma nowy PIN. Dodaj ponownie klucz logowania w Windows lub Microsoft 365 (Skonfiguruj MFA)."
+                : "Karta zresetowana. Przy następnym użyciu ustaw nowy PIN i dodaj ponownie klucz logowania.");
         }
         finally { verifying = false; cardKey = reader.Snapshot(config.ReaderName); }
     }
@@ -2449,6 +2419,22 @@ internal sealed partial class KioskForm : Form
             (categorized with { Category = " Sprzęt / Karta " }).CategoryPath != "Sprzęt/Karta" ||
             (categorized with { Category = null! }).CategoryPath != "")
             throw new InvalidOperationException("Help category normalization changed after copying an action.");
+
+        var oldCardHelp = new Config
+        {
+            ConfigVersion = Config.CurrentVersion,
+            HelpActions =
+            [
+                new HelpAction { Name = "Stara akcja", Action = "kiosk:nowa-karta" },
+                new HelpAction { Name = "MFA", Action = "https://aka.ms/mfasetup" }
+            ],
+            MenuCategories = [new MenuCategory { Name = "Pomoc/Karta", Action = "KIOSK:NOWA-KARTA" }]
+        }.Migrate();
+        oldCardHelp.Validate();
+        if (oldCardHelp.HelpActions.Length != 1 || oldCardHelp.HelpActions[0].Name != "MFA" ||
+            oldCardHelp.MenuCategories[0].Action.Length != 0 ||
+            HelpAction.Defaults.Any(h => h.Action.Equals("kiosk:nowa-karta", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Obsolete password-to-card help action survived migration.");
 
         // Older single-server files migrate to the connection list and the lock / retention timers.
         var legacy = System.Text.Json.JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\",\"SelfServiceSignInUrl\":\"https://old.example/sign-in\",\"SelfServiceLinkUrl\":\"https://old.example/link\"}")!.Migrate();

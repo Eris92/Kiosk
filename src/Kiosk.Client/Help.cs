@@ -109,7 +109,6 @@ internal sealed class HelpBar : Control
         return entry.Item.Action.ToLowerInvariant() switch
         {
             HelpAction.ChangePin => "\uE8D7",    // key
-            HelpAction.Reenroll => "\uE77B",     // person
             HelpAction.FirstSignIn => "\uE77B",  // contact
             HelpAction.ResetCard => "\uE777",    // restore
             var a when a.Contains("mfa") || a.Contains("security") => "\uE72E", // lock

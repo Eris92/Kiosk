@@ -36,7 +36,7 @@ internal static class TileIcons
     internal static string For(HelpAction item) => ByName(item.Icon) ?? item.Action.ToLowerInvariant() switch
     {
         HelpAction.ChangePin => "",
-        HelpAction.Reenroll or HelpAction.FirstSignIn => "",
+        HelpAction.FirstSignIn => "",
         HelpAction.ResetCard => "",
         var a when a.Contains("mfa") || a.Contains("security") => "",
         _ => ""

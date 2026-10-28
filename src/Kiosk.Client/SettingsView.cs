@@ -431,7 +431,7 @@ internal sealed class SettingsView : UserControl
         foreach (var h in config.HelpActions) AddHelpRow(h);
         SetupGridTab(helpTab, helpActions, "Przyciski „Menu” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
-            HelpAction.Reenroll + " (Kiosk zapomina konto karty: login, hasło i PIN od nowa), " + HelpAction.ResetCard +
+            HelpAction.ResetCard +
             " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +
             " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
             "Kategorię wybierasz z listy (tworzysz je w zakładce „Kategorie”). Kolejność w Kiosku: jak na tej liście, zmieniasz ją przyciskami „Wyżej” / „Niżej”. " +

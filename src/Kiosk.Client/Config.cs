@@ -134,8 +134,8 @@ internal sealed record Config
     public int LockAfterSeconds { get; init; } = 300;
     public int ChangeUserAfterSeconds { get; init; } = 600;
     public UnlockMethod UnlockMethod { get; init; } = UnlockMethod.Card;
-    /// <summary>"Zaloguj" also asks for the person's Windows / Entra login and password (like runas); their apps,
-    /// Edge and "current user" remote desktops then run as them. Kiosk mode only.</summary>
+    /// <summary>"Zaloguj" authenticates the person's FIDO2 card and PIN through Windows; their apps,
+    /// Edge and remote desktops then run in that Windows account. Kiosk mode only.</summary>
     public bool SignInAsUser { get; init; }
     /// <summary>Kiosk: one Windows account, the Kiosk switches people by card. WindowsShell: every person signs in to
     /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.
@@ -233,11 +233,17 @@ internal sealed record Config
             throw new InvalidDataException("Wersja konfiguracji nie jest obsługiwana przez ten Kiosk.");
         if (RdpConnections == null) throw new InvalidDataException("Lista RDP nie może być null.");
         if (Applications == null || Applications.Any(a => a == null)) throw new InvalidDataException("Lista aplikacji zawiera wartość null.");
+        if (HelpActions == null) throw new InvalidDataException("Lista Menu nie może być null.");
         var applications = ConfigVersion < 2 && !Applications.Any(a => a.IsBuiltInNotes) ? [.. Applications, ApplicationEntry.Notes] : Applications;
         // Version 3: the browser became an entry of the application list instead of the EnableBrowser switch.
         if (ConfigVersion < 3 && EnableBrowser && !applications.Any(a => a.IsBuiltInBrowser)) applications = [ApplicationEntry.Browser, .. applications];
         // Version 5: the built-in file manager (Pliki) joins the list; remove it there to turn it off.
         if (ConfigVersion < 5 && !applications.Any(a => a.IsBuiltInFiles)) applications = [.. applications, ApplicationEntry.Files];
+        // The former password-to-card association no longer exists. Remove its inert button from old files.
+        const string oldReenroll = "kiosk:nowa-karta";
+        var helpActions = HelpActions.Where(h => !string.Equals(h?.Action, oldReenroll, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var categories = (MenuCategories ?? []).OfType<MenuCategory>().Select(c => string.Equals(c.Action, oldReenroll, StringComparison.OrdinalIgnoreCase)
+            ? c with { Action = "" } : c).ToArray();
         return this with
         {
             RdpConnections = RdpConnections.Length == 0 && !string.IsNullOrWhiteSpace(Server)
@@ -247,7 +253,8 @@ internal sealed record Config
             ChangeUserAfterSeconds = IdleSeconds.HasValue ? Math.Max(ChangeUserAfterSeconds, IdleSeconds.Value * 2) : ChangeUserAfterSeconds,
             Applications = applications,
             EnableBrowser = applications.Any(a => a.IsBuiltInBrowser),
-            MenuCategories = MenuCategory.Complete(MenuCategories, HelpActions),
+            HelpActions = helpActions,
+            MenuCategories = MenuCategory.Complete(categories, helpActions),
             ConfigVersion = CurrentVersion,
             Server = null, Port = null, IdleSeconds = null, AutoUpdate = null, UpdateChannel = null,
             SelfServiceSignInUrl = null, SelfServiceLinkUrl = null

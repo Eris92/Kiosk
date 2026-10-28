@@ -81,7 +81,7 @@ internal sealed record PageAction
 
 /// <summary>
 /// Szybka pomoc: a button on the desktop that works locked and unlocked. Action: https://… (a guest browser window when
-/// nobody is signed in), kiosk:zmien-pin, kiosk:nowa-karta (set the card up again), kiosk:reset-karty,
+/// nobody is signed in), kiosk:zmien-pin, kiosk:reset-karty,
 /// kiosk:pierwsze-logowanie (one Windows sign-in for the profile and SSO, then back to the Kiosk).
 /// </summary>
 internal sealed record HelpAction
@@ -135,9 +135,9 @@ internal sealed record HelpAction
         return !(a == ResetCard || a.Contains("mfa") || a.Contains("sspr") || a.Contains("passwordreset") || a.Contains("security-info") || a.Contains("mysignins"));
     }
 
-    internal const string ChangePin = "kiosk:zmien-pin", Reenroll = "kiosk:nowa-karta", ResetCard = "kiosk:reset-karty",
+    internal const string ChangePin = "kiosk:zmien-pin", ResetCard = "kiosk:reset-karty",
         FirstSignIn = "kiosk:pierwsze-logowanie";
-    internal static readonly string[] BuiltIn = [ChangePin, Reenroll, ResetCard, FirstSignIn];
+    internal static readonly string[] BuiltIn = [ChangePin, ResetCard, FirstSignIn];
 
     internal static HelpAction[] Defaults =>
     [
@@ -146,7 +146,6 @@ internal sealed record HelpAction
         new() { Name = "Skonfiguruj MFA", Action = "https://aka.ms/mfasetup", Category = "Pomoc/Konto", Description = "Klucz zabezpieczeń i metody logowania" },
         new() { Name = "Resetuj hasło", Action = "https://aka.ms/sspr", Category = "Pomoc/Konto", Description = "Nowe hasło do konta", Icon = "klucz" },
         new() { Name = "Zmień PIN karty", Action = ChangePin, Category = "Pomoc/Karta", Description = "Nowy PIN do logowania kartą" },
-        new() { Name = "Skonfiguruj kartę od nowa", Action = Reenroll, Category = "Pomoc/Karta", Description = "Np. po zmianie hasła" },
         new() { Name = "Resetuj kartę", Action = ResetCard, Category = "Pomoc/Karta", Description = "Usuwa PIN i wszystkie klucze z karty" },
     ];
 }
