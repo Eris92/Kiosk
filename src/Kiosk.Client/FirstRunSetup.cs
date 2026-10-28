@@ -9,7 +9,6 @@ namespace Kiosk.Client;
 internal sealed class FirstRunSetup : Form
 {
     private readonly string path;
-    private readonly Config local;
     private readonly TextBox source = new() { Width = 640, Font = new Font("Segoe UI", 12), PlaceholderText = @"\\serwer\kiosk", Margin = new Padding(0, 4, 0, 8), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox user = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = @"DOMENA\użytkownik", Margin = new Padding(0, 0, 8, 0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
     private readonly TextBox password = new() { Width = 316, Font = new Font("Segoe UI", 12), PlaceholderText = "hasło", UseSystemPasswordChar = true, Margin = new Padding(0), BackColor = Color.FromArgb(45, 45, 45), ForeColor = KioskTheme.Text, BorderStyle = BorderStyle.FixedSingle };
@@ -30,7 +29,6 @@ internal sealed class FirstRunSetup : Form
     private FirstRunSetup(string path, Config local)
     {
         this.path = path;
-        this.local = local;
         Text = "Kiosk – pierwsze uruchomienie";
         FormBorderStyle = FormBorderStyle.None;
         WindowState = FormWindowState.Maximized;

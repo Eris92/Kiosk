@@ -233,7 +233,7 @@ internal sealed class NewsCarousel : Control
     private long shownAtMilliseconds = Environment.TickCount64;
     private readonly System.Windows.Forms.Timer animation = new() { Interval = 15 };
     private readonly System.Windows.Forms.Timer rotation = new() { Interval = 250 };
-    private Rectangle buttonBounds, leftArrow, rightArrow;
+    private Rectangle leftArrow, rightArrow;
     private readonly List<Rectangle> dots = [];
     // A film slide: played in a small browser over the slide; the slide moves on when the film ends.
     private NewsVideo? player;
@@ -448,8 +448,8 @@ internal sealed class NewsCarousel : Control
         // Sliding: the old message leaves on one side while the new one comes in from the other.
         double eased = 1 - Math.Pow(1 - progress, 3);
         int shift = (int)Math.Round(Width * eased) * direction;
-        if (previous >= 0 && previous < items.Count && progress < 1) DrawSlide(g, items[previous], -shift, false);
-        DrawSlide(g, items[index], previous >= 0 && progress < 1 ? Width * direction - shift : 0, true);
+        if (previous >= 0 && previous < items.Count && progress < 1) DrawSlide(g, items[previous], -shift);
+        DrawSlide(g, items[index], previous >= 0 && progress < 1 ? Width * direction - shift : 0);
         g.Restore(state);
 
         dots.Clear();
@@ -478,17 +478,16 @@ internal sealed class NewsCarousel : Control
         }
     }
 
-    private void DrawSlide(Graphics g, NewsItem item, int offset, bool current)
+    private void DrawSlide(Graphics g, NewsItem item, int offset)
     {
         if (FullScreen && item.IsVideo)
         {
             // Black under the film (also while the slide comes in, before the film starts).
             using var black = new SolidBrush(Color.Black);
             g.FillRectangle(black, new Rectangle(offset, 0, Width, Height));
-            if (current) buttonBounds = Rectangle.Empty;
             return;
         }
-        if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset, current); return; }
+        if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset); return; }
         int pad = S(22);
         var area = SlideArea(offset);
         int textLeft = area.Left;
@@ -531,10 +530,8 @@ internal sealed class NewsCarousel : Control
             using var fill = new SolidBrush(KioskTheme.Accent);
             g.FillPath(fill, pill);
             TextRenderer.DrawText(g, item.Button, font, bounds, KioskTheme.OnAccent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
-            if (current) buttonBounds = bounds;
             buttonWidth += pad;
         }
-        else if (current) buttonBounds = Rectangle.Empty;
         var textArea = new Rectangle(textLeft, area.Top, Math.Max(0, area.Right - buttonWidth - textLeft), area.Height);
         // A larger banner (Konfiguracja → Komunikaty → Rozmiar) gets larger letters.
         bool large = Height >= S(200), extra = Height >= S(300);
@@ -554,7 +551,7 @@ internal sealed class NewsCarousel : Control
     }
 
     /// <summary>The screensaver: the picture covers the whole slide, the title and text at its bottom (no shade).</summary>
-    private void DrawFullSlide(Graphics g, NewsItem item, int offset, bool current)
+    private void DrawFullSlide(Graphics g, NewsItem item, int offset)
     {
         var picture = item.Picture!;
         var slide = new Rectangle(offset, 0, Width, Height);
@@ -565,7 +562,6 @@ internal sealed class NewsCarousel : Control
         g.SetClip(slide, CombineMode.Intersect);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(picture, new Rectangle(slide.Left + (Width - w) / 2, (Height - h) / 2, w, h));
-        if (current) buttonBounds = Rectangle.Empty;
         if (item.Title.Length > 0 || item.Text.Length > 0)
         {
             int shadeHeight = Height / 3;
