@@ -13,6 +13,7 @@ namespace Kiosk.Client;
 internal sealed class FilesView : UserControl
 {
     private sealed record FileEntry(string Name, string Path, bool IsFolder, DateTime Modified, long? Bytes);
+    private static readonly uint[] ZipCrcTable = CreateZipCrcTable();
 
     private readonly Func<Func<object?>, object?> runAs;
     private readonly string? profile;
@@ -382,6 +383,7 @@ internal sealed class FilesView : UserControl
                 File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
                 using (var zip = ZipFile.OpenRead(path))
                 {
+                    EnsureArchiveFits(zip, partial);
                     var root = Path.GetFullPath(partial).TrimEnd('\\') + "\\";
                     foreach (var entry in zip.Entries)
                     {
@@ -396,7 +398,7 @@ internal sealed class FilesView : UserControl
                         using (var source = entry.Open())
                         using (var destinationFile = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072))
                         {
-                            CopyStream(source, destinationFile, cancellation);
+                            CopyStream(source, destinationFile, cancellation, entry.Length, entry.Crc32);
                             destinationFile.Flush(flushToDisk: true);
                         }
                         if (entry.LastWriteTime.Year is >= 1980 and <= 2107)
@@ -720,19 +722,67 @@ internal sealed class FilesView : UserControl
         catch { DeletePartial(partial); throw; }
     }
 
-    private static void CopyStream(Stream source, Stream destination, CancellationToken cancellation)
+    private static void EnsureArchiveFits(ZipArchive zip, string destination)
+    {
+        long required = 0;
+        foreach (var entry in zip.Entries)
+        {
+            if (entry.Length > long.MaxValue - required)
+                throw new InvalidDataException("Archiwum jest za duże do rozpakowania.");
+            required += entry.Length;
+        }
+
+        long? available = null;
+        try
+        {
+            var root = Path.GetPathRoot(destination);
+            if (root != null) available = new DriveInfo(root).AvailableFreeSpace;
+        }
+        catch (ArgumentException) { }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        if (available is long free && required > free)
+            throw new IOException("Za mało wolnego miejsca na rozpakowanie archiwum.");
+    }
+
+    private static uint[] CreateZipCrcTable()
+    {
+        var table = new uint[256];
+        for (uint i = 0; i < table.Length; i++)
+        {
+            var value = i;
+            for (var bit = 0; bit < 8; bit++)
+                value = (value >> 1) ^ ((value & 1) != 0 ? 0xedb88320u : 0u);
+            table[i] = value;
+        }
+        return table;
+    }
+
+    private static void CopyStream(Stream source, Stream destination, CancellationToken cancellation,
+        long? expectedBytes = null, uint? expectedCrc = null)
     {
         var size = source is FileStream file ? (int)Math.Clamp(file.Length - file.Position, 4096, 131072) : 131072;
         var buffer = ArrayPool<byte>.Shared.Rent(size);
         try
         {
+            long copied = 0;
+            uint crc = uint.MaxValue;
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
                 var read = source.Read(buffer);
                 if (read == 0) break;
+                if (expectedBytes is long expected && read > expected - copied)
+                    throw new InvalidDataException("Archiwum zawiera więcej danych niż zadeklarowano.");
+                if (expectedCrc != null)
+                    foreach (var value in buffer.AsSpan(0, read)) crc = ZipCrcTable[(crc ^ value) & 0xff] ^ (crc >> 8);
                 destination.Write(buffer, 0, read);
+                copied += read;
             }
+            if (expectedBytes is long total && copied != total)
+                throw new InvalidDataException("Archiwum zawiera mniej danych niż zadeklarowano.");
+            if (expectedCrc is uint correct && ~crc != correct)
+                throw new InvalidDataException("Archiwum zawiera uszkodzone dane.");
         }
         finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }

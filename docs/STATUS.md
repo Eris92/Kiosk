@@ -19,9 +19,13 @@ Na tym komputerze działa usługa `KioskCard` ze starszej wersji `release-db6189
 
 Komputer testowy Entra nie jest teraz dostępny. Z tego powodu brak potwierdzenia prawdziwego tokenu Entra i SSO na firmowych witrynach. Starszy `CardBroker` pozostaje dla istniejącej instalacji, lecz jego zależność od konkretnej wersji Windows wymaga osobnej próby z fizyczną kartą; docelowa ścieżka SSO pierwszego wdrożenia to `WindowsSession`.
 
-## Etap 2 — stanowisko z aplikacjami i RDP
+## Bieżący etap — SelfService i audyt bez logowania stanowiskowego
 
-Menu, osadzona przeglądarka, notatki, pliki, aplikacje i lista profili RDP są w kodzie i mają lokalne testy. Przed wdrożeniem trzeba:
+Dokańczamy logowanie i SSO w SelfService oraz przegląd i poprawki interfejsu, przeglądarki, plików, komunikatów, osadzania aplikacji, RDP jako widoku, konfiguracji, wydajności, instalacji i wycofania. Poprawki są testowane lokalnie i w CI. Logowanie i SSO wymagają jeszcze prób na docelowym sprzęcie; podpisana paczka również zamyka etap produkcyjny SelfService.
+
+## Później — logowanie stanowiskowe i tworzenie sesji
+
+Menu, osadzona przeglądarka, notatki, pliki, aplikacje i lista profili RDP są w kodzie i mają lokalne testy. Odłożone jest wyłącznie uwierzytelnianie wersji stanowiskowej: użytkownik prowadzi osobny projekt, który zostanie później podpięty do Kiosku. Po jego zakończeniu trzeba:
 
 1. Dokończyć wariant logowania hasłem domenowym z przypisaniem karty dla komputerów bez Entra. Tego przepływu nie ma jeszcze jako kompletnej, zweryfikowanej funkcji.
 2. Na komputerach lokalnych, domenowych i Entra sprawdzić, że procesy przeglądarki, aplikacji i każdej sesji RDP działają w zamierzonej tożsamości Windows. Lokalny Hello nie przekazuje automatycznie poświadczeń do zdalnego RDS.
@@ -32,4 +36,4 @@ Menu, osadzona przeglądarka, notatki, pliki, aplikacje i lista profili RDP są 
 
 Zakończono szeroki przegląd konfiguracji, sesji, CTAP/PCSC, WebView2, RDP, okien Win32, usługi, pakowania i instalatorów. Usunięto przestarzały aktualizator w miejscu oraz nieużywany stary mechanizm sesji. Przegląd końcowych ścieżek awarii procesów i długotrwałej pracy nadal trwa; wykryte poprawki są testowane i wypychane do `main` w osobnych commitach. Ostatnie przykłady to asynchroniczny odczyt potoku usługi, migawki uprawnień brokera i ograniczenie pamięci podręcznej kont.
 
-Orientacyjnie pozostaje około 39% pracy do wydania produkcyjnego. Liczba obejmuje testy integracyjne i wdrożeniowe, nie jest miarą pokrycia kodu. Wyniki prób na docelowym sprzęcie mogą zmienić zakres pozostałych poprawek. Szczegółowe ustalenia i bramka akceptacyjna są w `docs/PRODUCTION_AUDIT.md`.
+Wcześniejszy szacunek około 39% dotyczył całej aplikacji wraz z logowaniem stanowiskowym. Po odłożeniu tego zakresu nie jest porównywalny z postępem bieżącego etapu. Wyniki prób na docelowym sprzęcie mogą zmienić zakres pozostałych poprawek. Szczegółowe ustalenia i bramka akceptacyjna są w `docs/PRODUCTION_AUDIT.md`.

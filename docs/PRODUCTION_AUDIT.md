@@ -228,12 +228,17 @@ Pamięć podręczna kont współdzielonych jest ograniczona do 64 adresów i od�
 
 Przy otwieraniu nowej karty w już działającej przeglądarce osoby zalogowanej kartą wynik `ResumeThread` jest sprawdzany; błąd kończy zawieszony proces i zawsze zwalnia oba uchwyty. Przy przygotowaniu profilu Windows przez brokera nieudane wznowienie lub przekroczenie 120 sekund również kończy proces i zwalnia uchwyty. Scenariusze te wymagają rzeczywistego brokera i konta testowego do próby integracyjnej.
 
-## Bramka akceptacyjna przed produkcją
+Rozpakowanie ZIP sprawdza sumę zadeklarowanych rozmiarów plików względem dostępnego miejsca na dysku. Każdy wypakowany plik musi mieć zadeklarowaną długość i prawidłową sumę CRC32; uszkodzone archiwum usuwa niepełny wynik. Test modyfikuje rozmiar wpisu w katalogu centralnym ZIP i sprawdza odrzucenie oraz sprzątnięcie. Dostępne miejsce może się zmienić podczas operacji, więc błąd zapisu nadal musi usuwać katalog tymczasowy.
 
-1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
-2. Zweryfikować docelowe serwery RDS: certyfikat TLS, NLA, mapowanie certyfikatu i PKI/CRL, Remote Credential Guard lub Entra ID, politykę poświadczeń/PIN oraz zachowanie odłączonych sesji. Tylko test TCP nie wystarcza.
-3. Sprawdzić Windows Shell Launcher, natywny kafelek, aktualizację i rollback na dedykowanym obrazie Windows. Lokalne i CI kompilacje DLL już przeszły; wymagany jest jeszcze podpis organizacji. Nie zastępować działającej instalacji w Program Files podczas testu.
-4. Podpisać finalną paczkę certyfikatem organizacji i sprawdzić `Verify-Package.ps1 -RequireSigned -TrustedSignerThumbprint ...`; dobrać politykę dystrybucji oraz retencję logów.
-5. Przejść ręcznie obsługę wielu monitorów/DPI, dozwolone domeny przeglądarki/SSO, okna dialogowe zewnętrznych EXE i treść ekranów bez aktywnego użytkownika.
+## Bramka akceptacyjna SelfService przed produkcją
+
+1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.
+2. Sprawdzić Windows Shell Launcher, natywny kafelek, aktualizację i rollback na dedykowanym obrazie Windows. Lokalne i CI kompilacje DLL już przeszły; wymagany jest jeszcze podpis organizacji. Nie zastępować działającej instalacji w Program Files podczas testu.
+3. Podpisać finalną paczkę certyfikatem organizacji i sprawdzić `Verify-Package.ps1 -RequireSigned -TrustedSignerThumbprint ...`; dobrać politykę dystrybucji oraz retencję logów.
+4. Przejść ręcznie obsługę wielu monitorów/DPI, dozwolone domeny przeglądarki/SSO i treść ekranów bez aktywnego użytkownika.
+
+## Bramka trybu stanowiskowego — odłożona
+
+Po podpięciu osobnego projektu logowania sprawdzić konto lokalne, domenowe i Entra, SID procesów aplikacji oraz każdej sesji RDP, przypisanie karty, PIN, zmianę użytkownika i okna pomocnicze zewnętrznych EXE. Dla docelowych serwerów RDS zweryfikować certyfikat TLS, NLA, mapowanie certyfikatu, PKI/CRL, Remote Credential Guard lub Entra ID, politykę poświadczeń oraz zachowanie odłączonych sesji. Test TCP nie wystarcza.
 
 Polecenia: `scripts/Test.ps1`, `scripts/New-Package.ps1`, `scripts/Verify-Package.ps1 -PackagePath out/package` oraz `scripts/Test-Prerequisites.ps1 -ConfigPath <lokalna-konfiguracja> -CheckNetwork`. Kandydat bez podpisu nie powinien być wdrażany jako finalne wydanie.

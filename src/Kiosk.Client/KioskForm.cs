@@ -3100,6 +3100,22 @@ internal sealed partial class KioskForm : Form
             if (await files.UnzipForSmokeTestAsync(unsafeArchive) || File.Exists(Path.Combine(root, "outside.txt")) ||
                 Directory.Exists(Path.Combine(root, "unsafe")) || Directory.GetDirectories(root, "unsafe.partial-*").Length != 0)
                 throw new InvalidOperationException("Unsafe ZIP path or partial extraction was accepted.");
+            var malformedArchive = Path.Combine(root, "malformed.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(malformedArchive, System.IO.Compression.ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(zip.CreateEntry("data.txt").Open())) writer.Write(new string('x', 1024));
+            var archiveBytes = File.ReadAllBytes(malformedArchive);
+            var centralHeader = -1;
+            for (var i = 0; i <= archiveBytes.Length - 28; i++)
+                if (archiveBytes[i] == 0x50 && archiveBytes[i + 1] == 0x4b &&
+                    archiveBytes[i + 2] == 0x01 && archiveBytes[i + 3] == 0x02)
+                { centralHeader = i; break; }
+            if (centralHeader < 0) throw new InvalidOperationException("ZIP test fixture has no central directory.");
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(archiveBytes.AsSpan(centralHeader + 24, 4), 1);
+            File.WriteAllBytes(malformedArchive, archiveBytes);
+            if (await files.UnzipForSmokeTestAsync(malformedArchive) ||
+                Directory.Exists(Path.Combine(root, "malformed")) ||
+                Directory.GetDirectories(root, "malformed.partial-*").Length != 0)
+                throw new InvalidOperationException("Malformed ZIP size was accepted or left partial extraction.");
             if (!await files.PasteForSmokeTestAsync([source], destination, move: true) || Directory.Exists(source) ||
                 !await files.DeleteForSmokeTestAsync([Path.Combine(destination, "source (2)")]) ||
                 Directory.Exists(Path.Combine(destination, "source (2)")))
