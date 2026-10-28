@@ -396,6 +396,11 @@ internal static class Program
                     if (CentralConfig.Current(newsCache, News.FileName, firstSource) != newsSnapshot ||
                         CentralConfig.Current(newsCache, News.FileName, secondSource) != null)
                         throw new InvalidOperationException("News cache was reused for a different source.");
+                    var share = @"\\server\share";
+                    if (CentralConfig.MapNewsSource(firstSource, firstSource, share) != share ||
+                        CentralConfig.MapNewsSource(Path.Combine(firstSource, "news"), firstSource, share) != Path.Combine(share, "news") ||
+                        CentralConfig.MapNewsSource(secondSource, firstSource, share) != secondSource)
+                        throw new InvalidOperationException("News source mapping lost the central root or accepted a different folder.");
                     File.WriteAllText(Path.Combine(secondSource, ".kiosk-source"),
                         Path.TrimEndingDirectorySeparator(Path.GetFullPath(firstSource)));
                     File.WriteAllText(Path.Combine(cache, "current.txt"), @"..\second");

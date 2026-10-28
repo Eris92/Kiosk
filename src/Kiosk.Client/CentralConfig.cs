@@ -338,12 +338,16 @@ internal static class CentralConfig
         {
             configFolder ??= MachineConfigFolder();
             var server = Configuration.Load(SharedConfig).ConfigSource;
-            if (server.Length > 0 && Under(folder, configFolder))
-                return Path.Combine(server, Path.GetRelativePath(configFolder, folder));
+            return MapNewsSource(folder, configFolder, server);
         }
         catch (Exception) { }
         return folder;
     }
+
+    internal static string MapNewsSource(string folder, string configFolder, string server) =>
+        server.Length > 0 && (string.Equals(Path.GetFullPath(folder), Path.GetFullPath(configFolder), StringComparison.OrdinalIgnoreCase) ||
+                              Under(folder, configFolder))
+            ? CanonicalSource(Path.Combine(server, Path.GetRelativePath(configFolder, folder))) : folder;
 
     private static string newsReported = "";
 
