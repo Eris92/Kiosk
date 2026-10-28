@@ -2426,9 +2426,9 @@ internal sealed partial class KioskForm : Form
             throw new InvalidOperationException("Help category normalization changed after copying an action.");
 
         // Older single-server files migrate to the connection list and the lock / retention timers.
-        var legacy = JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\",\"SelfServiceSignInUrl\":\"https://old.example/sign-in\",\"SelfServiceLinkUrl\":\"https://old.example/link\"}")!.Migrate();
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<Config>("{\"Server\":\"rds.example.local\",\"Port\":3390,\"IdleSeconds\":120,\"AutoUpdate\":true,\"UpdateChannel\":\"dev\",\"SelfServiceSignInUrl\":\"https://old.example/sign-in\",\"SelfServiceLinkUrl\":\"https://old.example/link\"}")!.Migrate();
         legacy.Validate();
-        var migratedJson = JsonSerializer.Serialize(legacy);
+        var migratedJson = System.Text.Json.JsonSerializer.Serialize(legacy);
         if (legacy.RdpConnections.Single().Server != "rds.example.local" || legacy.RdpConnections[0].Port != 3390 ||
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
             legacy.Applications.Length != 3 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.Applications[2].IsBuiltInFiles || !legacy.EnableBrowser ||
