@@ -16,6 +16,7 @@ internal static class KioskIcons
         return collection.Families.Select(f => f.Name).FirstOrDefault(n => n is "Segoe Fluent Icons" or "Segoe MDL2 Assets") ?? "Segoe UI Symbol";
     }
     private static readonly string Family = ResolveFamily();
+    private const int MaxProgramIcons = 256;
     private static readonly Dictionary<string, Image?> programIcons = new(StringComparer.OrdinalIgnoreCase);
     // Icon sizes repeat on every repaint. Keep common fonts for the process lifetime, with a fixed size limit.
     private const int MaxGlyphFonts = 64;
@@ -25,6 +26,9 @@ internal static class KioskIcons
     internal static Image? ForProgram(string path)
     {
         if (programIcons.TryGetValue(path, out var image)) return image;
+        // A long-lived shell can encounter many distinct paths across user sessions.
+        // Existing controls can still use cached images; after the limit, show the normal app glyph.
+        if (programIcons.Count >= MaxProgramIcons) return null;
         try
         {
             if (File.Exists(path)) { using var icon = Icon.ExtractAssociatedIcon(path); image = icon?.ToBitmap(); }
