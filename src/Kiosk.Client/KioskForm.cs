@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 
 namespace Kiosk.Client;
 
