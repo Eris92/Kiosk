@@ -360,6 +360,49 @@ internal static class Program
                     }
                     if (Directory.Exists(copyRoot)) Directory.Delete(copyRoot);
                 }
+                var sourceRoot = Path.Combine(Path.GetTempPath(), "kiosk-source-test-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var firstSource = Path.Combine(sourceRoot, "first");
+                    var secondSource = Path.Combine(sourceRoot, "second");
+                    var cache = Path.Combine(sourceRoot, "cache");
+                    Directory.CreateDirectory(firstSource);
+                    Directory.CreateDirectory(secondSource);
+                    File.WriteAllText(Path.Combine(firstSource, CentralConfig.FileName), "{}");
+                    File.WriteAllText(Path.Combine(secondSource, CentralConfig.FileName), "{}");
+                    Directory.CreateDirectory(cache);
+                    Task<string> pendingSync;
+                    using (var held = new FileStream(Path.Combine(cache, ".sync.lock"), FileMode.OpenOrCreate,
+                               FileAccess.ReadWrite, FileShare.None))
+                    {
+                        using var started = new ManualResetEventSlim();
+                        pendingSync = Task.Run(() => { started.Set(); return CentralConfig.Sync(firstSource, cache); });
+                        if (!started.Wait(TimeSpan.FromSeconds(5)) || pendingSync.Wait(TimeSpan.FromMilliseconds(150)))
+                            throw new InvalidOperationException("Concurrent central sync ignored the cache lock.");
+                    }
+                    var snapshot = pendingSync.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                    if (CentralConfig.Current(cache, source: firstSource) != snapshot ||
+                        CentralConfig.Current(cache, source: secondSource) != null)
+                        throw new InvalidOperationException("Central cache was reused for a different source.");
+                    File.Delete(Path.Combine(snapshot, ".kiosk-source"));
+                    if (CentralConfig.Current(cache, source: firstSource) != null)
+                        throw new InvalidOperationException("Central cache without its source marker was accepted.");
+                    File.WriteAllText(Path.Combine(snapshot, ".kiosk-source"),
+                        Path.TrimEndingDirectorySeparator(Path.GetFullPath(firstSource)));
+                    File.WriteAllText(Path.Combine(firstSource, News.FileName), "{}");
+                    File.WriteAllText(Path.Combine(secondSource, News.FileName), "{}");
+                    var newsCache = Path.Combine(sourceRoot, "news-cache");
+                    var newsSnapshot = CentralConfig.Sync(firstSource, newsCache, News.FileName);
+                    if (CentralConfig.Current(newsCache, News.FileName, firstSource) != newsSnapshot ||
+                        CentralConfig.Current(newsCache, News.FileName, secondSource) != null)
+                        throw new InvalidOperationException("News cache was reused for a different source.");
+                    File.WriteAllText(Path.Combine(secondSource, ".kiosk-source"),
+                        Path.TrimEndingDirectorySeparator(Path.GetFullPath(firstSource)));
+                    File.WriteAllText(Path.Combine(cache, "current.txt"), @"..\second");
+                    if (CentralConfig.Current(cache, source: firstSource) != null)
+                        throw new InvalidOperationException("Central cache pointer left its cache directory.");
+                }
+                finally { if (Directory.Exists(sourceRoot)) Directory.Delete(sourceRoot, recursive: true); }
                 using var form = new KioskForm(new Config { TestMode = true, RdpConnections = [new RdpConnection { Name = "Local", Server = "localhost" }] });
                 var result = 1;
                 form.Shown += async (_, _) =>

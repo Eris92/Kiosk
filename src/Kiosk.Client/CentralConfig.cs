@@ -2,23 +2,26 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace Kiosk.Client;
 
 /// <summary>
 /// Konfiguracja z serwera: when the PC's own client.json names a ConfigSource (a folder or share), every start copies
 /// its configuration assets (client.json, logo, kiosk-news.json, …) into a local copy and uses its client.json. Paths in it
-/// may be relative to the folder (e.g. "BrandLogo": "logo.jpg"). Without the server the last copy is used; without a
-/// copy, the PC's own. Locally Konfiguracja is then only a preview; only ConfigSource itself can be changed there.
+/// may be relative to the folder (e.g. "BrandLogo": "logo.jpg"). The machine configuration uses only the service-owned
+/// copy; without it, the PC's own configuration. Locally Konfiguracja is then only a preview.
 ///
 /// The PC's shared configuration (C:\ProgramData\Kiosk) is fetched by the Kiosk Card service: on the network it is the
 /// computer's account (DOMAIN\PC$), or the account saved by scripts\Set-KioskConfigSource.ps1 -Credential, so a domain
-/// share needs no access for the person signed in. Only when the service cannot, the Kiosk tries with that person's account.
+/// share needs no access for the person signed in. A user-writable cache must not override machine configuration.
 /// </summary>
 internal static class CentralConfig
 {
     internal const string FileName = "client.json";
     private const string Pointer = "current.txt";
+    private const string SourceMarker = ".kiosk-source";
+    private const string SyncLock = ".sync.lock";
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Kiosk.ConfigSource");
 
     /// <summary>The configuration in use, the PC's own file (holds ConfigSource) and what went wrong with the server.</summary>
@@ -43,15 +46,16 @@ internal static class CentralConfig
         if (string.Equals(Path.GetFullPath(path), SharedConfig, StringComparison.OrdinalIgnoreCase))
         {
             var answer = CardService.Call(new CardService.Request { Op = "syncconfig" });
-            if (answer.Code == 0) folder = Current(MachineCache);
-            else problem = answer.Message;
+            if (answer.Code != 0) problem = answer.Message;
+            folder = Current(MachineCache, source: source);
+            if (answer.Code == 0 && folder == null) problem = "brak zgodnej kopii pobranej przez usługę";
         }
-        if (folder == null)
+        else
         {
             try { folder = Sync(source, UserCache); problem = null; }
             catch (Exception ex) { problem ??= ex.Message; Audit.Write("central_config_sync_failed", ex.Message); }
+            folder ??= Current(UserCache, source: source);
         }
-        folder ??= Newest(Current(MachineCache), Current(UserCache));
         if (folder == null) return new(local, local, "Konfiguracja z serwera niedostępna (" + problem + ") – używam konfiguracji tego komputera.");
         try
         {
@@ -133,16 +137,18 @@ internal static class CentralConfig
     /// Copies the server's folder into a new folder of the copy, checks its client.json, then points the copy at it.
     /// Earlier folders are removed when nothing uses them any more (an open logo in another session keeps its folder).
     /// </summary>
-    private static string Sync(string source, string cache, string required = FileName)
+    internal static string Sync(string source, string cache, string required = FileName)
     {
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("brak dostępu do " + source);
         if (!File.Exists(Path.Combine(source, required))) throw new FileNotFoundException("w " + source + " nie ma " + required);
         Directory.CreateDirectory(cache);
+        using var lease = LockCache(cache);
         var folder = Path.Combine(cache, DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N")[..8]);
         try
         {
             Copy(source, folder, skipStatistics: required == FileName);
             if (required == FileName) Configuration.Load(Path.Combine(folder, FileName));
+            File.WriteAllText(Path.Combine(folder, SourceMarker), CanonicalSource(source));
         }
         catch { TryDelete(folder); throw; }
         var pointer = Path.Combine(cache, Pointer);
@@ -293,8 +299,7 @@ internal static class CentralConfig
             var configFolder = MachineConfigFolder();
             var source = Configuration.Load(Path.Combine(configFolder, FileName)).NewsFolder;
             // "NewsFolder": "komunikaty" next to the server's client.json: read from the server itself, not the copy made at start.
-            if (Under(source, MachineCache) && Configuration.Load(SharedConfig).ConfigSource is { Length: > 0 } server)
-                source = Path.Combine(server, Path.GetRelativePath(configFolder, source));
+            source = NewsSource(source, configFolder);
             if (!source.StartsWith(@"\\", StringComparison.Ordinal)) return new CardService.Response { Code = -2, Message = "Komunikaty nie są na udziale sieciowym." };
             using (Connect(source)) return new CardService.Response { Message = Sync(source, NewsCache, News.FileName) };
         }
@@ -312,17 +317,33 @@ internal static class CentralConfig
     internal static string NewsFolderFor(string folder)
     {
         if (!folder.StartsWith(@"\\", StringComparison.Ordinal) && !Under(folder, MachineCache)) return folder;
+        var source = NewsSource(folder);
         var answer = CardService.Call(new CardService.Request { Op = "syncnews" });
-        if (answer.Code == 0 && Current(NewsCache, News.FileName) is { } copy) return Used(copy, "pobrane z " + answer.Message);
+        if (answer.Code == 0 && Current(NewsCache, News.FileName, source) is { } copy) return Used(copy, "pobrane z " + answer.Message);
         try { if (File.Exists(Path.Combine(folder, News.FileName))) return Used(folder, "usługa: " + answer.Message + "; czytam bezpośrednio"); }
         catch (Exception) { }
-        var last = Current(NewsCache, News.FileName);
+        var last = Current(NewsCache, News.FileName, source);
         return Used(last ?? folder, "usługa: " + answer.Message + "; " + (last != null ? "ostatnia kopia" : "brak dostępu i brak kopii"));
     }
 
     /// <summary>The last copy of the share's messages (shown at start while the share is fetched); null for a local folder.</summary>
     internal static string? NewsCopy(string folder) =>
-        folder.StartsWith(@"\\", StringComparison.Ordinal) || Under(folder, MachineCache) ? Current(NewsCache, News.FileName) : null;
+        folder.StartsWith(@"\\", StringComparison.Ordinal) || Under(folder, MachineCache)
+            ? Current(NewsCache, News.FileName, NewsSource(folder)) : null;
+
+    private static string NewsSource(string folder, string? configFolder = null)
+    {
+        if (!Under(folder, MachineCache)) return folder;
+        try
+        {
+            configFolder ??= MachineConfigFolder();
+            var server = Configuration.Load(SharedConfig).ConfigSource;
+            if (server.Length > 0 && Under(folder, configFolder))
+                return Path.Combine(server, Path.GetRelativePath(configFolder, folder));
+        }
+        catch (Exception) { }
+        return folder;
+    }
 
     private static string newsReported = "";
 
@@ -337,7 +358,11 @@ internal static class CentralConfig
     /// <summary>The folder whose client.json this PC uses: the server's copy (C:\ProgramData\Kiosk\Central\…) or C:\ProgramData\Kiosk.</summary>
     internal static string MachineConfigFolder()
     {
-        try { if (Configuration.Load(SharedConfig).ConfigSource.Length > 0 && Current(MachineCache) is { } folder) return folder; }
+        try
+        {
+            var source = Configuration.Load(SharedConfig).ConfigSource;
+            if (source.Length > 0 && Current(MachineCache, source: source) is { } folder) return folder;
+        }
         catch (Exception) { }
         return KioskData;
     }
@@ -345,19 +370,35 @@ internal static class CentralConfig
     private static bool Under(string path, string folder) =>
         path.Length > 0 && Path.GetFullPath(path).StartsWith(Path.GetFullPath(folder).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
 
-    private static string? Current(string cache, string required = FileName)
+    internal static string? Current(string cache, string required = FileName, string? source = null)
     {
         try
         {
-            var folder = Path.Combine(cache, File.ReadAllText(Path.Combine(cache, Pointer)).Trim());
+            var name = File.ReadAllText(Path.Combine(cache, Pointer)).Trim();
+            if (name.Length == 0 || name is "." or ".." || Path.GetFileName(name) != name ||
+                Path.IsPathFullyQualified(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+            var folder = Path.Combine(cache, name);
+            if (source != null && !string.Equals(File.ReadAllText(Path.Combine(folder, SourceMarker)),
+                    CanonicalSource(source), StringComparison.OrdinalIgnoreCase)) return null;
             return File.Exists(Path.Combine(folder, required)) ? folder : null;
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    private static string? Newest(string? a, string? b) =>
-        a == null ? b : b == null ? a : Directory.GetLastWriteTimeUtc(a) >= Directory.GetLastWriteTimeUtc(b) ? a : b;
+    private static string CanonicalSource(string source) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
+
+    private static FileStream LockCache(string cache)
+    {
+        var deadline = Environment.TickCount64 + 30_000;
+        while (true)
+        {
+            try { return new FileStream(Path.Combine(cache, SyncLock), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException ex) when (ex.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021) &&
+                                         Environment.TickCount64 < deadline)
+            { Thread.Sleep(100); }
+        }
+    }
 
     /// <summary>Copy configuration assets, excluding monthly exports in the root Stats folder and linked directories.</summary>
     internal static void Copy(string from, string to, bool skipStatistics)

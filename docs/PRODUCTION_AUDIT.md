@@ -1,4 +1,4 @@
-# Audyt wydania Kiosk — 2026-10-23–27
+# Audyt wydania Kiosk — 2026-10-23–28
 
 ## Zakres i wynik
 
@@ -215,6 +215,8 @@ Kopia centralna pomija `kiosk-news.json.edit.lock` również wtedy, gdy edytor t
 Zależności NuGet mają zapisane pliki `packages.lock.json` dla wszystkich czterech projektów; projekty .NET 10 deklarują docelowy `win-x64`, więc zwykły build i publikacja używają zgodnego grafu. `Build.ps1` wymusza `RestoreLockedMode` dla każdej części paczki i przerywa budowę, gdy referencje nie odpowiadają plikom blokady. SDK jest przypięty przez `global.json` do 10.0.402. Dnia 2026-10-28 `dotnet list package --vulnerable --include-transitive` nie zgłosił znanych podatności dla żadnego z czterech projektów; wynik dotyczy rozwiązywanych zależności NuGet, a nie natywnego systemu Windows, WebView2 Runtime ani przyszłych porad bezpieczeństwa. Lokalna paczka testowa zbudowała się w trybie zablokowanym i przeszła sprawdzenie wykazu/hashów; nadal jest niepodpisana.
 
 W SelfService z logowaniem przez sesję Windows akcja „Pierwsze logowanie” nie pojawia się w Szybkiej pomocy, ponieważ profil Windows został już otwarty przed uruchomieniem Kiosku. Akcja pozostaje dostępna w starszym trybie CardBroker, w którym służy do przygotowania profilu. Test sprawdza oba warianty.
+
+Migawki konfiguracji centralnej i komunikatów zapisują tożsamość źródła. Klient używa kopii tylko wtedy, gdy odpowiada aktualnie ustawionemu folderowi; po zmianie udziału niedostępne nowe źródło nie pokazuje danych ze starego. Konfiguracja maszyny z `ProgramData` korzysta wyłącznie z kopii pobranej przez usługę, ponieważ kopię w profilu użytkownika można modyfikować. Gdy usługa i zgodna kopia są niedostępne, działa lokalna konfiguracja komputera. Kopie z poprzednich wersji bez oznaczenia źródła wymagają ponownego pobrania. Operacje synchronizacji tej samej kopii są serializowane blokadą plikową, więc równoległe uruchomienia nie usuwają sobie nawzajem katalogów w trakcie kopiowania. Test obejmuje zmianę źródła, odrzucenie ścieżki poza katalogiem kopii i oczekiwanie na blokadę.
 
 ## Bramka akceptacyjna przed produkcją
 
