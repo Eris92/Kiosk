@@ -11,6 +11,14 @@ if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command powershell.exe -Erro
 }
 & (Join-Path $PSScriptRoot 'Build.ps1') -SelfTest
 $directory = Join-Path $root 'out\self-test'
+$brokerPolicyTest = Join-Path $PSScriptRoot 'Test-BrokerPolicy.ps1'
+$brokerPath = Join-Path $directory 'fido\FidoRun.exe'
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    & powershell.exe -NoProfile -File $brokerPolicyTest -BrokerPath $brokerPath
+    if ($LASTEXITCODE -ne 0) { throw 'Broker policy test failed.' }
+} else {
+    & $brokerPolicyTest -BrokerPath $brokerPath
+}
 $result = Join-Path $directory 'self-test.txt'
 if (Test-Path -LiteralPath $result) { Remove-Item -LiteralPath $result -Force }
 $process = Start-Process -FilePath (Join-Path $directory 'Kiosk.Client.exe') -ArgumentList '--self-test' -WorkingDirectory $directory -WindowStyle Hidden -PassThru

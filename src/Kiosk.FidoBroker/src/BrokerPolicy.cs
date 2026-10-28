@@ -22,14 +22,36 @@ namespace FidoRun
         private const int CaptureSeconds = 60;
 
         private static readonly object gate = new object();
-        private static string allowedFile;
+        private static HashSet<string> allowedPrograms;
+        private static HashSet<string> allowedCommands;
         private static HashSet<string> signedCards;
         private static DateTime signedInAt;
         private static DateTime lastSeen = DateTime.MinValue;
         private static Action<string> log;
         private static Thread watch;
 
-        internal static void Configure(string file, Action<string> logger) { allowedFile = file; log = logger; }
+        internal static void Configure(string file, Action<string> logger)
+        {
+            log = logger;
+            if (file == null) return; // An administrator's own diagnostic run.
+            string[] lines = File.ReadAllLines(file, Encoding.UTF8);
+            HashSet<string> programs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string entry in lines)
+            {
+                if (entry.StartsWith("P ", StringComparison.Ordinal)) programs.Add(Normalize(entry.Substring(2)));
+                else if (entry.StartsWith("C ", StringComparison.Ordinal))
+                {
+                    int separator = entry.IndexOf('\t', 2);
+                    if (separator > 2) commands.Add(Normalize(entry.Substring(2, separator - 2)) + "\t" + entry.Substring(separator + 1).Trim());
+                }
+            }
+            allowedPrograms = programs;
+            allowedCommands = commands;
+            try { File.Delete(file); }
+            catch (IOException error) { log("BrokerPolicy=AllowlistCleanupFailed; " + error.Message); }
+            catch (UnauthorizedAccessException error) { log("BrokerPolicy=AllowlistCleanupFailed; " + error.Message); }
+        }
 
         // The person signed in: the cards on the readers now are theirs (or the first ones seen soon after).
         internal static void SignedIn()
@@ -78,16 +100,9 @@ namespace FidoRun
                 else if ((DateTime.UtcNow - lastSeen).TotalSeconds > GraceSeconds)
                     return "Karta osoby nie leży na czytniku: jej programy uruchamiają się tylko przy niej.";
             }
-            if (allowedFile == null) return null;   // Started without the list (an administrator's own test).
-            string[] lines;
-            try { lines = File.ReadAllLines(allowedFile, Encoding.UTF8); }
-            catch (Exception error) { return "Brak listy programów tego komputera (" + error.Message + ")."; }
-            string program = Normalize(application), line = commandLine.Trim();
-            foreach (string entry in lines)
-            {
-                if (entry.StartsWith("P ", StringComparison.Ordinal) && String.Equals(Normalize(entry.Substring(2)), program, StringComparison.OrdinalIgnoreCase)) return null;
-                if (entry.StartsWith("C ", StringComparison.Ordinal) && String.Equals(entry.Substring(2).Trim(), line, StringComparison.OrdinalIgnoreCase)) return null;
-            }
+            if (allowedPrograms == null) return null;   // Started without the list (an administrator's own test).
+            string program = Normalize(application);
+            if (allowedPrograms.Contains(program) || allowedCommands.Contains(program + "\t" + commandLine.Trim())) return null;
             return "Tego programu nie ma w konfiguracji tego komputera: " + Path.GetFileName(application);
         }
 

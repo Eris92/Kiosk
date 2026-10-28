@@ -183,15 +183,22 @@ internal sealed class FidoSignIn : IDisposable
                 {
                     if (!SetTokenInformation(token, 12, ref session, sizeof(int))) throw new Win32Exception(); // TokenSessionId
                     var startup = new AppNative.StartupInfo { Size = Marshal.SizeOf<AppNative.StartupInfo>(), Desktop = @"winsta0\default" };
-                    var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid + " --embed " + embed +
-                               " --allowed \"" + WriteAllowed(clientProgram!) + "\"";
-                    if (!CreateProcessAsUser(token, program, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, false, 0x400, IntPtr.Zero,
-                            Path.GetDirectoryName(program), ref startup, out var process))
-                        throw new Win32Exception();
-                    CloseHandle(process.Thread);
-                    CloseHandle(process.Process);
-                    Audit.Write("fido_signin_started", "session " + session);
-                    return new CardService.Response { Message = process.ProcessId.ToString(), Secret = "KioskFido-" + clientPid + "-" + process.ProcessId };
+                    var allowedFile = WriteAllowed(clientProgram!);
+                    var launched = false;
+                    try
+                    {
+                        var line = "\"" + program + "\" --mode kiosk-broker --target authenticated --client-pid " + clientPid + " --embed " + embed +
+                                   " --allowed \"" + allowedFile + "\"";
+                        if (!CreateProcessAsUser(token, program, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, false, 0x400, IntPtr.Zero,
+                                Path.GetDirectoryName(program), ref startup, out var process))
+                            throw new Win32Exception();
+                        launched = true;
+                        CloseHandle(process.Thread);
+                        CloseHandle(process.Process);
+                        Audit.Write("fido_signin_started", "session " + session);
+                        return new CardService.Response { Message = process.ProcessId.ToString(), Secret = "KioskFido-" + clientPid + "-" + process.ProcessId };
+                    }
+                    finally { if (!launched) DeleteAllowed(allowedFile); }
                 }
             }
         }
@@ -206,10 +213,18 @@ internal sealed class FidoSignIn : IDisposable
             if (!ValidEmbed(embed)) return new CardService.Response { Code = -2, Message = "Nieprawidłowe miejsce logowania kartą." };
             var program = Path.Combine(AppContext.BaseDirectory, Folder, Program);
             if (!File.Exists(program)) return new CardService.Response { Code = -1, Message = "Brak modułu logowania kartą (" + program + ")." };
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
-                "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId + " --embed " + embed +
-                " --allowed \"" + WriteAllowed(Environment.ProcessPath!) + "\"") { UseShellExecute = false })!;
-            return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId + "-" + process.Id };
+            var allowedFile = WriteAllowed(Environment.ProcessPath!);
+            var launched = false;
+            try
+            {
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(program,
+                    "--mode kiosk-broker --target authenticated --client-pid " + Environment.ProcessId + " --embed " + embed +
+                    " --allowed \"" + allowedFile + "\"") { UseShellExecute = false })
+                    ?? throw new InvalidOperationException("Program logowania kartą nie wystartował.");
+                launched = true;
+                return new CardService.Response { Message = process.Id.ToString(), Secret = "KioskFido-" + Environment.ProcessId + "-" + process.Id };
+            }
+            finally { if (!launched) DeleteAllowed(allowedFile); }
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = "Nie udało się uruchomić logowania kartą: " + ex.Message }; }
     }
@@ -217,7 +232,7 @@ internal sealed class FidoSignIn : IDisposable
     /// <summary>
     /// The programs the sign-in program may start as the person (FidoRun's BrokerPolicy): this Kiosk (pages, remote
     /// desktops, Pliki), Edge, the configured applications and screens ("P", any arguments) and the person's commands ("C", exactly
-    /// that command line). Written to the caller's temp folder: the service's one only SYSTEM and administrators may change.
+    /// that command line). Each broker receives its own snapshot in the caller's temp folder.
     /// </summary>
     private static string WriteAllowed(string kiosk)
     {
@@ -229,12 +244,23 @@ internal sealed class FidoSignIn : IDisposable
         };
         lines.AddRange(config.Applications.Where(a => !a.IsBuiltIn && a.RunAs.Trim().Length == 0).Select(a => "P " + a.Path));
         lines.AddRange(config.IdleScreens.Where(s => s.Url.Length == 0 && s.Path.Length > 0).Select(s => "P " + s.Path));   // Screens reopened as the person.
-        lines.AddRange(config.Commands.Where(c => c.AsUser).Select(c => "C " + c.CommandLine()));
-        var file = Path.Combine(Path.GetTempPath(), "KioskFido", "allowed.txt");
+        lines.AddRange(config.Commands.Where(c => c.AsUser).Select(c =>
+        {
+            var (program, _) = c.Resolve();
+            return "C " + program + "\t" + c.CommandLine();
+        }));
+        var file = Path.Combine(Path.GetTempPath(), "KioskFido", "allowed-" + Guid.NewGuid().ToString("N") + ".txt");
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        File.WriteAllLines(file, lines.Where(l => !l.Contains('\n') && !l.Contains('\r')), new UTF8Encoding(false));
+        try
+        {
+            using var writer = new StreamWriter(new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None), new UTF8Encoding(false));
+            foreach (var line in lines.Where(l => !l.Contains('\n') && !l.Contains('\r'))) writer.WriteLine(line);
+        }
+        catch { DeleteAllowed(file); throw; }
         return file;
     }
+
+    private static void DeleteAllowed(string file) { try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
 
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
     [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();

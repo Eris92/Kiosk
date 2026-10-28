@@ -222,6 +222,8 @@ Usługa wydaje hasło konta wspólnego tylko dla adresu HTTPS przypisanego do te
 
 Odczyt żądania usługi karty po przyjęciu połączenia korzysta z asynchronicznego I/O potoku. Klient, który nic nie wysyła, nie blokuje już wątku roboczego; po 10 sekundach odczyt jest anulowany. Zachowano limit 65 536 znaków i sprawdzenie tożsamości klienta po odczycie wiadomości. Test lokalny sprawdza anulowanie milczącego klienta, odczyt wiadomości oraz impersonację po odczycie. Nie uruchamiano nowej wersji jako usługi na docelowym stanowisku; zachowanie pod obciążeniem i po aktualizacji usługi pozostaje do próby wdrożeniowej.
 
+Każde uruchomienie starszego brokera CardBroker otrzymuje teraz własny plik listy dozwolonych programów. Broker wczytuje reguły raz, usuwa plik i sprawdza programy oraz polecenia w pamięci; późniejsze logowanie innej osoby nie może zmienić listy działającego brokera, a każde uruchomienie aplikacji nie wymaga odczytu pliku. Wpis polecenia wiąże jego tekst z dokładnym plikiem EXE. Test pod Windows PowerShell 5.1 sprawdza dozwolony program, dokładne polecenie, odmowę dla innego EXE mimo identycznego tekstu polecenia, usunięcie pliku i niezmienność reguł po ponownym utworzeniu pliku. Rzeczywista próba wielu równoległych użytkowników pozostaje w bramce akceptacyjnej.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
