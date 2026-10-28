@@ -331,6 +331,7 @@ internal sealed record Config
         foreach (var category in MenuCategories)
             if (!HelpAction.ValidSide(category.Side))
                 throw new InvalidDataException("Kategorie: „Obok” przy „" + category.Path + "” to adres https://… albo ścieżka pliku (np. instrukcje\\mfa.pdf).");
+        if (NewsSharePointAccount == null) throw new InvalidDataException("Konto SharePoint nie może być null.");
         if (NewsSharePoint == null || NewsSharePoint.Length > 0 && !(Uri.TryCreate(NewsSharePoint, UriKind.Absolute, out var spUri) && spUri.Scheme == Uri.UriSchemeHttps))
             throw new InvalidDataException("Stronę SharePoint podaj jako adres https://…, np. https://firma.sharepoint.com/sites/intranet.");
         if (NewsSharePointCount is < 1 or > 20) throw new InvalidDataException("Liczba aktualności z SharePointa: od 1 do 20.");

@@ -426,6 +426,22 @@ internal static class Program
                             !CardService.AuthorizedClient(null, administrator: true) ||
                             CardService.AuthorizedClient(null, administrator: false))
                             throw new InvalidOperationException("Card service client authorization failed.");
+                        var authorizedAccounts = new Config
+                        {
+                            PageActions = [new PageAction { Url = "https://portal.example/login", Account = "Portal" }],
+                            NewsSharePoint = "https://tenant.sharepoint.com/sites/news", NewsSharePointAccount = "News"
+                        };
+                        if (!SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("Portal", "https://portal.example/login/form")) ||
+                            SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("Portal", "https://portal.example.evil.test/login")) ||
+                            SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("Portal", "https://portal.example/logins")) ||
+                            SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("Portal", "http://portal.example/login")) ||
+                            SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("Other", "https://portal.example/login")) ||
+                            !SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("News", authorizedAccounts.NewsSharePoint, News: true)) ||
+                            SharedAccounts.AuthorizedUse(authorizedAccounts.Active(), new("News", "https://other.sharepoint.com/sites/news", News: true)) ||
+                            NewsAccount.AuthorizedSite(authorizedAccounts, authorizedAccounts.NewsSharePoint) ||
+                            !NewsAccount.AuthorizedSite(authorizedAccounts with { NewsSharePointAccount = "" }, authorizedAccounts.NewsSharePoint) ||
+                            NewsAccount.AuthorizedSite(authorizedAccounts with { NewsSharePointAccount = "" }, "https://other.sharepoint.com/sites/news"))
+                            throw new InvalidOperationException("Shared account was allowed for an unconfigured page or SharePoint site.");
                         form.SmokeTest();
                         await SharePointNewsSmokeTestAsync(form);
                         await form.EmbeddedSmokeTestAsync();

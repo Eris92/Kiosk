@@ -56,7 +56,7 @@ internal static class PageScripts
                     SharedAccounts.Account? account = null;
                     // A password goes only to an encrypted page.
                     if (action.Account.Trim().Length > 0 && url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                        account = await Task.Run(() => SharedAccounts.TryGetCached(action.Account.Trim()));
+                        account = await Task.Run(() => SharedAccounts.TryGetCached(action.Account.Trim(), url));
                     if (core.Source != url) return;   // Navigated on in the meantime: the next page gets its own turn.
                     await core.ExecuteScriptAsync(Script(action, account));
                     Audit.Write("page_action", (kiosk ? "kiosk " : "user ") + action.Url + (account != null ? " +konto" : ""));

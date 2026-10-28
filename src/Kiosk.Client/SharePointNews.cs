@@ -111,14 +111,15 @@ internal sealed class SharePointNews : IDisposable
             signInAttached = true;
             core.NavigationCompleted += async (_, e) =>
             {
-                if (!e.IsSuccess || !Uri.TryCreate(core.Source, UriKind.Absolute, out var at) || at.Scheme != Uri.UriSchemeHttps) return;
+                var signInUrl = core.Source;
+                if (!e.IsSuccess || !Uri.TryCreate(signInUrl, UriKind.Absolute, out var at) || at.Scheme != Uri.UriSchemeHttps) return;
                 if (!at.Host.Equals("login.microsoftonline.com", StringComparison.OrdinalIgnoreCase) && !at.Host.Equals("login.microsoft.com", StringComparison.OrdinalIgnoreCase)) return;
                 try
                 {
                     // A shared account named in Konfiguracja, else the login and password saved on this PC.
                     var name = account;
-                    var shared = await Task.Run(() => name.Length > 0 ? SharedAccounts.TryGetCached(name) : NewsAccount.TryGet());
-                    if (disposed) return;
+                    var shared = await Task.Run(() => name.Length > 0 ? SharedAccounts.TryGetCached(name, url, news: true) : NewsAccount.TryGet(url));
+                    if (disposed || !string.Equals(core.Source, signInUrl, StringComparison.Ordinal)) return;
                     if (shared == null) { Audit.Write("sharepoint_news_account_missing", name.Length > 0 ? name : "login i hasło"); return; }
                     await core.ExecuteScriptAsync(PageScripts.SignIn(shared));
                     Audit.Write("sharepoint_news_sign_in", shared.User);

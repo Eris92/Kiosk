@@ -34,8 +34,8 @@ internal static class NewsAccount
         Audit.Write("news_account_saved", change.User.Trim());
     }
 
-    /// <summary>Kiosk Card service, "newsaccount": only for the installed Kiosk program.</summary>
-    internal static CardService.Response ForService(string? clientProgram)
+    /// <summary>Kiosk Card service, "newsaccount": only for the configured SharePoint news site.</summary>
+    internal static CardService.Response ForService(string? clientProgram, string site)
     {
         try
         {
@@ -44,7 +44,7 @@ internal static class NewsAccount
             // Only when this PC's configuration signs in to SharePoint news with it (no shared account named there):
             // otherwise the Kiosk has no use for Konto Kiosku, which stays in the service (shares, statistics).
             var config = Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName));
-            if (config.NewsSharePoint.Length == 0 || config.NewsSharePointAccount.Trim().Length > 0)
+            if (!AuthorizedSite(config, site))
                 return new CardService.Response { Code = -2, Message = "Konfiguracja tego komputera nie loguje się Kontem Kiosku do SharePointa." };
             if (CentralConfig.ReadAccount() is { } kiosk) return new CardService.Response { Message = kiosk.User, Secret = kiosk.Password };
             var plain = CentralConfig.ReadSecret(File_, Entropy);
@@ -58,19 +58,29 @@ internal static class NewsAccount
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
     }
 
+    internal static bool AuthorizedSite(Config config, string site) =>
+        config.NewsSharePoint.Length > 0 && config.NewsSharePointAccount.Trim().Length == 0 &&
+        string.Equals(config.NewsSharePoint, site, StringComparison.OrdinalIgnoreCase);
+
     private static SharedAccounts.Account? cached;
     private static bool asked;
+    private static string cachedSite = "";
+    private static readonly object cacheGate = new();
 
     /// <summary>The saved account, asked of the service once per Kiosk start (or after Konfiguracja is saved); null = none.</summary>
-    internal static SharedAccounts.Account? TryGet()
+    internal static SharedAccounts.Account? TryGet(string site)
     {
-        if (asked) return cached;
-        asked = true;
-        if (!Saved) return cached = null;
-        var answer = CardService.Call(new CardService.Request { Op = "newsaccount" });
-        if (answer.Code != 0 || answer.Secret == null) { Audit.Write("news_account_failed", answer.Message); return cached = null; }
-        return cached = new SharedAccounts.Account(answer.Message, answer.Secret);
+        lock (cacheGate)
+        {
+            if (asked && cachedSite == site) return cached;
+            asked = true;
+            cachedSite = site;
+            if (!Saved) return cached = null;
+            var answer = CardService.Call(new CardService.Request { Op = "newsaccount", Source = site });
+            if (answer.Code != 0 || answer.Secret == null) { Audit.Write("news_account_failed", answer.Message); return cached = null; }
+            return cached = new SharedAccounts.Account(answer.Message, answer.Secret);
+        }
     }
 
-    internal static void Forget() { asked = false; cached = null; }
+    internal static void Forget() { lock (cacheGate) { asked = false; cached = null; cachedSite = ""; } }
 }

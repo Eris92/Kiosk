@@ -55,31 +55,40 @@ internal static class SharedAccounts
 
     // ------------------------------------------------------------------ service
 
-    /// <summary>Kiosk Card service, "sharedaccount": one account of accounts.kiosk next to the client.json this PC uses.</summary>
-    internal static CardService.Response ForService(string name, string? clientProgram)
+    internal sealed record Use(string Name, string Url, bool News = false);
+
+    /// <summary>Kiosk Card service, "sharedaccount": an account only for its configured page or SharePoint site.</summary>
+    internal static CardService.Response ForService(string request, string? clientProgram)
     {
         try
         {
             // Only the installed Kiosk (Program Files, which users cannot change) gets a password; any other program of
             // the person signed in could otherwise ask the service for it.
             if (!IsInstalledKiosk(clientProgram)) return new CardService.Response { Code = -2, Message = "Konta wspólne podaje usługa tylko programowi Kiosk z Program Files." };
-            // Only an account this PC's configuration gives to a page (Akcje stron) or to the SharePoint news: the
-            // Kiosk cannot ask for the other accounts of accounts.kiosk (those of programs never leave the service).
-            if (!UsedByPages(name)) return new CardService.Response { Code = -2, Message = "Konfiguracja tego komputera nie używa konta „" + name + "” na stronach." };
-            var account = Read(Path.Combine(CentralConfig.MachineConfigFolder(), FileName), name);
-            Audit.Write("shared_account_used", name);
+            var use = JsonSerializer.Deserialize<Use>(request);
+            if (use?.Name is not { Length: >= 1 and <= 128 } || use.Url is not { Length: >= 1 and <= 4096 } ||
+                !Uri.TryCreate(use.Url, UriKind.Absolute, out var target) || target.Scheme != Uri.UriSchemeHttps)
+                return new CardService.Response { Code = -2, Message = "Konto wspólne wymaga poprawnego adresu HTTPS." };
+            var configFolder = CentralConfig.MachineConfigFolder();
+            var config = Configuration.Load(Path.Combine(configFolder, CentralConfig.FileName)).Active();
+            if (!AuthorizedUse(config, use)) return new CardService.Response { Code = -2, Message = "Konto wspólne nie jest przypisane do tej strony." };
+            var account = Read(Path.Combine(configFolder, FileName), use.Name);
+            Audit.Write("shared_account_used", use.Name);
             return new CardService.Response { Message = account.User, Secret = account.Password };
         }
         catch (Exception ex) { return new CardService.Response { Code = -1, Message = ex.Message }; }
     }
 
-    /// <summary>The configuration this PC uses (its active entries) names <paramref name="name"/> for a page or the SharePoint news.</summary>
-    private static bool UsedByPages(string name)
+    /// <summary>Use the service's configuration, not the caller's, to decide where a password may be filled.</summary>
+    internal static bool AuthorizedUse(Config config, Use use)
     {
-        var config = Configuration.Load(Path.Combine(CentralConfig.MachineConfigFolder(), CentralConfig.FileName)).Active();
-        bool Same(string? used) => string.Equals(used?.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase);
-        return name.Trim().Length > 0 && (config.PageActions.Any(a => Same(a.Account)) ||
-            config.NewsSharePoint.Length > 0 && Same(config.NewsSharePointAccount));
+        if (string.IsNullOrWhiteSpace(use.Name) || !Uri.TryCreate(use.Url, UriKind.Absolute, out var target) || target.Scheme != Uri.UriSchemeHttps)
+            return false;
+        bool Same(string? name) => string.Equals(name?.Trim(), use.Name.Trim(), StringComparison.OrdinalIgnoreCase);
+        return use.News
+            ? config.NewsSharePoint.Length > 0 && Same(config.NewsSharePointAccount) &&
+              string.Equals(config.NewsSharePoint, use.Url, StringComparison.OrdinalIgnoreCase)
+            : config.PageActions.Any(a => Same(a.Account) && a.Matches(use.Url));
     }
 
     /// <summary>The service itself (SharedAccountPrograms): the account stays in the service.</summary>
@@ -129,24 +138,25 @@ internal static class SharedAccounts
     // ------------------------------------------------------------------ Kiosk
 
     /// <summary>The account from the Kiosk Card service.</summary>
-    internal static Account Get(string name)
+    internal static Account Get(string name, string url, bool news)
     {
-        var answer = CardService.Call(new CardService.Request { Op = "sharedaccount", Source = name });
+        var answer = CardService.Call(new CardService.Request { Op = "sharedaccount", Source = JsonSerializer.Serialize(new Use(name, url, news)) });
         if (answer.Code != 0 || answer.Secret == null)
             throw new InvalidOperationException("Konto wspólne „" + name + "”: " + answer.Message);
         return new Account(answer.Message, answer.Secret);
     }
 
-    private static readonly Dictionary<string, Account> cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<(string Name, string Url, bool News), Account> cache = new();
 
-    /// <summary>For pages: asked once per Kiosk start (the same account signs in to many pages).</summary>
-    internal static Account? TryGetCached(string name)
+    /// <summary>For pages: keep a separate credential per approved URL and use.</summary>
+    internal static Account? TryGetCached(string name, string url, bool news = false)
     {
-        lock (cache) if (cache.TryGetValue(name, out var known)) return known;
+        var key = (name, url, news);
+        lock (cache) if (cache.TryGetValue(key, out var known)) return known;
         try
         {
-            var account = Get(name);
-            lock (cache) cache[name] = account;
+            var account = Get(name, url, news);
+            lock (cache) cache[key] = account;
             return account;
         }
         catch (Exception ex) { Audit.Write("shared_account_failed", name + ": " + ex.Message); return null; }

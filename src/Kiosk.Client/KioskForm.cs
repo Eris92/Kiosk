@@ -2457,6 +2457,7 @@ internal sealed partial class KioskForm : Form
             legacy with { AutoConnectRdpName = "Missing" },
             legacy with { UnlockMethod = (UnlockMethod)42 },
             legacy with { AccentColor = "zielony" },
+            legacy with { NewsSharePointAccount = null! },
             legacy with { RdpConnections = [legacy.RdpConnections[0], legacy.RdpConnections[0]] },
             legacy with { RdpConnections = [new RdpConnection { Name = "E", Server = "10.0.0.1", Authentication = RdpAuthentication.EntraId }] }
         })

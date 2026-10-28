@@ -30,7 +30,7 @@ internal static class CardService
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
-        public string Source { get; set; } = "";      // testconfig: the folder or share to check
+        public string Source { get; set; } = "";      // testconfig: share; sharedaccount: name/site/use JSON; newsaccount: configured SharePoint site
         public string Embed { get; set; } = "";       // fidosignin: the Kiosk window the sign-in screen is drawn in (FidoSignIn.ValidEmbed)
     }
 
@@ -103,7 +103,7 @@ internal static class CardService
             if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
             if (request.Op == "runas") return SharedAccountPrograms.Start(request.Source, Environment.ProcessPath, null, Environment.ProcessId, -1);
-            if (request.Op == "newsaccount") return NewsAccount.ForService(Environment.ProcessPath);
+            if (request.Op == "newsaccount") return NewsAccount.ForService(Environment.ProcessPath, request.Source);
             if (request.Op == "syncconfig") return CentralConfig.SyncForMachine(); // No path: the server named in the PC's own configuration.
             if (request.Op == "syncnews") return CentralConfig.SyncNewsForMachine();   // Only the messages folder an administrator configured.
             if (request.Op == "stat") return Stats.Append(request.Source);              // One statistics event (Konfiguracja → Statystyki).
@@ -311,7 +311,7 @@ internal static class CardService
                     : request.Op == "runas" ? SharedAccountPrograms.Start(request.Source, clientProgram, pipe,
                         GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var runasPid) ? (int)runasPid : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var runasSession) ? runasSession : -1)
-                    : request.Op == "newsaccount" ? NewsAccount.ForService(clientProgram)
+                    : request.Op == "newsaccount" ? NewsAccount.ForService(clientProgram, request.Source)
                     // Watchdog: the Kiosk process Windows names reports in or says goodbye.
                     : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,
                         clientProgram, request.Source)
