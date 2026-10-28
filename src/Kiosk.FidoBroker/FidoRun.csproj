@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
+    <AutomaticallyUseReferenceAssemblyPackages>false</AutomaticallyUseReferenceAssemblyPackages>
     <OutputType>WinExe</OutputType>
     <AssemblyName>FidoRun</AssemblyName>
     <RootNamespace>FidoRun</RootNamespace>
