@@ -10,7 +10,7 @@ if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\config\client.
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $readers = Get-Service SCardSvr -ErrorAction SilentlyContinue
 $cardService = Get-Service KioskCard -ErrorAction SilentlyContinue
-$connections = @($config.RdpConnections)
+$connections = @($config.RdpConnections | Where-Object { $_ })
 if ($connections.Count -eq 0 -and $config.Server) { $connections = @([pscustomobject]@{Name='Legacy RDP';Server=$config.Server;Port=$config.Port}) }
 $joinFlags = @{ AzureAdJoined = 'Unknown'; DomainJoined = 'Unknown'; NgcSet = 'Unknown'; AzureAdPrt = 'Unknown' }
 $dsreg = Get-Command dsregcmd.exe -ErrorAction SilentlyContinue

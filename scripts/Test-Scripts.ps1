@@ -14,6 +14,28 @@ Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.json' | ForEach
     if ($text -match '(?i)C:\\\\Users\\\\(?!Public\\\\)|X:\\\\|"(?:Password|Pin|Secret|AccessToken)"\s*:') { throw "Private workstation data or a credential field was found in public configuration: $($_.Name)" }
 }
 [xml](Get-Content -LiteralPath (Join-Path $root 'config\intune\ShellLauncher.xml') -Raw) | Out-Null
+$rdpFixtureRoot = Join-Path $root ('out\rdp-prerequisites-' + [Guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path $rdpFixtureRoot -Force | Out-Null
+    $rdpConfig = Join-Path $rdpFixtureRoot 'client.json'
+    foreach ($fixture in @(
+        [pscustomobject]@{ Json = '{"Server":"legacy.example.local","Port":3390}'; Count = 1 },
+        [pscustomobject]@{ Json = '{"RdpConnections":[],"Server":"legacy.example.local"}'; Count = 1 },
+        [pscustomobject]@{ Json = '{"RdpConnections":[{"Name":"A","Server":"a.example.local"},{"Name":"B","Server":"b.example.local"}],"Server":"legacy.example.local"}'; Count = 2 }
+    )) {
+        [IO.File]::WriteAllText($rdpConfig, $fixture.Json)
+        $diagnostic = (& (Join-Path $PSScriptRoot 'Test-Prerequisites.ps1') -ConfigPath $rdpConfig | Out-String)
+        if ($diagnostic -notmatch "(?m)^\s*RdpProfiles\s*:\s*$($fixture.Count)\s*$") {
+            throw "RDP prerequisite diagnostic did not count $($fixture.Count) profiles for $($fixture.Json)."
+        }
+    }
+} finally {
+    $resolvedRdpFixture = [IO.Path]::GetFullPath($rdpFixtureRoot)
+    $outputRoot = [IO.Path]::GetFullPath((Join-Path $root 'out')).TrimEnd('\')
+    if ((Split-Path -Parent $resolvedRdpFixture) -ne $outputRoot -or
+        (Split-Path -Leaf $resolvedRdpFixture) -notmatch '^rdp-prerequisites-[a-f0-9]{32}$') { throw 'Unexpected RDP prerequisite test cleanup path.' }
+    if (Test-Path -LiteralPath $resolvedRdpFixture) { Remove-Item -LiteralPath $resolvedRdpFixture -Recurse -Force }
+}
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 $filterRules = @(
     [pscustomobject]@{ Id = 'Ctrl+Alt+Del'; Enabled = $false },
