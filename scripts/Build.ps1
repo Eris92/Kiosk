@@ -40,20 +40,20 @@ $staging = Join-Path $parent ('.kiosk-publish-' + [Guid]::NewGuid().ToString('N'
 $previous = Join-Path $parent ('.kiosk-previous-' + [Guid]::NewGuid().ToString('N'))
 $published = $false
 try {
-    $arguments = @('publish', (Join-Path $repository 'src\Kiosk.Client\Kiosk.Client.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $staging, '-p:ContinuousIntegrationBuild=true', '-p:Deterministic=true')
+    $arguments = @('publish', (Join-Path $repository 'src\Kiosk.Client\Kiosk.Client.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-o', $staging, '-p:ContinuousIntegrationBuild=true', '-p:Deterministic=true', '-p:RestoreLockedMode=true')
     if ($SelfTest) { $arguments += '-p:KioskSelfTest=true' }
     else { $arguments += @('-p:KioskSelfTest=false', '-p:DebugType=None', '-p:DebugSymbols=false') }
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed; the previous build was retained.' }
     $configTool = Join-Path $repository 'src\Kiosk.ConfigTool\KioskKonfiguracje.csproj'
-    & dotnet publish $configTool -c Release -r win-x64 --self-contained false -o $staging --nologo
+    & dotnet publish $configTool -c Release -r win-x64 --self-contained false -o $staging --nologo -p:RestoreLockedMode=true
     if ($LASTEXITCODE -ne 0) { throw 'Building the configuration manager failed; the previous build was retained.' }
     $newsEditor = Join-Path $repository 'src\Kiosk.NewsEditor\KioskKomunikaty.csproj'
     $editorSelfTest = if ($SelfTest) { 'true' } else { 'false' }
-    & dotnet publish $newsEditor -c Release -r win-x64 --self-contained false -o (Join-Path $staging 'news-example') --nologo "-p:KioskSelfTest=$editorSelfTest"
+    & dotnet publish $newsEditor -c Release -r win-x64 --self-contained false -o (Join-Path $staging 'news-example') --nologo "-p:KioskSelfTest=$editorSelfTest" -p:RestoreLockedMode=true
     if ($LASTEXITCODE -ne 0) { throw 'Building the news editor failed; the previous build was retained.' }
     $fido = Join-Path $repository 'src\Kiosk.FidoBroker\FidoRun.csproj'
-    & dotnet build $fido -c Release -o (Join-Path $staging 'fido') --nologo
+    & dotnet build $fido -c Release -o (Join-Path $staging 'fido') --nologo -p:RestoreLockedMode=true
     if ($LASTEXITCODE -ne 0) { throw 'Building the card sign-in broker failed; the previous build was retained.' }
     Get-ChildItem -LiteralPath (Join-Path $staging 'fido') -Filter '*.pdb' -File | Remove-Item -Force
     Copy-Item -LiteralPath $configSource -Destination (Join-Path $staging 'client.json')
