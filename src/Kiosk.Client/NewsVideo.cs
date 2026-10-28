@@ -34,12 +34,7 @@ internal sealed class NewsVideo : IDisposable
             // The browser starts once; the film follows when it is ready (a failed start was reported, the slide moves on by time).
             if (starting != null) { pending = (source, sound, loop); return false; }
             pending = (source, sound, loop);
-            starting = StartAsync();
-            starting.ContinueWith(t =>
-            {
-                if (disposed || !View.IsHandleCreated) return;
-                View.BeginInvoke(() => { if (View.CoreWebView2 != null && View.Visible && pending is { } next) Play(next.Source, next.Sound, next.Loop); });
-            }, TaskScheduler.Default);
+            starting = StartAndPlayAsync();
             return false;
         }
         var key = source + "|" + sound + "|" + loop;
@@ -76,6 +71,14 @@ internal sealed class NewsVideo : IDisposable
         catch (Exception) { }
     }
 
+    private async Task StartAndPlayAsync()
+    {
+        await StartAsync(); // Continues on the WinForms thread that called Play.
+        if (disposed || !View.Visible || View.CoreWebView2 == null || pending is not { } next) return;
+        pending = null;
+        Play(next.Source, next.Sound, next.Loop);
+    }
+
     private async Task StartAsync()
     {
         try
@@ -100,6 +103,7 @@ internal sealed class NewsVideo : IDisposable
         }
         catch (Exception ex)
         {
+            if (disposed) return;
             broken = true;
             View.Visible = false;
             Failed?.Invoke(ex.Message);   // Films are then skipped: their slides stay as long as pictures.
