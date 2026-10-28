@@ -65,6 +65,7 @@ internal sealed partial class KioskForm : Form
     private SettingsView? settingsView;
     private Control? visibleView;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
+    private long nextPeriodicChromeRefreshMilliseconds;
     private long nextWindowMonitorMilliseconds;
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
@@ -195,6 +196,7 @@ internal sealed partial class KioskForm : Form
                 var key = reader.Snapshot(config.ReaderName);
                 if (key != cardKey)
                 {
+                    nextPeriodicChromeRefreshMilliseconds = 0;
                     cardKey = key;
                     if (key == null) CardRemoved();
                     else CardInserted(identifyCard() ?? UncertifiedCard());
@@ -218,7 +220,15 @@ internal sealed partial class KioskForm : Form
         finally
         {
             inTick = false;
-            RefreshChrome();
+            // Visible state changes generally refresh in their handlers, and a changed card key
+            // forces a refresh below. Passive status (for example reader health) only needs a
+            // periodic refresh. Rebuilding task signatures four times a second adds UI thread work.
+            var now = Environment.TickCount64;
+            if (now >= nextPeriodicChromeRefreshMilliseconds)
+            {
+                nextPeriodicChromeRefreshMilliseconds = now + 1000;
+                RefreshChrome();
+            }
         }
     }
 

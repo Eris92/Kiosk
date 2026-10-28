@@ -184,6 +184,7 @@ internal sealed partial class KioskForm
             return;
         }
         var key = reader.Snapshot(config.ReaderName);
+        if (key != cardKey) nextPeriodicChromeRefreshMilliseconds = 0;
         if (key != null && key != cardKey) cardPlacedAtMilliseconds = Environment.TickCount64;
         cardKey = key;
         PrepareCardSignIn();
