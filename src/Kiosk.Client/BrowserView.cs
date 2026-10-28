@@ -144,7 +144,7 @@ internal sealed class BrowserView : UserControl
         forward.Click += (_, _) => { if (active?.Web.CanGoForward == true) active.Web.GoForward(); };
         reload.Click += (_, _) => { if (active?.Web.CoreWebView2 != null) active.Web.Reload(); };
         go.Click += (_, _) => NavigateAddress();
-        newTab.Click += async (_, _) => await AddTabAsync(homeUrl);
+        newTab.Click += (_, _) => _ = AddTabFromUiAsync(homeUrl);
         address.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateAddress(); } };
         foreach (var bookmark in bookmarks ?? [])
         {
@@ -295,10 +295,18 @@ internal sealed class BrowserView : UserControl
         ArrangeTabs();
         SelectTab(tab);
 
-        var options = environment.CreateCoreWebView2ControllerOptions();
-        options.ProfileName = profileName;
-        options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
-        await web.EnsureCoreWebView2Async(environment, options);
+        try
+        {
+            var options = environment.CreateCoreWebView2ControllerOptions();
+            options.ProfileName = profileName;
+            options.IsInPrivateModeEnabled = !windowsAccount && !sharedFolder;
+            await web.EnsureCoreWebView2Async(environment, options);
+        }
+        catch
+        {
+            CloseTab(tab, replaceLast: false);
+            throw;
+        }
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
         // The card's web sign-in (security key) only without a Windows account: with it the page signs in by itself (SSO).
@@ -344,7 +352,7 @@ internal sealed class BrowserView : UserControl
             {
                 var link = target.LinkUri;
                 var open = environment.CreateContextMenuItem("Otwórz w nowej karcie", null, CoreWebView2ContextMenuItemKind.Command);
-                open.CustomItemSelected += async (_, _) => await AddTabAsync(link);
+                open.CustomItemSelected += (_, _) => _ = AddTabFromUiAsync(link);
                 items.Insert(0, open);
             }
             if (items.Count == 0) e.Handled = true; // Nothing left to show.
@@ -357,11 +365,18 @@ internal sealed class BrowserView : UserControl
             if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
             if (singlePage) { e.Handled = true; if (IsWebAddress(e.Uri)) core.Navigate(e.Uri); return; }
             var deferral = e.GetDeferral();
+            Tab? opened = null;
             try
             {
-                var opened = await AddTabAsync(null, e);
+                opened = await AddTabAsync(null, e);
                 if (opened?.Web.CoreWebView2 != null) e.NewWindow = opened.Web.CoreWebView2;
                 e.Handled = true;
+            }
+            catch (Exception ex)
+            {
+                e.Handled = true;
+                if (opened != null) CloseTab(opened, replaceLast: false);
+                ReportTabError(ex);
             }
             finally { deferral.Complete(); }
         };
@@ -498,7 +513,7 @@ internal sealed class BrowserView : UserControl
         UpdateNavigation();
     }
 
-    private void CloseTab(Tab tab)
+    private void CloseTab(Tab tab, bool replaceLast = true)
     {
         int index = tabs.IndexOf(tab);
         if (index < 0) return;
@@ -506,9 +521,27 @@ internal sealed class BrowserView : UserControl
         tabStrip.Controls.Remove(tab.Button);
         pages.Controls.Remove(tab.Web);
         tab.Button.Dispose(); tab.Web.Dispose();
-        if (tabs.Count == 0) { active = null; _ = AddTabAsync(homeUrl); } // The browser always keeps one tab.
+        if (tabs.Count == 0)
+        {
+            active = null;
+            address.Text = "";
+            UpdateNavigation();
+            if (replaceLast && !IsDisposed) _ = AddTabFromUiAsync(homeUrl); // The browser normally keeps one tab.
+        }
         else if (active == tab) SelectTab(tabs[Math.Min(index, tabs.Count - 1)]);
         ArrangeTabs();
+    }
+
+    private async Task AddTabFromUiAsync(string? url)
+    {
+        try { await AddTabAsync(url); }
+        catch (Exception ex) { ReportTabError(ex); }
+    }
+
+    private void ReportTabError(Exception ex)
+    {
+        Audit.Write("browser_tab_error", ex.GetType().Name + ": " + ex.Message);
+        if (!IsDisposed) message.Text = "Nie udało się otworzyć karty: " + ex.Message;
     }
 
     private void UpdateNavigation()
