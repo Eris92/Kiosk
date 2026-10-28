@@ -160,7 +160,7 @@ namespace FidoRun
         private void Initialize()
         {
             if (Cancelled) return;
-            callbacks = new HostCallbacks(this, view, owner);
+            callbacks = new HostCallbacks(this, owner);
             VerifyCallbackInterfaces();
             provider = SystemProvider.Create(log.Write);
             int scenario = options.Scenario == "logon" ? 1 : 4;
@@ -284,7 +284,7 @@ namespace FidoRun
                 ReleaseCredential();
                 int generation = credentialGeneration;
                 view.BeginFields(generation);
-                credentialCallbacks = new HostCallbacks(this, view, owner, generation);
+                credentialCallbacks = new HostCallbacks(this, owner, generation);
                 int status = provider.GetCredentialAt(index, out credential);
                 log.Write("GetCredentialAt(" + index + "): " + Status.Hex(status));
                 Status.Check(status, "GetCredentialAt");
@@ -755,11 +755,10 @@ namespace FidoRun
         IQueryContinueWithStatus, IQueryContinue, ICustomQueryInterface
     {
         private readonly ProviderHost host;
-        private readonly HostForm view;
         private readonly IntPtr owner;
         private readonly int generation;
-        internal HostCallbacks(ProviderHost host, HostForm view, IntPtr owner, int generation = 0)
-        { this.host = host; this.view = view; this.owner = owner; this.generation = generation; }
+        internal HostCallbacks(ProviderHost host, IntPtr owner, int generation = 0)
+        { this.host = host; this.owner = owner; this.generation = generation; }
         public CustomQueryInterfaceResult GetInterface(ref Guid iid, out IntPtr pointer)
         {
             pointer = IntPtr.Zero;
