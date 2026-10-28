@@ -158,9 +158,10 @@ internal sealed class MainForm : Form
     {
         try
         {
-            if (file.ChangedElsewhere && MessageBox.Show(this, "Ktoś inny zapisał komunikaty po ich wczytaniu. Zastąpić jego zmiany Twoimi?",
+            var fingerprint = file.CurrentFingerprint();
+            if (file.ChangedElsewhere(fingerprint) && MessageBox.Show(this, "Ktoś inny zapisał komunikaty po ich wczytaniu. Zastąpić jego zmiany Twoimi?",
                     Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-            file.Save();
+            file.Save(fingerprint);
             SetDirty(false);
             Status("Zapisano " + DateTime.Now.ToString("HH:mm:ss") + ". Kioski pobiorą zmiany przy najbliższym odświeżeniu komunikatów (poprzednia wersja: " + NewsFile.FileName + ".bak).");
         }

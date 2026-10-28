@@ -199,6 +199,8 @@ Edytor komunikatów sortuje odczytane wpisy statystyk na wątku roboczym. Ekspor
 
 Edytor kopiuje obrazy i filmy do folderu komunikatów poza wątkiem UI. Najpierw zapisuje plik tymczasowy w tym samym folderze, sprawdza skopiowany obraz i dopiero potem podmienia nazwę docelową. Próba zamknięcia okna anuluje trwające kopiowanie i wymaga ponownego zamknięcia po sprzątnięciu pliku; błąd walidacji również zostawia wcześniejszy plik docelowy. Self-test sprawdza anulowanie, błąd walidacji, pełną publikację i usunięcie pliku tymczasowego. Podgląd obrazu także jest odczytywany poza wątkiem UI; szybkie zmiany pola anulują poprzednie żądanie i opóźniają dekodowanie o 150 ms, żeby wyświetlić tylko najnowszy wybór.
 
+Zapis `kiosk-news.json` porównuje odcisk SHA-256 treści z wersją wczytaną przez edytor, więc wykrywa zmianę nawet przy niezmienionym czasie modyfikacji. Przed publikacją sprawdza ponownie wersję wskazaną przez użytkownika; instancje edytora używają wspólnej blokady plikowej. Każdy zapis ma własne tymczasowe nazwy danych i kopii `.bak`, usuwane po błędzie. Self-test sprawdza konflikt dwóch instancji, tę samą datę modyfikacji, blokadę, kopię zapasową i sprzątanie. Zewnętrzny program niekorzystający z blokady może nadal zapisać plik między ostatnim sprawdzeniem a zmianą nazwy; zapis samego JSON nadal może zatrzymać okno na wolnym udziale.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

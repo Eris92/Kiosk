@@ -9,7 +9,7 @@ internal static class Program
         if (args.Length == 1 && args[0] == "--self-test")
         {
             var result = Path.Combine(AppContext.BaseDirectory, "self-test-news.txt");
-            try { StatsView.SelfTest(); MediaCopy.SelfTestAsync().GetAwaiter().GetResult(); File.WriteAllText(result, "Bounded and cancellable statistics reading, safe CSV export and atomic media copy passed."); return 0; }
+            try { StatsView.SelfTest(); MediaCopy.SelfTestAsync().GetAwaiter().GetResult(); NewsFile.SelfTest(); File.WriteAllText(result, "Bounded statistics reading, safe CSV export, media copy and concurrent news save passed."); return 0; }
             catch (Exception ex) { File.WriteAllText(result, ex.ToString()); return 1; }
         }
 #endif
