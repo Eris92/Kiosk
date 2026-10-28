@@ -16,6 +16,7 @@ internal sealed partial class KioskForm
     /// <summary>The card sign-in screen inside the Kiosk, listening for a tap; null while it starts or after it ended.</summary>
     private FidoSignIn? signInScreen;
     private Task<FidoSignIn?>? signInStarting;
+    private bool cardSignInFinalizing;
     private long? signInFailedAtMilliseconds;
     /// <summary>Card sign-in screens that did not start in a row: each waits longer (10 s, 20 s… up to 5 minutes).</summary>
     private int signInStartFailures;
@@ -24,14 +25,10 @@ internal sealed partial class KioskForm
     /// <summary>A Szybka pomoc result (card reset, PIN change…) is shown in the card instead of the sign-in until then.</summary>
     private long? noticeUntilMilliseconds;
 
-    /// <summary>When the card left the reader; the sign-in waits <see cref="CardReturnSeconds"/> for it to come back.</summary>
+    /// <summary>When the signed-in card disappeared; its pages close at once and sign-out follows the configured delay.</summary>
     private long? cardAwaySinceMilliseconds;
-    /// <summary>
-    /// The readers that held a card when the person signed in: the card on the NFC reader, or the USB key (its own
-    /// reader). The configured reader alone is not enough: with a USB key it holds nothing, and the person was signed
-    /// out right after signing in. Empty = the key has no reader (FIDO over HID only): nothing to watch.
-    /// </summary>
-    private string[] signInReaders = [];
+    /// <summary>The exact PC/SC card insertion observed after sign-in, including its reader event counter.</summary>
+    private string? signedInCardSnapshot;
     /// <summary>Konfiguracja → Szybka pomoc: "Wyloguj po zdjęciu karty".</summary>
     private int CardReturnSeconds => config.CardRemovedSeconds;
 
@@ -48,7 +45,7 @@ internal sealed partial class KioskForm
             Audit.Write("fido_paused_for_page");
             RefreshChrome();
         }
-        if (cardLogon != null || signInScreen != null || registeringCard) return;
+        if (cardLogon != null || signInScreen != null || registeringCard || cardSignInFinalizing) return;
         if (signInStarting != null)
         {
             if (!signInStarting.IsCompleted) return;
@@ -116,14 +113,44 @@ internal sealed partial class KioskForm
             RefreshChrome();
             return;
         }
+        if (!latest)
+        {
+            _ = Task.Run(signIn.Dispose);
+            return;
+        }
         var logon = UserLogon.FromCard(signIn);
+        string? cardSnapshot = null;
+        cardSignInFinalizing = true;
+        try
+        {
+            // Windows can reset the card while finishing sign-in. Capture two matching observations.
+            string? candidate = null;
+            for (int attempt = 0; attempt < 20 && cardSnapshot == null; attempt++)
+            {
+                var observed = reader.Snapshot(config.ReaderName);
+                if (observed != null && observed == candidate) cardSnapshot = observed;
+                else { candidate = observed; await Task.Delay(100); }
+            }
+        }
+        catch (Exception ex) { Audit.Write("selfservice_card_monitor_failed", ex.Message); }
+        finally { cardSignInFinalizing = false; }
+        if (IsDisposed || !SelfService || SelfServiceWindowsSession) { logon.Dispose(); return; }
+        if (cardSnapshot == null)
+        {
+            logon.Dispose();
+            signInFailedAtMilliseconds = Environment.TickCount64;
+            notice = "Nie można monitorować karty w czytniku. Sesja została zakończona; sprawdź czytnik w Konfiguracji i zaloguj się ponownie.";
+            Audit.Write("selfservice_card_unmonitored");
+            RefreshChrome();
+            return;
+        }
+        helpBrowser?.Close();
         cardLogon = logon;
         cardAwaySinceMilliseconds = null;
-        cardKey = reader.Snapshot(config.ReaderName);
-        signInReaders = reader.ReadersWithCard() ?? [];
+        signedInCardSnapshot = cardKey = cardSnapshot;
         Audit.Write("selfservice_signed_in_with_card", logon.DisplayName);
         Stats.Record(Stats.SignIn, "Karta i PIN", person: logon.DisplayName);
-        Audit.Write("selfservice_card_watched", signInReaders.Length == 0 ? "(brak czytnika z kartą)" : string.Join(", ", signInReaders));
+        Audit.Write("selfservice_card_watched", reader.ActiveReader);
         notice = null;
         RefreshChrome();
         bool ready;
@@ -183,11 +210,12 @@ internal sealed partial class KioskForm
             if (!config.TestMode) ShellTick();
             return;
         }
-        var key = reader.Snapshot(config.ReaderName);
+        var key = ReadSelfServiceCardSnapshot();
         if (key != cardKey) nextPeriodicChromeRefreshMilliseconds = 0;
         if (key != null && key != cardKey) cardPlacedAtMilliseconds = Environment.TickCount64;
         cardKey = key;
         PrepareCardSignIn();
+        ObserveSignedInCard(key);
         if (cardLogon == null && notice != null && noticeUntilMilliseconds is { } noticeDeadline && Environment.TickCount64 >= noticeDeadline)
         { noticeUntilMilliseconds = null; notice = null; RefreshChrome(); }
         if (cardPage is { Started: true } page && !page.RefreshHostedWindow()) CloseCardPage();   // "Zamknij" or its countdown closed it.
@@ -199,29 +227,47 @@ internal sealed partial class KioskForm
             Audit.Write("card_page_reusable_lost");   // Closed or crashed: pages start on their own again.
             DropReusablePage();
         }
+    }
+
+    private string? ReadSelfServiceCardSnapshot()
+    {
+        try { return reader.Snapshot(config.ReaderName); }
+        catch (Exception ex) { Audit.Write("selfservice_card_monitor_failed", ex.Message); return null; }
+    }
+
+    private void ObserveSignedInCard(string? observed)
+    {
         if (cardLogon == null) return;
-        if (signInReaders.Length == 0)
+        if (cardAwaySinceMilliseconds is { } awaySince &&
+            Environment.TickCount64 - awaySince >= CardReturnSeconds * 1000L)
         {
-            // Windows resets the card while signing in; the first reader seen holding it afterwards is the one watched.
-            signInReaders = reader.ReadersWithCard() ?? [];
-            if (signInReaders.Length > 0) Audit.Write("selfservice_card_watched", string.Join(", ", signInReaders));
+            EndCardSession("selfservice_card_removed");
             return;
         }
-        var holding = reader.ReadersWithCard();
-        if (holding == null) return;   // The smart card service did not answer: no decision this tick.
-        if (holding.Intersect(signInReaders, StringComparer.Ordinal).Any())
+        switch (CardReader.CompareSignedInCard(signedInCardSnapshot, observed))
         {
-            if (cardAwaySinceMilliseconds != null) { cardAwaySinceMilliseconds = null; notice = null; Audit.Write("selfservice_card_back"); RefreshChrome(); }
-            return;
+            case CardReader.SignedInCardState.Present:
+                // A temporary reader failure could hide an exchange. Never resume this sign-in after a missing observation.
+                return;
+            case CardReader.SignedInCardState.Changed:
+                EndCardSession("selfservice_card_changed");
+                notice = "Karta została zmieniona. Zaloguj się ponownie.";
+                RefreshChrome();
+                return;
+            case CardReader.SignedInCardState.Missing:
+                if (cardAwaySinceMilliseconds == null)
+                {
+                    cardAwaySinceMilliseconds = Environment.TickCount64;
+                    // A different person must not use the previous person's page during the grace period.
+                    helpBrowser?.Close();
+                    CloseCardPage();
+                    DropReusablePage();
+                    notice = "Karta zdjęta. Strony zostały zamknięte; wylogowanie nastąpi za " + CardReturnSeconds + " s.";
+                    Audit.Write("selfservice_card_away");
+                    RefreshChrome();
+                }
+                return;
         }
-        if (cardAwaySinceMilliseconds == null)
-        {
-            cardAwaySinceMilliseconds = Environment.TickCount64;
-            notice = "Karta zdjęta. Jeśli nie przyłożysz jej ponownie w ciągu " + CardReturnSeconds + " s, nastąpi wylogowanie.";
-            Audit.Write("selfservice_card_away");
-            RefreshChrome();
-        }
-        else if (Environment.TickCount64 - cardAwaySinceMilliseconds.Value >= CardReturnSeconds * 1000L) EndCardSession("selfservice_card_removed");
     }
 
     /// <summary>The card is gone: the person is signed out here, their pages and programs close.</summary>
@@ -229,7 +275,7 @@ internal sealed partial class KioskForm
     {
         if (cardLogon == null) return;
         cardAwaySinceMilliseconds = null;
-        signInReaders = [];
+        signedInCardSnapshot = null;
         helpBrowser?.Close();
         CloseCardPage();
         DropReusablePage();
@@ -249,6 +295,8 @@ internal sealed partial class KioskForm
     private bool OpenPageAsCardPerson(string title, string url, string side = "")
     {
         if (cardLogon == null) return false;
+        ObserveSignedInCard(ReadSelfServiceCardSnapshot());
+        if (cardLogon == null || cardAwaySinceMilliseconds != null) return true;
         CloseCardPage();
         _ = OpenCardPageAsync(cardLogon, title, url, side, cardPageRequestVersion);
         return true;
@@ -256,7 +304,7 @@ internal sealed partial class KioskForm
 
     private async Task OpenCardPageAsync(UserLogon logon, string title, string url, string side, int requestVersion)
     {
-        bool Latest() => !IsDisposed && cardPageRequestVersion == requestVersion && cardLogon == logon;
+        bool Latest() => !IsDisposed && cardPageRequestVersion == requestVersion && cardLogon == logon && cardAwaySinceMilliseconds == null;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         helpBrowser?.Close();
         // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.

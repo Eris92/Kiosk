@@ -21,7 +21,7 @@ internal sealed class FidoSignIn : IDisposable
     internal const string Folder = "fido";
     private const string Program = "FidoRun.exe";
     private readonly string pipe;
-    /// <summary>The sign-in program the service started: only its pipe is believed (0 = not known).</summary>
+    /// <summary>The sign-in program the service started: only its pipe is believed.</summary>
     private readonly uint server;
 
     private FidoSignIn(string pipe, uint server) { this.pipe = pipe; this.server = server; }
@@ -53,7 +53,12 @@ internal sealed class FidoSignIn : IDisposable
         try { started = await Task.Run(() => CardService.Call(new CardService.Request { Op = "fidosignin", Embed = embed })); }
         catch (Exception ex) { Audit.Write("fido_prepare_failed", LastError = ex.Message); return null; }
         if (started.Code != 0) { Audit.Write("fido_prepare_failed", LastError = started.Message); return null; }
-        var signIn = new FidoSignIn(started.Secret ?? "KioskFido-" + Environment.ProcessId, uint.TryParse(started.Message, out var pid) ? pid : 0);
+        if (!TryGetBrokerEndpoint(started, out var pipe, out var pid))
+        {
+            Audit.Write("fido_prepare_failed", LastError = "Nieprawidłowa odpowiedź usługi logowania kartą.");
+            return null;
+        }
+        var signIn = new FidoSignIn(pipe, pid);
         try
         {
             var listening = await Task.Run(() => signIn.Send("listening", 30000, 60000));
@@ -75,6 +80,15 @@ internal sealed class FidoSignIn : IDisposable
     }
 
     private static string Hex(Color color) => color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
+
+    internal static bool TryGetBrokerEndpoint(CardService.Response response, out string pipe, out uint pid)
+    {
+        pipe = "";
+        pid = 0;
+        if (response.Code != 0 || !uint.TryParse(response.Message, out pid) || pid == 0) return false;
+        pipe = "KioskFido-" + Environment.ProcessId + "-" + pid;
+        return string.Equals(response.Secret, pipe, StringComparison.Ordinal);
+    }
 
     /// <summary>"--embed" as the Kiosk sends it: window;dpi;surface;text;muted;accent. Anything else never reaches a command line.</summary>
     internal static bool ValidEmbed(string? value) =>
@@ -128,7 +142,7 @@ internal sealed class FidoSignIn : IDisposable
         using var client = new NamedPipeClientStream(".", pipe, PipeDirection.InOut);
         client.Connect(connectMs);
         // Another program that took this pipe's name first could answer "signed in as an administrator": not believed.
-        if (server != 0 && (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var answering) || answering != server))
+        if (!GetNamedPipeServerProcessId(client.SafePipeHandle, out var answering) || answering != server)
             return "ERROR Logowanie kartą: odpowiedział nieznany program.";
         var bytes = Encoding.UTF8.GetBytes(request + "\n");
         try { client.Write(bytes); client.Flush(); }

@@ -558,6 +558,16 @@ internal sealed class CardReader : IDisposable
     internal static bool IsUsableCard(uint state) =>
         (state & 0x20) != 0 && (state & (0x01 | 0x04 | 0x08 | 0x10 | 0x200)) == 0;
 
+    internal enum SignedInCardState { Present, Missing, Changed }
+
+    // The upper-word PC/SC event counter is part of Snapshot. An ATR or reader name alone
+    // cannot distinguish two cards exchanged in the same reader.
+    internal static SignedInCardState CompareSignedInCard(string? signedInSnapshot, string? observedSnapshot) =>
+        signedInSnapshot == null ? SignedInCardState.Changed :
+        observedSnapshot == null ? SignedInCardState.Missing :
+        string.Equals(signedInSnapshot, observedSnapshot, StringComparison.Ordinal)
+            ? SignedInCardState.Present : SignedInCardState.Changed;
+
     // "Any reader" skips the laptop's SIM slot (LTE modem: "Microsoft UICC ISO Reader …"): it always holds a card,
     // which would sign someone in with no card on the reader.
     internal static Native.ReaderState[] MonitoredReaders(Native.ReaderState[] states, string selected) =>

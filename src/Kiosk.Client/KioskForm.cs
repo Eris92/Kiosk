@@ -2418,6 +2418,28 @@ internal sealed partial class KioskForm : Form
         physicalAndVirtual[0].EventState = 0x12;
         if (CardReader.MonitoredReaders(physicalAndVirtual, "ACS").Any(s => CardReader.IsUsableCard(s.EventState)))
             throw new InvalidOperationException("Virtual reader masked physical card removal.");
+        const string signedInCard = "ACS:42:3B00";
+        if (CardReader.CompareSignedInCard(signedInCard, signedInCard) != CardReader.SignedInCardState.Present ||
+            CardReader.CompareSignedInCard(signedInCard, null) != CardReader.SignedInCardState.Missing ||
+            CardReader.CompareSignedInCard(signedInCard, "ACS:43:3B00") != CardReader.SignedInCardState.Changed ||
+            CardReader.CompareSignedInCard(signedInCard, "Other:42:3B00") != CardReader.SignedInCardState.Changed ||
+            CardReader.CompareSignedInCard(null, signedInCard) != CardReader.SignedInCardState.Changed)
+            throw new InvalidOperationException("A changed card insertion kept the previous person's session.");
+        var brokerReply = new CardService.Response
+        {
+            Message = "123",
+            Secret = "KioskFido-" + Environment.ProcessId + "-123"
+        };
+        if (!FidoSignIn.TryGetBrokerEndpoint(brokerReply, out var brokerPipe, out var brokerPid) ||
+            brokerPipe != brokerReply.Secret || brokerPid != 123)
+            throw new InvalidOperationException("A valid card sign-in broker endpoint was rejected.");
+        brokerReply.Secret = "KioskFido-" + Environment.ProcessId + "-124";
+        if (FidoSignIn.TryGetBrokerEndpoint(brokerReply, out _, out _))
+            throw new InvalidOperationException("A mismatched card sign-in broker pipe was accepted.");
+        brokerReply.Message = "0";
+        brokerReply.Secret = "KioskFido-" + Environment.ProcessId + "-0";
+        if (FidoSignIn.TryGetBrokerEndpoint(brokerReply, out _, out _))
+            throw new InvalidOperationException("A card sign-in broker without a verified process was accepted.");
 
         var categorized = new HelpAction { Category = " Pomoc / Konto // " };
         if (categorized.CategoryPath != "Pomoc/Konto" ||
