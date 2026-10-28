@@ -36,6 +36,8 @@ internal static class Program
 #if KIOSK_SELF_TEST
         if (args.Length > 0 && args[0] == "--app-host-fixture")
         {
+            if (args.Length == 3 && args[1] == "--delay-ms" && int.TryParse(args[2], out var delayMilliseconds))
+                Thread.Sleep(Math.Clamp(delayMilliseconds, 0, 10_000));
             using var fixture = new Form { Text = "Kiosk host test", Size = new Size(480, 320) };
             fixture.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, Text = "Hosted application test" });
             Application.Run(fixture);

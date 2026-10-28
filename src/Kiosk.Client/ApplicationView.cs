@@ -176,7 +176,8 @@ internal sealed class ApplicationView : Panel
         catch { AppNative.TerminateProcess(process.Process != IntPtr.Zero ? process.Process : untrackedProcess, 1); throw; }
         finally { AppNative.CloseHandle(process.Thread); if (process.Process != IntPtr.Zero) AppNative.CloseHandle(process.Process); }
 
-        var deadline = Environment.TickCount64 + 30_000; // Office and Electron apps can take a while.
+        var launchStartedAt = Environment.TickCount64;
+        var deadline = launchStartedAt + 30_000; // Office and Electron apps can take a while.
         long? handedOver = null;
         while (!IsDisposed && Environment.TickCount64 < deadline)
         {
@@ -191,7 +192,10 @@ internal sealed class ApplicationView : Panel
                 if (Environment.TickCount64 - handedOver < 10_000) { await Task.Delay(100); continue; }
                 throw new InvalidOperationException("Program zakończył się bez otwierania okna. Zwykle oznacza to, że przekazał pracę do już otwartej kopii — zamknij ją i spróbuj ponownie.");
             }
-            await Task.Delay(50);
+            // Finding a window enumerates desktop windows and opens process handles. Poll quickly for
+            // ordinary launches, then reduce the work while Office/Electron finishes starting.
+            var elapsed = Environment.TickCount64 - launchStartedAt;
+            await Task.Delay(elapsed < 1000 ? 50 : elapsed < 5000 ? 100 : 250);
         }
         if (!IsDisposed) throw new InvalidOperationException("Brak zgodnego okna aplikacji. Program może używać istniejącej instancji, wymagać administratora lub nie obsługiwać osadzania.");
     }

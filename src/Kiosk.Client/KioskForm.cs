@@ -2919,6 +2919,20 @@ internal sealed partial class KioskForm : Form
         }
         SaveSettingsScreenshots(restored);
 
+        // A program that creates its window after the polling interval grows must still be adopted.
+        using (var delayed = new ApplicationView())
+        {
+            surface.Controls.Add(delayed);
+            try
+            {
+                await delayed.StartAsync(entry with { Arguments = "--app-host-fixture --delay-ms 5500" })
+                    .WaitAsync(TimeSpan.FromSeconds(15));
+                if (delayed.HostedWindow == IntPtr.Zero || AppNative.GetParent(delayed.HostedWindow) != delayed.Handle)
+                    throw new InvalidOperationException("Delayed application window was not embedded.");
+            }
+            finally { surface.Controls.Remove(delayed); }
+        }
+
         // An existing same-executable window must never be adopted or terminated.
         using var unrelated = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(entry.Path, entry.Arguments)
         { UseShellExecute = false, WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden })!;
