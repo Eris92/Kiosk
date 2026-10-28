@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 namespace Kiosk.Client;
@@ -55,8 +56,20 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         var (process, thread) = Start(cmd, "\"" + cmd + "\" /c exit", Environment.SystemDirectory, show: 0);
         try
         {
-            ResumeThread(thread);
-            WaitForSingleObject(process, 120000);
+            if (ResumeThread(thread) == uint.MaxValue)
+            {
+                var error = new Win32Exception(Marshal.GetLastPInvokeError());
+                TerminateProcess(process, 1);
+                throw error;
+            }
+            var waited = WaitForSingleObject(process, 120000);
+            if (waited != 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                TerminateProcess(process, 1);
+                if (waited == 0x102) throw new TimeoutException("Tworzenie profilu Windows przekroczyło 120 sekund.");
+                throw new Win32Exception(error);
+            }
         }
         finally { CloseHandle(thread); CloseHandle(process); }
         Audit.Write(ProfileDirectory != null ? "profile_created" : "profile_missing", DisplayName);
@@ -69,7 +82,8 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
     }
 
-    [DllImport("kernel32.dll")] private static extern uint ResumeThread(IntPtr thread);
-    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll")] private static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 }

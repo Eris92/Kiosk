@@ -1939,9 +1939,16 @@ internal sealed partial class KioskForm : Form
                 {
                     var edge = EdgeAsUser.Path;
                     var (process, thread) = session.Logon.Start(edge, "\"" + edge + "\" \"" + url + "\"", Path.GetDirectoryName(edge), show: 1);
-                    AppNative.ResumeThread(thread);
-                    AppNative.CloseHandle(thread);
-                    AppNative.CloseHandle(process);
+                    try
+                    {
+                        if (AppNative.ResumeThread(thread) == uint.MaxValue)
+                        {
+                            var error = new Win32Exception(Marshal.GetLastPInvokeError());
+                            AppNative.TerminateProcess(process, 1);
+                            throw error;
+                        }
+                    }
+                    finally { AppNative.CloseHandle(thread); AppNative.CloseHandle(process); }
                     ActivateExisting("app:" + EdgeAsUser.Name);
                 }
                 catch (Exception ex) { notice = "Nie udało się otworzyć strony: " + ex.Message; Audit.Write("news_open_failed", ex.Message); }

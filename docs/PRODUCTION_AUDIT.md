@@ -226,6 +226,8 @@ Każde uruchomienie starszego brokera CardBroker otrzymuje teraz własny plik li
 
 Pamięć podręczna kont współdzielonych jest ograniczona do 64 adresów i odświeża wpisy po pięciu minutach. Dla akcji stron różne parametry zapytania przy tej samej ścieżce korzystają z jednego wpisu i jednego odczytu konta; konto wiadomości SharePoint nadal używa dokładnego adresu z konfiguracji. Nowa konfiguracja usuwa zapisane hasła; odpowiedź usługi rozpoczęta przed zmianą konfiguracji nie zostaje ponownie dodana do pamięci ani użyta przez oczekujące żądanie. Starsze konto wiadomości SharePoint także odświeża się po pięciu minutach, w tym po wcześniejszym nieudanym odczycie. Test sprawdza powtórzone zapytanie do strony, usunięcie najstarszego adresu oraz zmianę konfiguracji podczas pobierania konta. Rzeczywiste odświeżenie haseł i logowanie SharePoint wymagają próby z docelową witryną.
 
+Przy otwieraniu nowej karty w już działającej przeglądarce osoby zalogowanej kartą wynik `ResumeThread` jest sprawdzany; błąd kończy zawieszony proces i zawsze zwalnia oba uchwyty. Przy przygotowaniu profilu Windows przez brokera nieudane wznowienie lub przekroczenie 120 sekund również kończy proces i zwalnia uchwyty. Scenariusze te wymagają rzeczywistego brokera i konta testowego do próby integracyjnej.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
