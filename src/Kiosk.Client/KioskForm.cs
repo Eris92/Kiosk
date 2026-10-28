@@ -518,6 +518,8 @@ internal sealed partial class KioskForm : Form
     private bool CheckCard()
     {
         if (!CanUseApps) return false;
+        // In WindowsShell, Windows already authenticated the account (card or Hello) before Kiosk started.
+        if (ShellMode) { notice = null; return true; }
         if (reader.Snapshot(config.ReaderName) == null) { cardKey = null; return false; }
         notice = null;
         return true;
@@ -1752,9 +1754,9 @@ internal sealed partial class KioskForm : Form
             _ = OpenApplicationAsync(RemoteDesktopAsUser(connection));
             return;
         }
-        if (!ShellMode && connection.Authentication != RdpAuthentication.SmartCard)
+        if (!ShellMode)
         {
-            notice = "Aby użyć tego połączenia, najpierw zaloguj swoje konto Windows przyciskiem „Zaloguj”.";
+            notice = "Aby użyć RDP, najpierw zaloguj swoje konto Windows kartą. Włącz „Zaloguj jako użytkownik” w Konfiguracji.";
             ShowView(desktop);
             return;
         }
@@ -1879,7 +1881,7 @@ internal sealed partial class KioskForm : Form
         if (!CheckCard()) return;
         var session = current!;
         var logon = session.Logon;
-        if (logon is { WithCard: true })
+        if (logon != null)
         {
             // Signed in with the card: Pliki run as the person in their own window, with their rights.
             _ = OpenApplicationAsync(new ApplicationEntry
@@ -1889,8 +1891,7 @@ internal sealed partial class KioskForm : Form
             });
             return;
         }
-        Func<Func<object?>, object?> runAs = logon != null ? logon.RunAs : work => work();
-        try { session.Files = new FilesView(runAs, logon?.ProfileDirectory); }
+        try { session.Files = new FilesView(work => work(), null); }
         catch (Exception ex) { notice = "Nie można otworzyć Plików: " + ex.Message; Audit.Write("files_error", ex.Message); RefreshChrome(); return; }
         session.Files.OpenRequested += path => _ = OpenFileAsync(session, path);
         AddWindow(session, FilesKey, config.Applications.FirstOrDefault(a => a.IsBuiltInFiles)?.Name ?? "Pliki", session.Files);
@@ -2953,6 +2954,7 @@ internal sealed partial class KioskForm : Form
         StartWindowsSession();
         if (current == null || current.Locked || !current.Identity.Id.StartsWith("win:") || current.Identity.Name.Length == 0 || sessions.Count != 1)
             throw new InvalidOperationException("Windows shell session failed.");
+        if (!CheckCard()) throw new InvalidOperationException("Windows shell blocked applications without a card after Windows sign-in.");
         _ = WindowsSession.State();
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
