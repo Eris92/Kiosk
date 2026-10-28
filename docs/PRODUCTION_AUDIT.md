@@ -220,6 +220,8 @@ Migawki konfiguracji centralnej i komunikatów zapisują tożsamość źródła.
 
 Usługa wydaje hasło konta wspólnego tylko dla adresu HTTPS przypisanego do tego konta w konfiguracji maszyny. Dla komunikatów SharePoint adres musi być dokładnie ustawioną witryną, a klient ponownie sprawdza stronę logowania Microsoft po oczekiwaniu na konto. Cache klienta rozróżnia konto, witrynę i rodzaj użycia. Starszy klient lub usługa nie obsłużą nowego formatu żądania konta wspólnego, dlatego oba składniki trzeba aktualizować razem. Hasło nadal trafia do procesu przeglądarki przy automatycznym wypełnianiu strony; na współdzielonym SelfService z kontami Windows docelową metodą jest SSO, a użycie konta wspólnego wymaga osobnej decyzji bezpieczeństwa i próby na urządzeniu.
 
+Odczyt żądania usługi karty po przyjęciu połączenia korzysta z asynchronicznego I/O potoku. Klient, który nic nie wysyła, nie blokuje już wątku roboczego; po 10 sekundach odczyt jest anulowany. Zachowano limit 65 536 znaków i sprawdzenie tożsamości klienta po odczycie wiadomości. Test lokalny sprawdza anulowanie milczącego klienta, odczyt wiadomości oraz impersonację po odczycie. Nie uruchamiano nowej wersji jako usługi na docelowym stanowisku; zachowanie pod obciążeniem i po aktualizacji usługi pozostaje do próby wdrożeniowej.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.

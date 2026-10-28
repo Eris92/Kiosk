@@ -8,16 +8,21 @@ internal static class BoundedPipeLine
 {
     internal static string? Read(StreamReader reader, int maxChars, TimeSpan timeout)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
         using var cancellation = new CancellationTokenSource(timeout);
+        return ReadAsync(reader, maxChars, cancellation.Token).GetAwaiter().GetResult();
+    }
+
+    internal static async Task<string?> ReadAsync(StreamReader reader, int maxChars, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
         var line = new StringBuilder(Math.Min(maxChars, 256));
         var buffer = ArrayPool<char>.Shared.Rent(4096);
         try
         {
             while (true)
             {
-                var pending = reader.ReadAsync(buffer.AsMemory(0, 4096), cancellation.Token);
-                var count = pending.IsCompletedSuccessfully ? pending.Result : pending.AsTask().GetAwaiter().GetResult();
+                var pending = reader.ReadAsync(buffer.AsMemory(0, 4096), cancellationToken);
+                var count = pending.IsCompletedSuccessfully ? pending.Result : await pending.ConfigureAwait(false);
                 if (count == 0) return line.Length == 0 ? null : line.ToString();
 
                 var end = buffer.AsSpan(0, count).IndexOfAny('\r', '\n');

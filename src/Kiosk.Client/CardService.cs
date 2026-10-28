@@ -228,7 +228,7 @@ internal static class CardService
 
     private static NamedPipeServerStream CreatePipe(PipeSecurity security, bool first) =>
         NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-            PipeTransmissionMode.Byte, first ? PipeOptions.FirstPipeInstance : PipeOptions.None, 4096, 4096, security);
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous | (first ? PipeOptions.FirstPipeInstance : PipeOptions.None), 4096, 4096, security);
 
     private static void Listen(NamedPipeServerStream firstPipe, PipeSecurity security)
     {
@@ -242,9 +242,9 @@ internal static class CardService
                 listeningPipe = pipe;
                 pipe.WaitForConnection();
                 listeningPipe = null;
-                // Each client on its own thread: a slow request (for example a server share) or a client that sends
-                // nothing never holds up the PIN, the sign-in or the watchdog's reports. The next instance waits at once.
-                ThreadPool.QueueUserWorkItem(_ => Serve(pipe));
+                // A silent client waits on asynchronous pipe I/O, without occupying a worker thread.
+                // The next instance can accept card, sign-in and watchdog requests at once.
+                _ = ServeAsync(pipe);
                 handedOff = true;
             }
             catch (Exception ex)
@@ -278,25 +278,18 @@ internal static class CardService
         _ => cardWork,
     };
 
-    private static void Serve(NamedPipeServerStream pipe)
+    private static async Task ServeAsync(NamedPipeServerStream pipe)
     {
+        // Never run a ready request inline on the listener thread.
+        await Task.Yield();
         using (pipe)
         {
-            // A client that connects and sends nothing is cut off.
-            using var silent = new System.Threading.Timer(_ => { try { pipe.Dispose(); } catch (Exception) { } }, null, 10_000, Timeout.Infinite);
             try
             {
+                using var silent = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                var requestText = new StringBuilder();
-                int character;
-                while ((character = reader.Read()) != -1 && character != '\n')
-                {
-                    if (requestText.Length >= 65536) return;
-                    if (character != '\r') requestText.Append((char)character);
-                }
-                silent.Change(Timeout.Infinite, Timeout.Infinite);
-                var request = character == -1 && requestText.Length == 0
-                    ? null : JsonSerializer.Deserialize<Request>(requestText.ToString());
+                var requestText = await BoundedPipeLine.ReadAsync(reader, 65536, silent.Token).ConfigureAwait(false);
+                var request = requestText == null ? null : JsonSerializer.Deserialize<Request>(requestText);
                 var clientProgram = ClientProgram(pipe);
                 var administrator = ClientIsAdministrator(pipe);
                 var response = request == null ? new Response { Code = -2, Message = "Brak polecenia." }

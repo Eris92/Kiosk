@@ -77,10 +77,14 @@ internal static class Program
                     timeoutClient.Connect(1000);
                     if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Synthetic pipe did not connect.");
                     using var serverReader = new StreamReader(silentServer, System.Text.Encoding.UTF8, false, 4096, leaveOpen: true);
+                    using var silentCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+                    var pendingRequest = BoundedPipeLine.ReadAsync(serverReader, 65536, silentCancellation.Token);
+                    if (pendingRequest.IsCompleted)
+                        throw new InvalidOperationException("A silent card service request occupied the listener instead of waiting asynchronously.");
                     try
                     {
-                        CardService.ReadLine(serverReader, TimeSpan.FromMilliseconds(250));
-                        throw new InvalidOperationException("A silent page-host request did not time out.");
+                        pendingRequest.GetAwaiter().GetResult();
+                        throw new InvalidOperationException("A silent card service request did not time out.");
                     }
                     catch (OperationCanceledException) { }
                     using var timeoutReader = new StreamReader(timeoutClient);
@@ -126,6 +130,29 @@ internal static class Program
                     delayedServer.Write(System.Text.Encoding.UTF8.GetBytes("OK\n"));
                     if (!reading.Wait(TimeSpan.FromSeconds(2)) || reading.Result != "OK")
                         throw new InvalidOperationException("A delayed pipe reply was not read.");
+                }
+                pipeName = "KioskAsyncImpersonation-" + Guid.NewGuid().ToString("N");
+                using (var identityServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))
+                using (var identityClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut,
+                    System.IO.Pipes.PipeOptions.Asynchronous, System.Security.Principal.TokenImpersonationLevel.Impersonation))
+                {
+                    var accepting = identityServer.WaitForConnectionAsync();
+                    identityClient.Connect(1000);
+                    if (!accepting.Wait(TimeSpan.FromSeconds(2))) throw new InvalidOperationException("Identity pipe did not connect.");
+                    using var identityReader = new StreamReader(identityServer, System.Text.Encoding.UTF8, false, 4096, leaveOpen: true);
+                    using var identityTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    var identityRead = BoundedPipeLine.ReadAsync(identityReader, 128, identityTimeout.Token);
+                    identityClient.Write(System.Text.Encoding.UTF8.GetBytes("health\n"));
+                    if (identityRead.GetAwaiter().GetResult() != "health")
+                        throw new InvalidOperationException("An asynchronous request was not read.");
+                    var impersonated = false;
+                    identityServer.RunAsClient(() =>
+                    {
+                        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent(ifImpersonating: true);
+                        impersonated = identity != null;
+                    });
+                    if (!impersonated) throw new InvalidOperationException("The asynchronous request lost client impersonation.");
                 }
                 var largestPageCommand = new string('x', 65535);
                 using (var lineReader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(largestPageCommand + "\r\n"))))
