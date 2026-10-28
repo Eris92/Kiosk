@@ -1733,11 +1733,11 @@ internal sealed partial class KioskForm : Form
     // ---------------------------------------------------------------- remote desktops
 
     /// <summary>The remote desktop as the signed-in person: this program in RDP-only mode (see <see cref="RdpUserHost"/>).</summary>
-    private static ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
+    private ApplicationEntry RemoteDesktopAsUser(RdpConnection connection) => new()
     {
-        Name = connection.Name,
+        Name = RdpUserHost.WindowName(connection),
         Path = Environment.ProcessPath!,
-        Arguments = RdpUserHost.Argument + " " + connection.Server + " " + connection.Port
+        Arguments = RdpUserHost.ArgumentsFor(connection, config.ConnectTimeoutSeconds, config.RequireCredentialPrompt)
     };
 
     private void OpenRdp(RdpConnection connection)
@@ -1746,17 +1746,22 @@ internal sealed partial class KioskForm : Form
         if (current?.Rdp.ContainsKey(connection.Name) == true) { ActivateExisting(key); return; }
         if (!CheckCard()) return;
         var session = current!;
-        if (session.Logon != null && connection.Authentication != RdpAuthentication.EntraId)
+        if (session.Logon != null)
         {
-            // Signed in with "Zaloguj": the remote desktop runs as the person, with Remote Credential Guard (Kerberos).
-            // No password is sent — Credential Guard on this PC refuses to hand saved passwords to RDP anyway.
+            // Signed in with "Zaloguj": every RDP profile runs as that person, including Entra ID.
             _ = OpenApplicationAsync(RemoteDesktopAsUser(connection));
+            return;
+        }
+        if (!ShellMode && connection.Authentication != RdpAuthentication.SmartCard)
+        {
+            notice = "Aby użyć tego połączenia, najpierw zaloguj swoje konto Windows przyciskiem „Zaloguj”.";
+            ShowView(desktop);
             return;
         }
         RdpHost? host = null;
         try
         {
-            host = CreateRdp(connection, config.RequireCredentialPrompt, session.Logon);
+            host = CreateRdp(connection, config.RequireCredentialPrompt);
             session.Rdp[connection.Name] = new RdpSession { Connection = connection, Host = host, ConnectingSinceMilliseconds = Environment.TickCount64 };
             AddWindow(session, key, connection.Name, host);
             // Fresh COM control per connection and per person; never store a PIN/password or reuse credentials.
@@ -1773,63 +1778,24 @@ internal sealed partial class KioskForm : Form
         }
     }
 
-    private RdpHost CreateRdp(RdpConnection connection, bool promptForCredentials, UserLogon? logon = null)
+    private RdpHost CreateRdp(RdpConnection connection, bool promptForCredentials)
     {
-        // "Bieżący użytkownik" after "Zaloguj": the person's own account signs in to the remote desktop.
-        // Signed in with "Zaloguj": the person's own account opens the remote desktop without asking again. Also for
-        // "Karta inteligentna": a FIDO2 card has no certificate for the remote sign-in. Entra ID keeps its own web sign-in.
-        bool asLoggedOnUser = logon != null && connection.Authentication != RdpAuthentication.EntraId;
-        if (asLoggedOnUser) promptForCredentials = false;
         var host = new RdpHost { Dock = DockStyle.Fill, Visible = false };
-        ((ISupportInitialize)host).BeginInit();
-        surface.Controls.Add(host);
-        ((ISupportInitialize)host).EndInit();
-        host.CreateControl();
-        dynamic client = host.Client;
-        client.Server = connection.Server;
-        if (connection.UserName.Length > 0) client.UserName = connection.UserName;
-        client.DesktopWidth = Math.Max(800, surface.Width);
-        client.DesktopHeight = Math.Max(600, surface.Height);
-        dynamic settings = client.AdvancedSettings7;
-        settings.RDPPort = connection.Port;
-        settings.EnableCredSspSupport = true;
-        settings.AuthenticationLevel = 1; // Reject server authentication failures.
-        settings.RedirectSmartCards = true; // The card (or Windows Hello virtual card) signs in inside the session.
-        settings.RedirectDrives = false;
-        settings.RedirectPrinters = false;
-        settings.RedirectClipboard = false;
-        settings.EnableAutoReconnect = false;
-        client.FullScreen = false;
-        settings.SmartSizing = true;
-        settings.DisplayConnectionBar = false;
-        settings.HotKeyFullScreen = 0;
-        var credentials = (IRdpCredentials)(object)client;
-        // RequireCredentialPrompt=false lets Windows use the signed-in (card / Hello / Entra) identity
-        // without forcing the dialog; prompting is still allowed when no such credential exists.
-        credentials.SetPromptForCredentials(promptForCredentials);
-        credentials.SetPromptForCredsOnClient(true);
-        credentials.SetAllowPromptingForCredentials(true);
-        credentials.SetAllowCredentialSaving(false);
-        if (credentials.GetPromptForCredentials() != promptForCredentials || !credentials.GetPromptForCredsOnClient() ||
-            !credentials.GetAllowPromptingForCredentials() || credentials.GetAllowCredentialSaving())
-            throw new InvalidOperationException("Nie udało się zastosować zasad pytania o poświadczenia RDP.");
-        if (asLoggedOnUser)
+        try
         {
-            // jan@firma.pl rather than AzureAD\jan@firma.pl: the remote server knows the account by its UPN.
-            client.UserName = logon!.Domain == "AzureAD" ? logon.User : logon.Login;
-            var password = logon.Reveal();
-            try { settings.ClearTextPassword = new string(password, 0, Array.IndexOf(password, '\0')); }
-            finally { Array.Clear(password); }
+            ((ISupportInitialize)host).BeginInit();
+            surface.Controls.Add(host);
+            ((ISupportInitialize)host).EndInit();
+            host.CreateControl();
+            RdpConfiguration.Apply(host, connection, surface.Size, promptForCredentials);
+            return host;
         }
-        if (connection.Authentication == RdpAuthentication.EntraId)
+        catch
         {
-            var extended = (IRdpExtendedSettings)(object)client;
-            object enabled = true;
-            // Write-only for this property: the control rejects reading it back (E_UNEXPECTED),
-            // so a successful put is the confirmation.
-            extended.SetProperty("EnableRdsAadAuth", ref enabled);
+            surface.Controls.Remove(host);
+            host.Dispose();
+            throw;
         }
-        return host;
     }
 
     /// <summary>Poll hosted programs and RDP at a slower cadence than card presence and idle state.</summary>
@@ -2507,6 +2473,19 @@ internal sealed partial class KioskForm : Form
                 throw new InvalidOperationException("Address bar visible in bookmarks-only mode.");
 
         _ = Native.IdleMilliseconds();
+        var userRdp = new RdpConnection
+        {
+            Name = "Entra test", Server = "pc.example.local", Port = 3390,
+            UserName = "jan@example.com", Authentication = RdpAuthentication.EntraId
+        };
+        var userRdpEntry = RemoteDesktopAsUser(userRdp);
+        var userRdpArguments = userRdpEntry.Arguments.Split(' ', 2);
+        var parsedUserRdp = userRdpArguments.Length == 2 && userRdpArguments[0] == RdpUserHost.Argument
+            ? RdpUserHost.Parse(userRdpArguments[1]) : null;
+        if (userRdpEntry.Name != RdpUserHost.WindowName(userRdp) || parsedUserRdp?.Connection != userRdp ||
+            parsedUserRdp.Timeout != config.ConnectTimeoutSeconds || parsedUserRdp.Prompt != config.RequireCredentialPrompt ||
+            RdpUserHost.Parse("pc.example.local 3389") != null)
+            throw new InvalidOperationException("User-context RDP launch did not preserve its profile and policy.");
         // Validate every dynamic COM setting for each sign-in mode without initiating a connection.
         foreach (var authentication in Enum.GetValues<RdpAuthentication>())
         foreach (var prompt in new[] { true, false })
