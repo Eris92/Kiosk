@@ -53,7 +53,7 @@ internal sealed partial class KioskForm : Form
     private const string BrowserKey = "browser", NotesKey = "notes", FilesKey = "files", SettingsKey = "settings";
     // As saved in Konfiguracja (unticked entries included) and what Kiosk works with (only the ticked ones).
     private Config fullConfig = null!, activeConfig = null!;
-    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); PageScripts.Actions = activeConfig.PageActions; } }
+    private Config config { get => activeConfig; set { fullConfig = value; activeConfig = value.Active(); PageScripts.Actions = activeConfig.PageActions; SharedAccounts.Forget(); NewsAccount.Forget(); } }
     private readonly string? configPath;
     private readonly Panel surface = new() { Dock = DockStyle.Fill };
     private readonly DesktopView desktop = new();
@@ -2187,6 +2187,7 @@ internal sealed partial class KioskForm : Form
         view.SaveRequested += updated =>
         {
             Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
+            SharedAccounts.Forget();
             NewsAccount.Forget();
             if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
             Audit.Write("settings_saved");

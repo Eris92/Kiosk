@@ -469,6 +469,7 @@ internal static class Program
                             !NewsAccount.AuthorizedSite(authorizedAccounts with { NewsSharePointAccount = "" }, authorizedAccounts.NewsSharePoint) ||
                             NewsAccount.AuthorizedSite(authorizedAccounts with { NewsSharePointAccount = "" }, "https://other.sharepoint.com/sites/news"))
                             throw new InvalidOperationException("Shared account was allowed for an unconfigured page or SharePoint site.");
+                        SharedAccounts.CacheSelfTest();
                         form.SmokeTest();
                         await SharePointNewsSmokeTestAsync(form);
                         await form.EmbeddedSmokeTestAsync();

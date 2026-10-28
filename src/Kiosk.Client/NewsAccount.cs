@@ -64,16 +64,20 @@ internal static class NewsAccount
 
     private static SharedAccounts.Account? cached;
     private static bool asked;
+    private static long askedAt;
     private static string cachedSite = "";
     private static readonly object cacheGate = new();
+    private const long CacheLifetimeMilliseconds = 5 * 60 * 1000;
 
-    /// <summary>The saved account, asked of the service once per Kiosk start (or after Konfiguracja is saved); null = none.</summary>
+    /// <summary>The saved account, refreshed after five minutes or when Konfiguracja changes; null = none.</summary>
     internal static SharedAccounts.Account? TryGet(string site)
     {
         lock (cacheGate)
         {
-            if (asked && cachedSite == site) return cached;
+            var now = Environment.TickCount64;
+            if (asked && cachedSite == site && now - askedAt < CacheLifetimeMilliseconds) return cached;
             asked = true;
+            askedAt = now;
             cachedSite = site;
             if (!Saved) return cached = null;
             var answer = CardService.Call(new CardService.Request { Op = "newsaccount", Source = site });
@@ -82,5 +86,5 @@ internal static class NewsAccount
         }
     }
 
-    internal static void Forget() { lock (cacheGate) { asked = false; cached = null; cachedSite = ""; } }
+    internal static void Forget() { lock (cacheGate) { asked = false; cached = null; cachedSite = ""; askedAt = 0; } }
 }

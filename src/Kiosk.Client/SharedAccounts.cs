@@ -146,21 +146,90 @@ internal static class SharedAccounts
         return new Account(answer.Message, answer.Secret);
     }
 
-    private static readonly Dictionary<(string Name, string Url, bool News), Account> cache = new();
+    private sealed record CachedAccount(Account Value, long AddedAt);
+    private const int MaxCachedAccounts = 64;
+    private const long CacheLifetimeMilliseconds = 5 * 60 * 1000;
+    private static readonly Dictionary<(string Name, string Url, bool News), CachedAccount> cache = new();
+    private static long cacheGeneration;
 
-    /// <summary>For pages: keep a separate credential per approved URL and use.</summary>
-    internal static Account? TryGetCached(string name, string url, bool news = false)
+    internal static void Forget()
     {
-        var key = (name, url, news);
-        lock (cache) if (cache.TryGetValue(key, out var known)) return known;
+        lock (cache) { cache.Clear(); cacheGeneration++; }
+    }
+
+    /// <summary>For pages: keep a separate credential per approved URL and use, for a bounded time and space.</summary>
+    internal static Account? TryGetCached(string name, string url, bool news = false) =>
+        TryGetCachedCore(name, url, news, approvedUrl => Get(name, approvedUrl, news));
+
+    private static Account? TryGetCachedCore(string name, string url, bool news, Func<string, Account> fetch)
+    {
+        // PageAction.Matches authorizes scheme, host, port and path; a changed query does not widen that rule.
+        // SharePoint news uses an exact configured URL and keeps the full value.
+        var approvedUrl = !news && Uri.TryCreate(url, UriKind.Absolute, out var page) && page.Scheme == Uri.UriSchemeHttps
+            ? page.GetLeftPart(UriPartial.Path) : url;
+        var key = (name, approvedUrl, news);
+        long generation;
+        lock (cache)
+        {
+            generation = cacheGeneration;
+            if (cache.TryGetValue(key, out var known))
+            {
+                if (Environment.TickCount64 - known.AddedAt < CacheLifetimeMilliseconds) return known.Value;
+                cache.Remove(key);
+            }
+        }
         try
         {
-            var account = Get(name, url, news);
-            lock (cache) cache[key] = account;
+            var account = fetch(approvedUrl);
+            lock (cache)
+            {
+                // A configuration change during the service call must not restore its old password.
+                if (cacheGeneration != generation) return null;
+                var now = Environment.TickCount64;
+                foreach (var expired in cache.Where(pair => now - pair.Value.AddedAt >= CacheLifetimeMilliseconds).Select(pair => pair.Key).ToArray())
+                    cache.Remove(expired);
+                if (cache.Count >= MaxCachedAccounts)
+                    cache.Remove(cache.MinBy(pair => pair.Value.AddedAt).Key);
+                cache[key] = new CachedAccount(account, now);
+            }
             return account;
         }
         catch (Exception ex) { Audit.Write("shared_account_failed", name + ": " + ex.Message); return null; }
     }
+
+#if KIOSK_SELF_TEST
+    internal static void CacheSelfTest()
+    {
+        Forget();
+        var requests = 0;
+        Account Fetch(string _) { requests++; return new Account("test", "secret"); }
+        TryGetCachedCore("test", "https://example.test/login?state=one", false, Fetch);
+        TryGetCachedCore("test", "https://example.test/login?state=two", false, Fetch);
+        if (requests != 1) throw new InvalidOperationException("A changed page query fetched the same account twice.");
+        Forget();
+        requests = 0;
+        for (var index = 0; index <= MaxCachedAccounts; index++)
+            if (TryGetCachedCore("test", "https://example.test/" + index, false, Fetch) == null)
+                throw new InvalidOperationException("The bounded account cache did not store an allowed result.");
+        TryGetCachedCore("test", "https://example.test/0", false, Fetch);
+        if (requests != MaxCachedAccounts + 2)
+            throw new InvalidOperationException("The account cache did not evict its oldest URL.");
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var pending = Task.Run(() => TryGetCachedCore("test", "https://example.test/in-flight", false, _ =>
+        {
+            started.Set();
+            release.Wait();
+            return new Account("old", "old-secret");
+        }));
+        if (!started.Wait(TimeSpan.FromSeconds(5))) throw new InvalidOperationException("The account fetch did not start.");
+        Forget();
+        release.Set();
+        if (pending.GetAwaiter().GetResult() != null)
+            throw new InvalidOperationException("An account fetched before configuration changed was reused.");
+        Forget();
+    }
+#endif
 }
 
 /// <summary>Starts a program on this PC that uses a shared account for the network (like "runas /netonly").</summary>
