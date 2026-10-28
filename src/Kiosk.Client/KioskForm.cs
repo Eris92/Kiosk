@@ -2730,6 +2730,19 @@ internal sealed partial class KioskForm : Form
         if (active.HelpActions.Length != HelpAction.Defaults.Length - 1 || active.Commands.Length != 0 || switched.HelpActions.Length != HelpAction.Defaults.Length
             || (switched with { ShowHelp = false }).Active().HelpActions.Length != 0)
             throw new InvalidOperationException("Disabled entries were not filtered.");
+        var windowsHelp = (switched with
+        {
+            SessionMode = SessionMode.SelfService,
+            SelfServiceAuthentication = SelfServiceAuthentication.WindowsSession
+        }).Active().HelpActions;
+        var cardBrokerHelp = (switched with
+        {
+            SessionMode = SessionMode.SelfService,
+            SelfServiceAuthentication = SelfServiceAuthentication.CardBroker
+        }).Active().HelpActions;
+        if (windowsHelp.Any(h => h.Action == HelpAction.FirstSignIn) ||
+            !cardBrokerHelp.Any(h => h.Action == HelpAction.FirstSignIn))
+            throw new InvalidOperationException("First sign-in action is available in the wrong SelfService mode.");
         SaveShellScreenshot();
 
         // Shared PC: removing the card keeps the session; another card gets its own empty session.

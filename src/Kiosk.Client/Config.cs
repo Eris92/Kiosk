@@ -223,7 +223,12 @@ internal sealed record Config
             Commands = Commands.Where(c => c.Enabled).ToArray(),
             PageActions = PageActions.Where(a => a.Enabled).ToArray(),
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
-            HelpActions = ShowHelp ? MenuCategory.Sort(HelpActions.Where(h => h.Enabled).Concat(MenuCategories.Select(c => c.Link).OfType<HelpAction>()), MenuCategories) : [],
+            HelpActions = ShowHelp ? MenuCategory.Sort(
+                HelpActions.Where(h => h.Enabled).Concat(MenuCategories.Select(c => c.Link).OfType<HelpAction>())
+                    .Where(h => !(SessionMode == SessionMode.SelfService &&
+                        SelfServiceAuthentication == SelfServiceAuthentication.WindowsSession &&
+                        string.Equals(h.Action, HelpAction.FirstSignIn, StringComparison.OrdinalIgnoreCase))),
+                MenuCategories) : [],
         };
     }
 
