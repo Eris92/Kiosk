@@ -311,7 +311,8 @@ internal static class Program
                 var copiedMonth = copiedMonthName + ".jsonl";
                 var copiedCsv = "PC-" + copiedMonthName + ".csv";
                 var copiedTemporary = copiedMonth + "." + Guid.NewGuid().ToString("N") + ".tmp";
-                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"),
+                var newsEditLock = Path.Combine("news", News.FileName + ".edit.lock");
+                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"), newsEditLock,
                     Path.Combine("Stats", "PC", copiedMonth), Path.Combine("Stats", "PC", copiedCsv),
                     Path.Combine("Stats", "PC", copiedTemporary), Path.Combine("Stats", "PC", "asset.txt"),
                     Path.Combine("Stats", "root-logo.txt"), "KioskKomunikaty.tmp" };
@@ -320,8 +321,12 @@ internal static class Program
                     Directory.CreateDirectory(Path.Combine(copySource, "Stats", "PC"));
                     Directory.CreateDirectory(Path.Combine(copySource, "news"));
                     foreach (var file in copiedFiles) File.WriteAllText(Path.Combine(copySource, file), file);
-                    CentralConfig.Copy(copySource, configCopy, skipStatistics: true);
-                    CentralConfig.Copy(copySource, newsCopy, skipStatistics: false);
+                    // A save in the news editor holds this file without sharing. Sync must ignore it.
+                    using (var held = new FileStream(Path.Combine(copySource, newsEditLock), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        CentralConfig.Copy(copySource, configCopy, skipStatistics: true);
+                        CentralConfig.Copy(copySource, newsCopy, skipStatistics: false);
+                    }
                     if (!File.Exists(Path.Combine(configCopy, "client.json")) ||
                         !File.Exists(Path.Combine(configCopy, "news", "item.txt")) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedMonth)) ||
@@ -330,6 +335,8 @@ internal static class Program
                         !File.Exists(Path.Combine(configCopy, "Stats", "PC", "asset.txt")) ||
                         !File.Exists(Path.Combine(configCopy, "Stats", "root-logo.txt")) ||
                         File.Exists(Path.Combine(configCopy, "KioskKomunikaty.tmp")) ||
+                        File.Exists(Path.Combine(configCopy, newsEditLock)) ||
+                        File.Exists(Path.Combine(newsCopy, newsEditLock)) ||
                         !File.Exists(Path.Combine(newsCopy, "Stats", "PC", copiedMonth)))
                         throw new InvalidOperationException("Central configuration copy included monthly exports or lost required assets.");
                 }

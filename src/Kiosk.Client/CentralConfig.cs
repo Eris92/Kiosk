@@ -398,10 +398,11 @@ internal static class CentralConfig
         };
     }
 
-    /// <summary>The messages editor (KioskKomunikaty.exe, its settings) and its .bak / .tmp files live next to kiosk-news.json, but are not for the kiosks.</summary>
+    /// <summary>The messages editor, its temporary/backup files and its active save lock are not for kiosks.</summary>
     private static bool EditorFile(string name) =>
         name.StartsWith("KioskKomunikaty.", StringComparison.OrdinalIgnoreCase) ||
-        name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+        name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals(News.FileName + ".edit.lock", StringComparison.OrdinalIgnoreCase);
 
     private static void TryDelete(string folder)
     {

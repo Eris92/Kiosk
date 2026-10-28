@@ -201,6 +201,8 @@ Edytor kopiuje obrazy i filmy do folderu komunikatów poza wątkiem UI. Najpierw
 
 Zapis `kiosk-news.json` porównuje odcisk SHA-256 treści z wersją wczytaną przez edytor, więc wykrywa zmianę nawet przy niezmienionym czasie modyfikacji. Przed publikacją sprawdza ponownie wersję wskazaną przez użytkownika; instancje edytora używają wspólnej blokady plikowej. Każdy zapis ma własne tymczasowe nazwy danych i kopii `.bak`, usuwane po błędzie. Self-test sprawdza konflikt dwóch instancji, tę samą datę modyfikacji, blokadę, kopię zapasową i sprzątanie. Zewnętrzny program niekorzystający z blokady może nadal zapisać plik między ostatnim sprawdzeniem a zmianą nazwy; zapis samego JSON nadal może zatrzymać okno na wolnym udziale.
 
+Kopia centralna pomija `kiosk-news.json.edit.lock` również wtedy, gdy edytor trzyma go otwarty bez współdzielenia. Test kopiuje folder komunikatów z aktywną blokadą i sprawdza, że plik blokady nie trafia do kopii żadnego trybu synchronizacji.
+
 ## Bramka akceptacyjna przed produkcją
 
 1. Na urządzeniu testowym sprawdzić osobno lokalne Hello, konto domenowe certyfikat/Hello i Entra Hello wraz z kontem odzyskiwania; potwierdzić SID procesu, przeglądarki, każdej aplikacji i każdego serwera RDP. Sprawdzić kartę A/B, wymianę/wyjęcie, błędny/anulowany PIN, odpięcie czytnika, lock/unlock oraz limit zmiany użytkownika.
