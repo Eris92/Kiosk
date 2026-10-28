@@ -997,13 +997,16 @@ internal sealed partial class KioskForm : Form
 
     private void RefreshChrome()
     {
-        taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         desktop.SetBranding(config.BrandTitle, config.BrandSubtitle, config.BrandLogo);
         var categoriesChanged = TileIcons.SetCategories(config.MenuCategories);
         desktop.SetHelp(config.HelpActions, categoriesChanged);
         desktop.Help.SignedIn = shellSignOut.Reason == null && (!SelfService || SelfServiceWindowsSession || cardLogon != null);
         desktop.Portal = SelfService;
         RefreshHosts();
+        taskbar.Visible = !SelfService;   // SelfService uses only Szybka pomoc, without an application menu.
+        if (SelfService) { SelfServiceStatus(); return; }
+
+        taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
         int others = sessions.Values.Count(s => s != current);
         taskbar.MenuButton.Enabled = CanUseApps; // Only for a signed-in, unlocked person.
         taskbar.LockButton.Enabled = CanUseApps;
@@ -1016,9 +1019,7 @@ internal sealed partial class KioskForm : Form
         var retention = config.ChangeUserAfterSeconds > 0
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
             : "Sesja czeka na powrót karty aż do wylogowania.";
-        taskbar.Visible = !SelfService;   // Punkt samoobsługowy: no Menu, only Szybka pomoc on the start screen.
-        if (SelfService) SelfServiceStatus();
-        else if (shellSignOut.Reason != null)
+        if (shellSignOut.Reason != null)
             desktop.UpdateStatus("Wylogowywanie", notice ?? "Trwa kończenie sesji Windows.");
         else if (current is { Locked: true } locked)
         {
