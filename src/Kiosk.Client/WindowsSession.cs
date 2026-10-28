@@ -125,6 +125,32 @@ internal static class WindowsSession
     [DllImport("secur32.dll", CharSet = CharSet.Unicode)] private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
 }
 
+/// <summary>Observes only a card present when a Windows session starts or resumes.</summary>
+internal sealed class WindowsCardMonitor
+{
+    private bool initialized;
+    private string? cardAtSignIn;
+
+    internal bool ShouldPoll => !initialized || cardAtSignIn != null;
+
+    internal bool Observe(string? snapshot)
+    {
+        if (!initialized)
+        {
+            initialized = true;
+            cardAtSignIn = snapshot;
+            return false;
+        }
+        return cardAtSignIn != null && !string.Equals(cardAtSignIn, snapshot, StringComparison.Ordinal);
+    }
+
+    internal void Reset()
+    {
+        initialized = false;
+        cardAtSignIn = null;
+    }
+}
+
 /// <summary>Throttles asynchronous Windows logoff requests while retaining the first reason.</summary>
 internal sealed class SignOutRetry
 {

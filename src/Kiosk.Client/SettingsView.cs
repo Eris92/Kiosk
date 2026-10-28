@@ -55,7 +55,7 @@ internal sealed class SettingsView : UserControl
 
     /// <summary>The shared accounts' key typed in ("" = remove) for the save step; null = leave it as it is.</summary>
     internal string? AccountsKey => removeKey.Checked ? "" : accountsKey.Text.Length > 0 ? accountsKey.Text : null;
-    private readonly CheckBox disconnectOnRemoval = new() { Text = "Powłoka Windows: wyjęcie karty rozłącza sesję (programy działają dalej)", AutoSize = true };
+    private readonly CheckBox disconnectOnRemoval = new() { Text = "Sesja Windows: wyjęcie karty obecnej po logowaniu blokuje sesję", AutoSize = true };
     private readonly ComboBox unlock = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, Items = { "Tylko karta", "Karta + Windows Hello (PIN / biometria)", "Karta + PIN karty" } };
     private readonly ComboBox accent = new()
     {

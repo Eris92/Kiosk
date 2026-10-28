@@ -84,7 +84,7 @@ internal sealed partial class KioskForm : Form
     private string? cardKey;
     private bool requireRemoval, inTick, closeConfirmed, verifying;
     private CancellationTokenSource? pinCheck;
-    private string? shellCardKey;
+    private readonly WindowsCardMonitor shellCardMonitor = new();
     private long? disconnectedSinceMilliseconds;
     private long? shellLockRequestedAtMilliseconds;
     private bool shellUnlockNotified;
@@ -887,12 +887,12 @@ internal sealed partial class KioskForm : Form
             else if (change == WindowsSession.SessionUnlock)
             {
                 shellLockRequestedAtMilliseconds = null;
-                shellCardKey = null;
+                shellCardMonitor.Reset();
                 shellUnlockNotified = true;
                 shellLockNotified = false;
                 // Keep the time spent away until ShellTick checks the retention limit.
             }
-            else if (change == WindowsSession.RemoteConnect) shellCardKey = null;
+            else if (change == WindowsSession.RemoteConnect) shellCardMonitor.Reset();
         }
     }
 
@@ -924,7 +924,7 @@ internal sealed partial class KioskForm : Form
             WindowsSession.CanResume(state, shellUnlockNotified, shellLockNotified))
         {
             disconnectedSinceMilliseconds = null;
-            shellCardKey = null;
+            shellCardMonitor.Reset();
             Audit.Write("windows_session_reconnected", current?.Identity.Name ?? "");
         }
         if (disconnectedSinceMilliseconds == null) shellUnlockNotified = false;
@@ -937,11 +937,14 @@ internal sealed partial class KioskForm : Form
         }
         if (config.DisconnectOnCardRemoval)
         {
-            var observedCard = reader.Snapshot(config.ReaderName);
-            if (shellCardKey == null) shellCardKey = observedCard;
-            else if (observedCard != shellCardKey && !verifying) { DisconnectWindows("card_removed_or_changed"); return; }
+            if (shellCardMonitor.ShouldPoll)
+            {
+                var observedCard = reader.Snapshot(config.ReaderName);
+                if (shellCardMonitor.Observe(observedCard) && !verifying)
+                { DisconnectWindows("card_removed_or_changed"); return; }
+            }
         }
-        else shellCardKey = null;
+        else shellCardMonitor.Reset();
         if (Native.IdleMilliseconds() >= (uint)config.LockAfterSeconds * 1000u) DisconnectWindows("idle_lock");
     }
 
@@ -2977,6 +2980,14 @@ internal sealed partial class KioskForm : Form
             throw new InvalidOperationException("Windows shell session failed.");
         if (!CheckCard()) throw new InvalidOperationException("Windows shell blocked applications without a card after Windows sign-in.");
         _ = WindowsSession.State();
+        var cardMonitor = new WindowsCardMonitor();
+        if (!cardMonitor.ShouldPoll || cardMonitor.Observe(null) || cardMonitor.ShouldPoll ||
+            cardMonitor.Observe("ACS:1:3B00"))
+            throw new InvalidOperationException("Windows Hello session started tracking an unrelated card.");
+        cardMonitor.Reset();
+        if (!cardMonitor.ShouldPoll || cardMonitor.Observe("ACS:1:3B00") || !cardMonitor.ShouldPoll ||
+            cardMonitor.Observe("ACS:1:3B00") || !cardMonitor.Observe("ACS:2:3B00"))
+            throw new InvalidOperationException("Windows card removal did not lock a tracked card session.");
         CloseAllSessions("shell_smoke_test");
         config = kioskConfig;
     }
