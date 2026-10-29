@@ -736,20 +736,37 @@ internal sealed class FilesView : UserControl
         try
         {
             using var hash = captureHash ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
-            using (var source = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read, 131072))
-            using (var target = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072))
+            CopyProgressRoutine progress = (_, _, _, _, _, _, _, _, _) =>
+                cancellation.IsCancellationRequested ? ProgressCancel : 0u;
+            var copied = CopyFileExW(ExtendedWindowsPath(from), ExtendedWindowsPath(partial),
+                progress, IntPtr.Zero, IntPtr.Zero, CopyFileFailIfExists);
+            GC.KeepAlive(progress);
+            if (!copied)
             {
-                File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
-                CopyStream(source, target, cancellation, hash: hash);
-                target.Flush(flushToDisk: true);
+                cancellation.ThrowIfCancellationRequested();
+                throw new IOException("Nie można skopiować pliku: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
             }
-            File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(from));
             cancellation.ThrowIfCancellationRequested();
-            File.SetAttributes(partial, attributes);
+            File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
+            if (hash != null)
+            {
+                using var copiedStream = new FileStream(partial, FileMode.Open, FileAccess.Read, FileShare.Read, 131072);
+                CopyStream(copiedStream, Stream.Null, cancellation, hash: hash);
+            }
+            cancellation.ThrowIfCancellationRequested();
+            if ((attributes & FileAttributes.Hidden) == 0)
+                File.SetAttributes(partial, File.GetAttributes(partial) & ~FileAttributes.Hidden);
             File.Move(partial, to);
             return hash?.GetHashAndReset();
         }
         catch { DeletePartial(partial); throw; }
+    }
+
+    private static string ExtendedWindowsPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (full.StartsWith(@"\\?\", StringComparison.Ordinal)) return full;
+        return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full[2..] : @"\\?\" + full;
     }
 
     private static void DeleteCopiedFolder(string from, string to, MoveManifest manifest, CancellationToken cancellation)
@@ -961,6 +978,13 @@ internal sealed class FilesView : UserControl
     }
 
     private const uint SHGFI_ICON = 0x100, SHGFI_SMALLICON = 0x1, SHGFI_TYPENAME = 0x400, SHGFI_USEFILEATTRIBUTES = 0x10;
+    private const uint CopyFileFailIfExists = 1, ProgressCancel = 1;
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate uint CopyProgressRoutine(long total, long transferred, long streamSize, long streamTransferred,
+        uint streamNumber, uint reason, IntPtr source, IntPtr destination, IntPtr data);
+    [DllImport("kernel32.dll", EntryPoint = "CopyFileExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CopyFileExW(string source, string destination, CopyProgressRoutine progress,
+        IntPtr data, IntPtr cancel, uint flags);
     [StructLayout(LayoutKind.Sequential)]
     private struct FileAttributeTagInfo { public uint Attributes; public uint ReparseTag; }
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
