@@ -11,6 +11,24 @@ namespace Kiosk.NewsEditor;
 internal sealed class StatsView : TabPage
 {
     private sealed record Entry(DateTimeOffset Time, string Pc, string Kind, string Name, string Category, string Who);
+    private sealed record ComputerSummary(string Pc, int SignIns, int People, int Opened, DateTimeOffset Last);
+    private sealed record OptionSummary(string Name, string Kind, int Count, int People);
+    private sealed record ViewSummary(int SignIns, int People, int Opened, int Computers,
+        List<ComputerSummary> ComputerRows, List<OptionSummary> OptionRows);
+
+    private sealed class ComputerCounter
+    {
+        internal int SignIns;
+        internal int Opened;
+        internal DateTimeOffset Last;
+        internal readonly HashSet<string> People = new(StringComparer.Ordinal);
+    }
+
+    private sealed class OptionCounter
+    {
+        internal int Count;
+        internal readonly HashSet<string> People = new(StringComparer.Ordinal);
+    }
 
     private readonly EditorSettings settings;
     private readonly ComboBox period = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160, Items = { "Ostatnie 7 dni", "Ostatnie 30 dni", "Ostatnie 90 dni", "Ostatni rok" } };
@@ -96,8 +114,15 @@ internal sealed class StatsView : TabPage
         options.Rows.Clear();
         var currentLoad = new CancellationTokenSource();
         loading = currentLoad;
-        List<Entry> read;
-        try { read = await Task.Run(() => Read(root, since, currentLoad.Token), currentLoad.Token); }
+        (List<Entry> Entries, ViewSummary View) read;
+        try
+        {
+            read = await Task.Run(() =>
+            {
+                var entries = Read(root, since, currentLoad.Token);
+                return (entries, Summarize(entries, currentLoad.Token));
+            }, currentLoad.Token);
+        }
         catch (OperationCanceledException) when (currentLoad.IsCancellationRequested) { return; }
         catch (Exception ex)
         {
@@ -110,17 +135,56 @@ internal sealed class StatsView : TabPage
             currentLoad.Dispose();
         }
         if (IsDisposed || generation != loadGeneration) return;
-        shown = read;
-        var signIns = shown.Where(e => e.Kind == "logowanie").ToList();
-        summary.Text = "Logowania: " + signIns.Count + "   Osoby: " + signIns.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count() +
-                       "   Otwarcia: " + shown.Count(e => e.Kind != "logowanie") + "   Komputery: " + shown.Select(e => e.Pc).Distinct().Count();
-        computers.Rows.Clear();
-        foreach (var pc in shown.GroupBy(e => e.Pc).OrderBy(g => g.Key))
-            computers.Rows.Add(pc.Key, pc.Count(e => e.Kind == "logowanie"), pc.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
-                pc.Count(e => e.Kind != "logowanie"), pc.Max(e => e.Time).LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
-        options.Rows.Clear();
-        foreach (var option in shown.Where(e => e.Kind != "logowanie").GroupBy(e => (e.Name, e.Kind)).OrderByDescending(g => g.Count()).Take(200))
-            options.Rows.Add(option.Key.Name, option.Key.Kind, option.Count(), option.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count());
+        shown = read.Entries;
+        var view = read.View;
+        summary.Text = "Logowania: " + view.SignIns + "   Osoby: " + view.People +
+                       "   Otwarcia: " + view.Opened + "   Komputery: " + view.Computers;
+        computers.SuspendLayout();
+        options.SuspendLayout();
+        try
+        {
+            foreach (var pc in view.ComputerRows)
+                computers.Rows.Add(pc.Pc, pc.SignIns, pc.People, pc.Opened, pc.Last.LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
+            foreach (var option in view.OptionRows)
+                options.Rows.Add(option.Name, option.Kind, option.Count, option.People);
+        }
+        finally { computers.ResumeLayout(); options.ResumeLayout(); }
+    }
+
+    private static ViewSummary Summarize(IEnumerable<Entry> entries, CancellationToken cancellation)
+    {
+        var signInPeople = new HashSet<string>(StringComparer.Ordinal);
+        var computers = new Dictionary<string, ComputerCounter>(StringComparer.Ordinal);
+        var options = new Dictionary<(string Name, string Kind), OptionCounter>();
+        var signIns = 0;
+        var opened = 0;
+        foreach (var entry in entries)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (!computers.TryGetValue(entry.Pc, out var computer)) computers[entry.Pc] = computer = new ComputerCounter();
+            if (entry.Who.Length > 0) computer.People.Add(entry.Who);
+            if (entry.Time > computer.Last) computer.Last = entry.Time;
+            if (entry.Kind == "logowanie")
+            {
+                signIns++;
+                computer.SignIns++;
+                if (entry.Who.Length > 0) signInPeople.Add(entry.Who);
+                continue;
+            }
+            opened++;
+            computer.Opened++;
+            var key = (entry.Name, entry.Kind);
+            if (!options.TryGetValue(key, out var option)) options[key] = option = new OptionCounter();
+            option.Count++;
+            if (entry.Who.Length > 0) option.People.Add(entry.Who);
+        }
+        cancellation.ThrowIfCancellationRequested();
+        return new ViewSummary(signIns, signInPeople.Count, opened, computers.Count,
+            computers.OrderBy(pair => pair.Key)
+                .Select(pair => new ComputerSummary(pair.Key, pair.Value.SignIns, pair.Value.People.Count,
+                    pair.Value.Opened, pair.Value.Last)).ToList(),
+            options.OrderByDescending(pair => pair.Value.Count).Take(200)
+                .Select(pair => new OptionSummary(pair.Key.Name, pair.Key.Kind, pair.Value.Count, pair.Value.People.Count)).ToList());
     }
 
     private static List<Entry> Read(string root, DateTimeOffset since, CancellationToken cancellation)
@@ -261,6 +325,22 @@ internal sealed class StatsView : TabPage
             var read = Read(root, time.AddDays(-1), CancellationToken.None);
             if (read.Count != 2 || read[0].Time != time.AddHours(-1) || read[1].Time != time)
                 throw new InvalidOperationException("Statistics read escaped the month or one-folder boundary.");
+            var view = Summarize([
+                new Entry(time, "PC1", "logowanie", "", "", "a"),
+                new Entry(time.AddMinutes(1), "PC1", "opcja", "A", "", "a"),
+                new Entry(time.AddMinutes(2), "PC2", "opcja", "A", "", "b"),
+                new Entry(time.AddMinutes(3), "PC2", "opcja", "B", "", "c"),
+                new Entry(time.AddMinutes(4), "PC2", "logowanie", "", "", "a")
+            ], CancellationToken.None);
+            if (view.SignIns != 2 || view.People != 1 || view.Opened != 3 || view.Computers != 2 ||
+                view.ComputerRows.Count != 2 || view.ComputerRows[0].Pc != "PC1" ||
+                view.ComputerRows[0].SignIns != 1 || view.ComputerRows[0].People != 1 ||
+                view.ComputerRows[0].Opened != 1 || view.ComputerRows[1].Pc != "PC2" ||
+                view.ComputerRows[1].SignIns != 1 || view.ComputerRows[1].People != 3 ||
+                view.ComputerRows[1].Opened != 2 || view.ComputerRows[1].Last != time.AddMinutes(4) ||
+                view.OptionRows.Count != 2 || view.OptionRows[0].Name != "A" ||
+                view.OptionRows[0].Count != 2 || view.OptionRows[0].People != 2)
+                throw new InvalidOperationException("Statistics background summary differs from the view's counts.");
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
             try { Read(root, time.AddDays(-1), cancelled.Token); throw new InvalidOperationException("Statistics read ignored cancellation."); }

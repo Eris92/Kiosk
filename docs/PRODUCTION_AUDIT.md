@@ -262,6 +262,8 @@ Widok statystyk w Konfiguracji pobiera wpisy bez listy pośredniej dla każdego 
 
 Oba czytniki miesięcznych dzienników statystyk używają wspólnego limitu 65 536 znaków na wiersz. Wiersz przekraczający limit jest konsumowany do końca bez tworzenia dużego łańcucha; widoki pomijają go i czytają następne wpisy. Eksport usługowy przerywa publikację takiego miesiąca, zamiast wystawić CSV pomijający dane. Self-test sprawdza granicę bufora, wiersz nadmierny i powrót do kolejnego poprawnego wiersza. Granica nie obejmuje liczby poprawnych wierszy w całym okresie.
 
+Edytor komunikatów również liczy teraz podsumowanie statystyk w jednym przebiegu poza wątkiem okna. Tabela komputerów i maksymalnie 200 najczęstszych opcji otrzymują gotowe wiersze; nie powstaje osobna lista logowań ani kilka grup całej historii na wątku UI. Test sprawdza liczbę osób tylko w logowaniach, osoby dla każdego komputera i opcji, liczniki oraz ostatnią aktywność. Wczytana lista pozostaje potrzebna do eksportu CSV i ma rozmiar proporcjonalny do wybranego okresu.
+
 ## Bramka akceptacyjna SelfService przed produkcją
 
 1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.
