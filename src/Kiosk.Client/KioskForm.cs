@@ -3111,6 +3111,15 @@ internal sealed partial class KioskForm : Form
                         throw new InvalidOperationException("A directory link allowed recursive folder copy.");
                 }
                 finally { Directory.Delete(alias); }
+                var loop = Path.Combine(nested, "loop");
+                try
+                {
+                    Directory.CreateSymbolicLink(loop, source);
+                    if (await files.ZipForSmokeTestAsync([source]) || File.Exists(Path.Combine(root, "source.zip")) ||
+                        Directory.EnumerateFiles(root, "source.zip.partial-*").Any())
+                        throw new InvalidOperationException("A directory link allowed recursive ZIP creation.");
+                }
+                finally { if (Directory.Exists(loop)) Directory.Delete(loop); }
             }
             if (!await files.ZipForSmokeTestAsync([source])) throw new InvalidOperationException("Background ZIP failed.");
             var archive = Path.Combine(root, "source.zip");

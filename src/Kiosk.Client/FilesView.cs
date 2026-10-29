@@ -431,15 +431,14 @@ internal sealed class FilesView : UserControl
             if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Nie można kompresować dowiązania: " + current);
             zip.CreateEntry(Path.GetRelativePath(root, current).Replace('\\', '/') + "/");
-            foreach (var file in Directory.EnumerateFiles(current))
+            foreach (var entry in new DirectoryInfo(current).EnumerateFileSystemInfos())
             {
                 cancellation.ThrowIfCancellationRequested();
-                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
-                    throw new IOException("Nie można kompresować dowiązania: " + file);
-                AddZipFile(zip, file, Path.GetRelativePath(root, file), cancellation);
+                if (entry is DirectoryInfo) { pending.Push(entry.FullName); continue; }
+                if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Nie można kompresować dowiązania: " + entry.FullName);
+                AddZipFile(zip, entry.FullName, Path.GetRelativePath(root, entry.FullName), cancellation);
             }
-            foreach (var sub in Directory.EnumerateDirectories(current))
-            { cancellation.ThrowIfCancellationRequested(); pending.Push(sub); }
         }
     }
 
@@ -712,14 +711,17 @@ internal sealed class FilesView : UserControl
             if (manifest != null && !item.StagingRoot)
                 manifest.Directories.Add(Path.GetRelativePath(from, item.From));
             if (!item.StagingRoot) pending.Push((item.From, item.To, true, false, attributes));
-            foreach (var file in Directory.EnumerateFiles(item.From))
+            foreach (var entry in new DirectoryInfo(item.From).EnumerateFileSystemInfos())
             {
                 cancellation.ThrowIfCancellationRequested();
-                var hash = CopyFile(file, Path.Combine(item.To, Path.GetFileName(file)), cancellation, captureHash: manifest != null);
-                if (hash != null) manifest!.Files.Add(Path.GetRelativePath(from, file), hash);
+                if (entry is DirectoryInfo)
+                {
+                    pending.Push((entry.FullName, Path.Combine(item.To, entry.Name), false, false, default));
+                    continue;
+                }
+                var hash = CopyFile(entry.FullName, Path.Combine(item.To, entry.Name), cancellation, captureHash: manifest != null);
+                if (hash != null) manifest!.Files.Add(Path.GetRelativePath(from, entry.FullName), hash);
             }
-            foreach (var sub in Directory.EnumerateDirectories(item.From))
-            { cancellation.ThrowIfCancellationRequested(); pending.Push((sub, Path.Combine(item.To, Path.GetFileName(sub)), false, false, default)); }
         }
     }
 
