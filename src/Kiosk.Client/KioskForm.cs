@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace Kiosk.Client;
 
@@ -2292,6 +2293,17 @@ internal sealed partial class KioskForm : Form
                 trusted.Allows(new Uri(Path.Combine(Path.GetTempPath(), "other.html")).AbsoluteUri))
                 throw new InvalidOperationException("Company message pages are not allowed in the browser.");
             var spItems = SharePointNews.Parse("""{"ok":true,"items":[{"title":"Nowa strona","text":"Opis","url":"https://firma.sharepoint.com/sites/i/SitePages/a.aspx","image":""}]}""");
+            try { _ = SharePointNews.Parse(new string('x', SharePointNews.MaxMessageChars + 1)); throw new InvalidOperationException("An oversized SharePoint response was parsed."); }
+            catch (InvalidDataException) { }
+            var tooManySharePoint = "{\"ok\":true,\"items\":[" + string.Join(',', Enumerable.Repeat("{\"title\":\"A\",\"text\":\"B\",\"url\":\"https://firma.sharepoint.com\",\"image\":\"\"}", SharePointNews.MaxItems + 1)) + "]}";
+            try { _ = SharePointNews.Parse(tooManySharePoint); throw new InvalidOperationException("Too many SharePoint items were parsed."); }
+            catch (InvalidDataException) { }
+            var longSharePoint = SharePointNews.Parse(JsonSerializer.Serialize(new { ok = true, items = new[] { new { title = new string('a', 513), text = new string('b', 4097), url = "https://firma.sharepoint.com", image = "" } } }));
+            if (longSharePoint.Count != 1 || longSharePoint[0].Title.Length != 512 || longSharePoint[0].Text.Length != 4096)
+                throw new InvalidOperationException("SharePoint item fields were not bounded.");
+            var externalSharePoint = SharePointNews.Parse("""{"ok":true,"items":[{"title":"Link","text":"Poza witryną","url":"https://outside.example/a","image":""}]}""",
+                new Uri("https://firma.sharepoint.com/sites/i"));
+            if (externalSharePoint.Count != 0) throw new InvalidOperationException("An external SharePoint page URL was accepted.");
             var merged = News.Merge(items, spItems, NewsOrdering.Alternate);
             if (spItems.Count != 1 || spItems[0].Action != "https://firma.sharepoint.com/sites/i/SitePages/a.aspx" || merged.Count != 3 ||
                 merged[0] != spItems[0] || merged[1] != items[0] || News.Merge(items, spItems, NewsOrdering.MineFirst)[0] != items[0])

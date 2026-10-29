@@ -12,6 +12,8 @@ internal sealed class SharePointNews : IDisposable
     // How often is set by the Kiosk (Konfiguracja → Komunikaty → Pobieranie z sieci); this only spares repeated calls close together.
     private static readonly TimeSpan Refresh = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(60);
+    internal const int MaxMessageChars = 24_000_000;
+    internal const int MaxItems = 20;
 
     private readonly Control owner;
     private readonly Func<string, int, Task<List<NewsItem>>> fetch;
@@ -152,13 +154,24 @@ internal sealed class SharePointNews : IDisposable
             finally { core.NavigationCompleted -= Completed; }
 
             var answer = new TaskCompletionSource<string>();
-            void Received(object? s, CoreWebView2WebMessageReceivedEventArgs e) => answer.TrySetResult(e.TryGetWebMessageAsString());
+            void Received(object? s, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var source) || source.Scheme != Uri.UriSchemeHttps ||
+                    !string.Equals(source.Host, site.Host, StringComparison.OrdinalIgnoreCase) || source.Port != site.Port) return;
+                try
+                {
+                    var message = e.TryGetWebMessageAsString();
+                    if (message.Length > MaxMessageChars) throw new InvalidDataException("Odpowiedź SharePointa jest za duża.");
+                    answer.TrySetResult(message);
+                }
+                catch (Exception ex) { answer.TrySetException(ex); }
+            }
             core.WebMessageReceived += Received;
             try
             {
                 await core.ExecuteScriptAsync(Script(site, count));
                 var json = await answer.Task.WaitAsync(Limit, stopped.Token);
-                return Parse(json);
+                return Parse(json, site);
             }
             finally { core.WebMessageReceived -= Received; }
         }
@@ -170,21 +183,50 @@ internal sealed class SharePointNews : IDisposable
         (async () => {
           try {
             const bannerLimit = 4000000;
+            const bannerTotalLimit = 16000000;
+            const metadataLimit = 4000000;
+            let bannerBytes = 0;
+            async function readLimited(response, limit) {
+              const declared = response.headers.get('content-length');
+              if (declared !== null && Number(declared) > limit) throw new Error('Odpowiedź SharePointa jest za duża.');
+              if (!response.body) throw new Error('SharePoint nie zwrócił danych.');
+              const reader = response.body.getReader();
+              const chunks = [];
+              let size = 0;
+              try {
+                while (true) {
+                  const part = await reader.read();
+                  if (part.done) break;
+                  size += part.value.byteLength;
+                  if (size > limit) { await reader.cancel(); throw new Error('Odpowiedź SharePointa jest za duża.'); }
+                  chunks.push(part.value);
+                }
+              } finally { reader.releaseLock(); }
+              const bytes = new Uint8Array(size);
+              let offset = 0;
+              for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+              return bytes;
+            }
             const web = new URL(SITE).pathname.replace(/\/+$/, '');
             const api = location.origin + web + "/_api/web/GetList(@u)/items?@u='" + encodeURIComponent(web + '/SitePages') + "'" +
               "&$select=Title,Description,BannerImageUrl,FileRef,FirstPublishedDate&$filter=PromotedState eq 2&$orderby=FirstPublishedDate desc&$top=" + COUNT;
             const r = await fetch(api, { headers: { Accept: 'application/json;odata=nometadata' } });
             if (!r.ok) throw new Error('SharePoint odpowiedział HTTP ' + r.status);
-            const data = await r.json();
+            const data = JSON.parse(new TextDecoder().decode(await readLimited(r, metadataLimit)));
+            if (!Array.isArray(data.value) || data.value.length > COUNT) throw new Error('SharePoint zwrócił zbyt wiele aktualności.');
             const items = [];
-            for (const p of data.value || []) {
+            for (const p of data.value) {
+              let page;
+              try { page = new URL(p.FileRef, location.origin); }
+              catch (e) { continue; }
+              if (page.origin !== location.origin || page.href.length > 4096) continue;
               let image = '';
               const src = p.BannerImageUrl && (p.BannerImageUrl.Url || p.BannerImageUrl);
-              if (typeof src === 'string' && src) {
+              if (typeof src === 'string' && src && bannerBytes < bannerTotalLimit) {
                 try {
                   const b = await fetch(new URL(src, location.origin));
                   const declared = b.headers.get('content-length');
-                  if (b.ok && b.body && (declared === null || Number(declared) < bannerLimit)) {
+                  if (b.ok && b.body && (declared === null || Number(declared) < bannerLimit && Number(declared) <= bannerTotalLimit - bannerBytes)) {
                     const reader = b.body.getReader();
                     const chunks = [];
                     let size = 0;
@@ -193,36 +235,44 @@ internal sealed class SharePointNews : IDisposable
                         const part = await reader.read();
                         if (part.done) break;
                         size += part.value.byteLength;
-                        if (size >= bannerLimit) { await reader.cancel(); break; }
+                        bannerBytes += part.value.byteLength;
+                        if (size >= bannerLimit || bannerBytes > bannerTotalLimit) { await reader.cancel(); break; }
                         chunks.push(part.value);
                       }
                     } finally { reader.releaseLock(); }
-                    if (size > 0 && size < bannerLimit) {
+                    if (size > 0 && size < bannerLimit && bannerBytes <= bannerTotalLimit) {
                       const blob = new Blob(chunks, { type: b.headers.get('content-type') || '' });
                       image = await new Promise(done => { const f = new FileReader(); f.onload = () => done(f.result); f.onerror = () => done(''); f.readAsDataURL(blob); });
                     }
                   } else if (b.body) await b.body.cancel();
                 } catch (e) { }
               }
-              items.push({ title: p.Title || '', text: p.Description || '', url: new URL(p.FileRef, location.origin).href, image });
+              items.push({ title: String(p.Title || '').slice(0, 512), text: String(p.Description || '').slice(0, 4096), url: page.href, image });
             }
             chrome.webview.postMessage(JSON.stringify({ ok: true, items }));
           } catch (e) { chrome.webview.postMessage(JSON.stringify({ ok: false, error: String((e && e.message) || e) })); }
         })();
         """.Replace("SITE", JsonSerializer.Serialize(site.AbsoluteUri)).Replace("COUNT", count.ToString());
 
-    internal static List<NewsItem> Parse(string json)
+    internal static List<NewsItem> Parse(string json, Uri? site = null)
     {
+        if (json.Length > MaxMessageChars) throw new InvalidDataException("Odpowiedź SharePointa jest za duża.");
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         if (!root.GetProperty("ok").GetBoolean()) throw new InvalidOperationException(root.GetProperty("error").GetString());
         var items = new List<NewsItem>();
         try
         {
+            var seen = 0;
             foreach (var p in root.GetProperty("items").EnumerateArray())
             {
+                if (++seen > MaxItems) throw new InvalidDataException("SharePoint zwrócił ponad 20 aktualności.");
                 string title = p.GetProperty("title").GetString() ?? "", text = p.GetProperty("text").GetString() ?? "";
                 string url = p.GetProperty("url").GetString() ?? "", image = p.GetProperty("image").GetString() ?? "";
+                if (title.Length > 512) title = title[..512];
+                if (text.Length > 4096) text = text[..4096];
+                if (url.Length > 4096 || !Uri.TryCreate(url, UriKind.Absolute, out var page) || page.Scheme != Uri.UriSchemeHttps ||
+                    site != null && (!string.Equals(page.Host, site.Host, StringComparison.OrdinalIgnoreCase) || page.Port != site.Port)) continue;
                 if (title.Length == 0 && text.Length == 0) continue;
                 Image? picture = null;
                 int comma = image.IndexOf(',');

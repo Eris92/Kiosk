@@ -5,6 +5,10 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 & (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    & node (Join-Path $PSScriptRoot 'Test-SharePointNewsScript.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'SharePoint news script tests failed.' }
+} else { Write-Warning 'Node.js is unavailable; SharePoint news script tests were skipped.' }
 if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
     & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell 5.1 script tests failed.' }
