@@ -3121,6 +3121,52 @@ internal sealed partial class KioskForm : Form
                 Directory.Exists(Path.Combine(destination, "source (2)")))
                 throw new InvalidOperationException("Background move or delete failed.");
 
+            var movingFolder = Path.Combine(root, "moving");
+            Directory.CreateDirectory(Path.Combine(movingFolder, "nested"));
+            File.WriteAllText(Path.Combine(movingFolder, "nested", "old.txt"), "old content");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = () => File.WriteAllText(Path.Combine(movingFolder, "late.txt"), "new content");
+            if (await files.PasteForSmokeTestAsync([movingFolder], destination, move: true, forceCopy: true) ||
+                !File.Exists(Path.Combine(movingFolder, "nested", "old.txt")) ||
+                !File.Exists(Path.Combine(movingFolder, "late.txt")) ||
+                !File.Exists(Path.Combine(destination, "moving", "nested", "old.txt")))
+                throw new InvalidOperationException("A new source file was lost during cross-volume folder move.");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = null;
+            File.Delete(Path.Combine(movingFolder, "late.txt"));
+            if (!await files.PasteForSmokeTestAsync([movingFolder], destination, move: true, forceCopy: true) ||
+                Directory.Exists(movingFolder) ||
+                File.ReadAllText(Path.Combine(destination, "moving (2)", "nested", "old.txt")) != "old content")
+                throw new InvalidOperationException("Cross-volume folder move did not finish after source stabilized.");
+
+            var changingFile = Path.Combine(root, "changing.txt");
+            File.WriteAllText(changingFile, "before");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = () => File.AppendAllText(changingFile, " after");
+            if (await files.PasteForSmokeTestAsync([changingFile], destination, move: true, forceCopy: true) ||
+                File.ReadAllText(changingFile) != "before after" ||
+                File.ReadAllText(Path.Combine(destination, "changing.txt")) != "before")
+                throw new InvalidOperationException("A changed source file was lost during cross-volume move.");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = null;
+            if (!await files.PasteForSmokeTestAsync([changingFile], destination, move: true, forceCopy: true) ||
+                File.Exists(changingFile) ||
+                File.ReadAllText(Path.Combine(destination, "changing (2).txt")) != "before after")
+                throw new InvalidOperationException("Cross-volume file move did not finish after source stabilized.");
+            var damagedCopySource = Path.Combine(root, "damaged-copy.txt");
+            var damagedCopyTarget = Path.Combine(destination, "damaged-copy.txt");
+            File.WriteAllText(damagedCopySource, "original");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = () => File.WriteAllText(damagedCopyTarget, "modified");
+            if (await files.PasteForSmokeTestAsync([damagedCopySource], destination, move: true, forceCopy: true) ||
+                File.ReadAllText(damagedCopySource) != "original" || File.ReadAllText(damagedCopyTarget) != "modified")
+                throw new InvalidOperationException("A changed destination copy caused source data loss.");
+            files.BeforeCrossVolumeSourceCleanupForSmokeTest = null;
+            var readOnlyFile = Path.Combine(root, "read-only.txt");
+            File.WriteAllText(readOnlyFile, "protected");
+            File.SetAttributes(readOnlyFile, FileAttributes.ReadOnly);
+            var movedReadOnlyFile = Path.Combine(destination, "read-only.txt");
+            if (!await files.PasteForSmokeTestAsync([readOnlyFile], destination, move: true, forceCopy: true) ||
+                File.Exists(readOnlyFile) || File.ReadAllText(movedReadOnlyFile) != "protected" ||
+                (File.GetAttributes(movedReadOnlyFile) & FileAttributes.ReadOnly) == 0)
+                throw new InvalidOperationException("Cross-volume move did not preserve a read-only file.");
+            File.SetAttributes(movedReadOnlyFile, FileAttributes.Normal);
+
             // A pending copy must leave the UI free to navigate, then finish in the captured destination.
             entered.Reset(); release.Reset();
             Volatile.Write(ref hold, 1);

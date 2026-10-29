@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using Microsoft.Win32.SafeHandles;
 
 namespace Kiosk.Client;
 
@@ -13,6 +15,11 @@ namespace Kiosk.Client;
 internal sealed class FilesView : UserControl
 {
     private sealed record FileEntry(string Name, string Path, bool IsFolder, DateTime Modified, long? Bytes);
+    private sealed class MoveManifest
+    {
+        internal readonly Dictionary<string, byte[]> Files = new(StringComparer.Ordinal);
+        internal readonly HashSet<string> Directories = new(StringComparer.Ordinal);
+    }
     private static readonly uint[] ZipCrcTable = CreateZipCrcTable();
 
     private readonly Func<Func<object?>, object?> runAs;
@@ -604,7 +611,7 @@ internal sealed class FilesView : UserControl
 
     private void Paste(string? into = null) => _ = PasteAsync(into);
 
-    private async Task<bool> PasteAsync(string? into)
+    private async Task<bool> PasteAsync(string? into, bool forceCopy = false)
     {
         if (clipboard is not { } c) return false;
         var destination = into ?? folder;
@@ -620,31 +627,44 @@ internal sealed class FilesView : UserControl
                     var targetFolder = Path.GetFullPath(destination).TrimEnd('\\') + "\\";
                     if (targetFolder.StartsWith(source, StringComparison.OrdinalIgnoreCase))
                         throw new IOException("Nie można wkleić folderu do niego samego.");
-                    if (c.Move && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
+                    if (c.Move && !forceCopy && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
                         Directory.Move(from, to);
                     else
                     {
+                        var manifest = c.Move ? new MoveManifest() : null;
                         var partial = to + ".partial-" + Guid.NewGuid().ToString("N");
                         try
                         {
                             Directory.CreateDirectory(partial);
                             File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
-                            CopyFolder(from, partial, cancellation, stagingRoot: true);
+                            CopyFolder(from, partial, cancellation, stagingRoot: true, manifest: manifest);
                             cancellation.ThrowIfCancellationRequested();
                             Directory.SetLastWriteTimeUtc(partial, Directory.GetLastWriteTimeUtc(from));
                             File.SetAttributes(partial, File.GetAttributes(from) & ~FileAttributes.ReparsePoint);
                             Directory.Move(partial, to);
                         }
                         catch { DeletePartial(partial, directory: true); throw; }
-                        if (c.Move) Directory.Delete(from, recursive: true);
+                        if (manifest != null)
+                        {
+#if KIOSK_SELF_TEST
+                            BeforeCrossVolumeSourceCleanupForSmokeTest?.Invoke();
+#endif
+                            DeleteCopiedFolder(from, to, manifest, cancellation);
+                        }
                     }
                 }
-                else if (c.Move && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
+                else if (c.Move && !forceCopy && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
                     File.Move(from, to);
                 else
                 {
-                    CopyFile(from, to, cancellation);
-                    if (c.Move) File.Delete(from);
+                    var hash = CopyFile(from, to, cancellation, captureHash: c.Move);
+                    if (hash != null)
+                    {
+#if KIOSK_SELF_TEST
+                        BeforeCrossVolumeSourceCleanupForSmokeTest?.Invoke();
+#endif
+                        DeleteCopiedFile(from, to, hash, cancellation);
+                    }
                 }
             }
             return (c.Move ? "Przeniesiono " : "Skopiowano ") + c.Paths.Length + " elementów";
@@ -654,8 +674,9 @@ internal sealed class FilesView : UserControl
     }
 
 #if KIOSK_SELF_TEST
-    internal Task<bool> PasteForSmokeTestAsync(string[] paths, string destination, bool move)
-    { clipboard = (paths, move); return PasteAsync(destination); }
+    internal Action? BeforeCrossVolumeSourceCleanupForSmokeTest { get; set; }
+    internal Task<bool> PasteForSmokeTestAsync(string[] paths, string destination, bool move, bool forceCopy = false)
+    { clipboard = (paths, move); return PasteAsync(destination, forceCopy); }
     internal Task<bool> ZipForSmokeTestAsync(string[] paths) => ZipAsync(paths);
     internal Task<bool> UnzipForSmokeTestAsync(string path) => UnzipAsync(path);
     internal Task<bool> DeleteForSmokeTestAsync(string[] paths) => DeleteAsync(paths);
@@ -673,7 +694,8 @@ internal sealed class FilesView : UserControl
         }
     }
 
-    private static void CopyFolder(string from, string to, CancellationToken cancellation, bool stagingRoot = false)
+    private static void CopyFolder(string from, string to, CancellationToken cancellation, bool stagingRoot = false,
+        MoveManifest? manifest = null)
     {
         var pending = new Stack<(string From, string To, bool Finish, bool StagingRoot, FileAttributes Attributes)>();
         pending.Push((from, to, false, stagingRoot, default));
@@ -690,15 +712,21 @@ internal sealed class FilesView : UserControl
             if ((attributes & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Nie można kopiować dowiązania: " + item.From);
             Directory.CreateDirectory(item.To);
+            if (manifest != null && !item.StagingRoot)
+                manifest.Directories.Add(Path.GetRelativePath(from, item.From));
             if (!item.StagingRoot) pending.Push((item.From, item.To, true, false, attributes));
             foreach (var file in Directory.EnumerateFiles(item.From))
-            { cancellation.ThrowIfCancellationRequested(); CopyFile(file, Path.Combine(item.To, Path.GetFileName(file)), cancellation); }
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var hash = CopyFile(file, Path.Combine(item.To, Path.GetFileName(file)), cancellation, captureHash: manifest != null);
+                if (hash != null) manifest!.Files.Add(Path.GetRelativePath(from, file), hash);
+            }
             foreach (var sub in Directory.EnumerateDirectories(item.From))
             { cancellation.ThrowIfCancellationRequested(); pending.Push((sub, Path.Combine(item.To, Path.GetFileName(sub)), false, false, default)); }
         }
     }
 
-    private static void CopyFile(string from, string to, CancellationToken cancellation)
+    private static byte[]? CopyFile(string from, string to, CancellationToken cancellation, bool captureHash = false)
     {
         cancellation.ThrowIfCancellationRequested();
         var attributes = File.GetAttributes(from);
@@ -707,19 +735,96 @@ internal sealed class FilesView : UserControl
         var partial = to + ".partial-" + Guid.NewGuid().ToString("N");
         try
         {
+            using var hash = captureHash ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
             using (var source = new FileStream(from, FileMode.Open, FileAccess.Read, FileShare.Read, 131072))
             using (var target = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072))
             {
                 File.SetAttributes(partial, File.GetAttributes(partial) | FileAttributes.Hidden);
-                CopyStream(source, target, cancellation);
+                CopyStream(source, target, cancellation, hash: hash);
                 target.Flush(flushToDisk: true);
             }
             File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(from));
             cancellation.ThrowIfCancellationRequested();
             File.SetAttributes(partial, attributes);
             File.Move(partial, to);
+            return hash?.GetHashAndReset();
         }
         catch { DeletePartial(partial); throw; }
+    }
+
+    private static void DeleteCopiedFolder(string from, string to, MoveManifest manifest, CancellationToken cancellation)
+    {
+        var pending = new Stack<string>();
+        var files = new HashSet<string>(StringComparer.Ordinal);
+        var directories = new HashSet<string>(StringComparer.Ordinal);
+        pending.Push(from);
+        while (pending.TryPop(out var current))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Źródło zmieniło się podczas przenoszenia. Kopia i oryginał zostały zachowane.");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(current))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Źródło zmieniło się podczas przenoszenia. Kopia i oryginał zostały zachowane.");
+                var relative = Path.GetRelativePath(from, entry);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    if (!manifest.Directories.Contains(relative))
+                        throw new IOException("Źródło zmieniło się podczas przenoszenia. Kopia i oryginał zostały zachowane.");
+                    directories.Add(relative);
+                    pending.Push(entry);
+                }
+                else
+                {
+                    if (!manifest.Files.ContainsKey(relative))
+                        throw new IOException("Źródło zmieniło się podczas przenoszenia. Kopia i oryginał zostały zachowane.");
+                    files.Add(relative);
+                }
+            }
+        }
+        if (files.Count != manifest.Files.Count || directories.Count != manifest.Directories.Count)
+            throw new IOException("Źródło zmieniło się podczas przenoszenia. Kopia i oryginał zostały zachowane.");
+
+        foreach (var (relative, hash) in manifest.Files)
+            DeleteCopiedFile(Path.Combine(from, relative), Path.Combine(to, relative), hash, cancellation);
+        foreach (var relative in manifest.Directories.OrderByDescending(path => path.Length))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            Directory.Delete(Path.Combine(from, relative), recursive: false);
+        }
+        cancellation.ThrowIfCancellationRequested();
+        Directory.Delete(from, recursive: false);
+    }
+
+    private static void DeleteCopiedFile(string path, string targetPath, byte[] copiedHash, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        if ((File.GetAttributes(targetPath) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Kopia docelowa zmieniła się podczas przenoszenia. Plik źródłowy został zachowany.");
+        using var target = new FileStream(targetPath, FileMode.Open, FileAccess.Read, FileShare.Read, 131072);
+        using var targetHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        CopyStream(target, Stream.Null, cancellation, hash: targetHash);
+        if (!CryptographicOperations.FixedTimeEquals(targetHash.GetHashAndReset(), copiedHash))
+            throw new IOException("Kopia docelowa zmieniła się podczas przenoszenia. Plik źródłowy został zachowany.");
+        using var sourceHandle = CreateFileW(path, 0x80010000, 0, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        if (sourceHandle.IsInvalid)
+            throw new IOException("Nie można zablokować pliku źródłowego: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
+        if (!GetFileInformationByHandleEx(sourceHandle, 9, out var sourceInfo, (uint)Marshal.SizeOf<FileAttributeTagInfo>()))
+            throw new IOException("Nie można sprawdzić pliku źródłowego: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
+        if ((sourceInfo.Attributes & (uint)FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Plik źródłowy zmienił się podczas przenoszenia. Skopiowane dane pozostały w miejscu docelowym.");
+        using var source = new FileStream(sourceHandle, FileAccess.Read, 131072);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        CopyStream(source, Stream.Null, cancellation, hash: hash);
+        if (!CryptographicOperations.FixedTimeEquals(hash.GetHashAndReset(), copiedHash))
+            throw new IOException("Plik źródłowy zmienił się podczas przenoszenia. Skopiowane dane pozostały w miejscu docelowym.");
+        cancellation.ThrowIfCancellationRequested();
+        uint disposition = 0x00000011; // FILE_DISPOSITION_DELETE | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE
+        if (!SetFileInformationByHandle(sourceHandle, 21, ref disposition, sizeof(uint)))
+            throw new IOException("Nie można usunąć potwierdzonego pliku źródłowego: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
     }
 
     private static void EnsureArchiveFits(ZipArchive zip, string destination)
@@ -759,7 +864,7 @@ internal sealed class FilesView : UserControl
     }
 
     private static void CopyStream(Stream source, Stream destination, CancellationToken cancellation,
-        long? expectedBytes = null, uint? expectedCrc = null)
+        long? expectedBytes = null, uint? expectedCrc = null, IncrementalHash? hash = null)
     {
         var size = source is FileStream file ? (int)Math.Clamp(file.Length - file.Position, 4096, 131072) : 131072;
         var buffer = ArrayPool<byte>.Shared.Rent(size);
@@ -776,6 +881,7 @@ internal sealed class FilesView : UserControl
                     throw new InvalidDataException("Archiwum zawiera więcej danych niż zadeklarowano.");
                 if (expectedCrc != null)
                     foreach (var value in buffer.AsSpan(0, read)) crc = ZipCrcTable[(crc ^ value) & 0xff] ^ (crc >> 8);
+                hash?.AppendData(buffer.AsSpan(0, read));
                 destination.Write(buffer, 0, read);
                 copied += read;
             }
@@ -855,6 +961,14 @@ internal sealed class FilesView : UserControl
     }
 
     private const uint SHGFI_ICON = 0x100, SHGFI_SMALLICON = 0x1, SHGFI_TYPENAME = 0x400, SHGFI_USEFILEATTRIBUTES = 0x10;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo { public uint Attributes; public uint ReparseTag; }
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileAttributeTagInfo info, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass, ref uint info, uint size);
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct ShFileInfo
     {
