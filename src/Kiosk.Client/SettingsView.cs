@@ -1044,8 +1044,9 @@ internal sealed class SettingsView : UserControl
 
         List<Stats.Entry> shown = [];
         CancellationTokenSource? loading = null;
+        CancellationTokenSource? exporting = null;
         var loadGeneration = 0;
-        statsTab.Disposed += (_, _) => { loadGeneration++; loading?.Cancel(); };
+        statsTab.Disposed += (_, _) => { loadGeneration++; loading?.Cancel(); exporting?.Cancel(); };
         async void Load()
         {
             loading?.Cancel();
@@ -1091,18 +1092,29 @@ internal sealed class SettingsView : UserControl
             foreach (var g in shown.GroupBy(e => e.Time.LocalDateTime.Date).OrderByDescending(g => g.Key))
                 days.Rows.Add(g.Key.ToString("yyyy-MM-dd"), g.Count(e => e.Kind == Stats.SignIn), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
                     g.Count(e => e.Kind != Stats.SignIn));
-            export.Enabled = true;
+            export.Enabled = exporting == null;
         }
         refresh.Click += (_, _) => Load();
         period.SelectedIndexChanged += (_, _) => Load();
         source.SelectedIndexChanged += (_, _) => Load();
         tabs.Selected += (_, e) => { if (e.TabPage == statsTab) Load(); };
-        export.Click += (_, _) =>
+        export.Click += async (_, _) =>
         {
+            if (exporting != null || shown.Count == 0) return;
             using var dialog = new SaveFileDialog { Filter = "CSV (Excel)|*.csv", FileName = "kiosk-statystyki-" + DateTime.Today.ToString("yyyy-MM-dd") + ".csv" };
             if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
-            try { File.WriteAllText(dialog.FileName, Stats.Csv(shown), new System.Text.UTF8Encoding(true)); }
-            catch (Exception ex) { summary.Text = "Nie udało się zapisać pliku: " + ex.Message; }
+            using var stop = new CancellationTokenSource();
+            exporting = stop;
+            export.Enabled = false;
+            var entries = shown;
+            try { await Task.Run(() => Stats.SaveCsv(dialog.FileName, entries, stop.Token), stop.Token); }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            catch (Exception ex) { if (!statsTab.IsDisposed) summary.Text = "Nie udało się zapisać pliku: " + ex.Message; }
+            finally
+            {
+                if (ReferenceEquals(exporting, stop)) exporting = null;
+                if (!statsTab.IsDisposed) export.Enabled = shown.Count > 0;
+            }
         };
         return statsTab;
     }

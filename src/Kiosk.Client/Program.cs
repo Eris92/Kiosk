@@ -256,6 +256,33 @@ internal static class Program
                     !csv.Contains("\"\t＝2+2\"", StringComparison.Ordinal) ||
                     !csv.Contains("\"\t\rtext\"", StringComparison.Ordinal))
                     throw new InvalidOperationException("Statistics CSV formula protection failed.");
+                var csvTarget = Path.Combine(Path.GetTempPath(), "kiosk-stats-csv-test-" + Guid.NewGuid().ToString("N") + ".csv");
+                try
+                {
+                    File.WriteAllText(csvTarget, "previous");
+                    using var cancelledExport = new CancellationTokenSource();
+                    cancelledExport.Cancel();
+                    try
+                    {
+                        Stats.SaveCsv(csvTarget, [], cancelledExport.Token);
+                        throw new InvalidOperationException("Cancelled statistics CSV export continued.");
+                    }
+                    catch (OperationCanceledException) { }
+                    if (File.ReadAllText(csvTarget) != "previous")
+                        throw new InvalidOperationException("Cancelled statistics CSV export replaced its target.");
+                    var csvEntries = new[]
+                    {
+                        new Stats.Entry { Time = DateTimeOffset.UtcNow.AddMinutes(1), Name = "later" },
+                        new Stats.Entry { Time = DateTimeOffset.UtcNow, Name = "earlier" }
+                    };
+                    Stats.SaveCsv(csvTarget, csvEntries, CancellationToken.None);
+                    if (File.ReadAllText(csvTarget) != Stats.Csv(csvEntries))
+                        throw new InvalidOperationException("Streamed statistics CSV differs from the existing format.");
+                }
+                finally
+                {
+                    if (File.Exists(csvTarget)) File.Delete(csvTarget);
+                }
                 var readRoot = Path.Combine(Path.GetTempPath(), "kiosk-stats-test-" + Guid.NewGuid().ToString("N"));
                 var computerFolder = Path.Combine(readRoot, "PC1");
                 var nestedFolder = Path.Combine(computerFolder, "unrelated");

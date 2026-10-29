@@ -268,6 +268,34 @@ internal static class Stats
         return output.ToString();
     }
 
+    /// <summary>Save a sorted CSV outside the UI thread, then publish it only after a complete write.</summary>
+    internal static void SaveCsv(string target, IEnumerable<Entry> entries, CancellationToken cancellation)
+    {
+        var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            cancellation.ThrowIfCancellationRequested();
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536))
+            using (var writer = new StreamWriter(file, new UTF8Encoding(true)))
+            {
+                writer.Write(CsvHeader);
+                foreach (var entry in entries.OrderBy(e => e.Time))
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    WriteCsvRow(writer, entry);
+                }
+            }
+            cancellation.ThrowIfCancellationRequested();
+            File.Move(temporary, target, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
     /// <summary>Export one service log in append order, without retaining the month's entries or CSV in memory.</summary>
     internal static void WriteCsvFile(string file, TextWriter output)
     {
