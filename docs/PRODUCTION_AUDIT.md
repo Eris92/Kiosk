@@ -38,6 +38,8 @@ Instalator edytora konfiguracji przechowuje jedną kopię treści od odczytu prz
 
 Pakiet formatu 2 zawiera `package.sha256.ps1`: plik komentarzowy z hashem całego `package.json`. Przy podpisanym wydaniu jest on podpisywany Authenticode certyfikatem organizacji. `Verify-Package.ps1 -RequireSigned` odrzuca format 1 i wymaga poprawnego podpisu pieczęci, a następnie sprawdza hashe wszystkich plików z manifestu. Zmiana konfiguracji lub manifestu po podpisaniu jest wykrywana. Instalatory klienta, usługi, edytora i kafelka mają parametry `-RequireSigned` i `-TrustedSignerThumbprint`; dla źródła z paczki weryfikują ją przed uruchomieniem lub kopiowaniem programu. Zachowują hashe zweryfikowanego manifestu i porównują z nimi skopiowane pliki, więc zmiana źródła między kontrolą a instalacją nie może zostać przyjęta. Przy wymaganym podpisie odrzucają surowy katalog buildu. Testy obejmują zmianę manifestu bez zmiany pieczęci, zmianę pliku po weryfikacji oraz odrzucenie niepodpisanej paczki przez instalator; rzeczywisty podpis certyfikatem organizacji pozostaje do wykonania.
 
+Weryfikator odrzuca `package.json` większy niż 1 MB i `package.sha256.ps1` większy niż 256 KB przed odczytem całej zawartości. Zwykły manifest ma około 48 KB; limit chroni instalator przed nadmiernym zużyciem pamięci przy uszkodzonej lub podstawionej paczce. Testy sprawdzają obie granice i ponowną weryfikację po przywróceniu poprawnych plików.
+
 ## Granica tożsamości
 
 | Stanowisko | Tożsamość lokalnych procesów w `WindowsShell` | Profil RDP do sprawdzenia w środowisku |

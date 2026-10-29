@@ -236,6 +236,18 @@ try {
     $manifestPath = Join-Path $fixture 'package.json'
     Write-TestPackageManifest $manifest $manifestPath
     & $verify -PackagePath $fixture | Out-Null
+    $oversized = [IO.File]::Open($manifestPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $oversized.SetLength(1MB + 1) } finally { $oversized.Dispose() }
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted an oversized package manifest.' }
+    catch { if ($_.Exception.Message -ne 'Package manifest exceeds 1 MB.') { throw } }
+    Write-TestPackageManifest $manifest $manifestPath
+    $sealPath = Join-Path $fixture 'package.sha256.ps1'
+    $oversized = [IO.File]::Open($sealPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $oversized.SetLength(256KB + 1) } finally { $oversized.Dispose() }
+    try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted an oversized package seal.' }
+    catch { if ($_.Exception.Message -ne 'Package manifest seal exceeds 256 KB.') { throw } }
+    Write-TestPackageManifest $manifest $manifestPath
+    & $verify -PackagePath $fixture | Out-Null
     $previousWhatIf = $WhatIfPreference
     try {
         $WhatIfPreference = $true

@@ -8,6 +8,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not $PackagePath) { $PackagePath = Join-Path $PSScriptRoot '..' }
+$maxManifestBytes = 1MB
+$maxSealBytes = 256KB
 $thumbprint = ($TrustedSignerThumbprint -replace '\s', '').ToUpperInvariant()
 if ($thumbprint -and $thumbprint -notmatch '^[A-F0-9]{40}$') { throw 'TrustedSignerThumbprint must be a 40-character certificate thumbprint.' }
 $verifySignatures = [bool]$RequireSigned -or [bool]$thumbprint
@@ -36,12 +38,14 @@ $root = (Resolve-Path -LiteralPath $PackagePath).ProviderPath.TrimEnd('\')
 Assert-OrdinaryPackagePath $root
 $manifestFile = Join-Path $root 'package.json'
 Assert-OrdinaryPackagePath $manifestFile
+if ((Get-Item -LiteralPath $manifestFile).Length -gt $maxManifestBytes) { throw 'Package manifest exceeds 1 MB.' }
 $manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($manifest.Format -notin @(1, 2) -or -not $manifest.Files) { throw 'Invalid Kiosk package manifest.' }
 $sealFile = Join-Path $root 'package.sha256.ps1'
 if ($manifest.Format -eq 2) {
     if (-not (Test-Path -LiteralPath $sealFile -PathType Leaf)) { throw 'Package manifest seal is missing.' }
     Assert-OrdinaryPackagePath $sealFile
+    if ((Get-Item -LiteralPath $sealFile).Length -gt $maxSealBytes) { throw 'Package manifest seal exceeds 256 KB.' }
     $sealLines = @([IO.File]::ReadAllLines($sealFile))
     $digestLines = @($sealLines | Where-Object { $_ -like '# Kiosk package.json SHA256:*' })
     $digest = if ($digestLines.Count -eq 1) {
