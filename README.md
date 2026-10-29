@@ -64,7 +64,8 @@ elevated. Saving reloads the running Kiosk.
   folder a PC's "Konfiguracja z serwera" points at). It lists them, creates new ones (empty or a copy) and edits one in
   the same Konfiguracja as the Kiosk's, as whoever runs it. It needs the Kiosk installed on that PC.
 - Company messages are edited with **KioskKomunikaty.exe** (in `out\client\news-example`). It runs with
-  normal user rights and points at the server folder with messages and statistics.
+  normal user rights and points at the server folder with messages and statistics. `kiosk-news.json` supports
+  up to 4 MB and 2048 messages; pictures and videos are separate files.
 - Logs are in `%LOCALAPPDATA%\Kiosk\Logs\YYYY-MM-DD.jsonl`. Konfiguracja → Statystyki → "Logi" sets a size
   limit per folder. No PIN, password or card ID is logged.
 

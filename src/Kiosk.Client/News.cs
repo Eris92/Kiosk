@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Text;
 using System.Text.Json;
 
 namespace Kiosk.Client;
@@ -49,6 +50,8 @@ internal static class News
     };
 
     internal const string FileName = "kiosk-news.json";
+    internal const int MaxFileBytes = 4 * 1024 * 1024;
+    internal const int MaxEntries = 2048;
     internal const int MaxPictureBytes = 8 * 1024 * 1024;
     internal const long MaxPicturePixels = 16_000_000;
     internal const int PictureWidth = 1920, PictureHeight = 1080;
@@ -60,7 +63,10 @@ internal static class News
         if (string.IsNullOrWhiteSpace(folder)) return items;
         var file = Path.Combine(folder, FileName);
         if (!File.Exists(file)) return items;
-        var list = JsonSerializer.Deserialize<NewsItem[]>(File.ReadAllText(file), readOptions) ?? [];
+        var bytes = ReadBounded(file);
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        var list = JsonSerializer.Deserialize<NewsItem[]>(reader.ReadToEnd(), readOptions) ?? [];
+        if (list.Length > MaxEntries) throw new InvalidDataException("Plik komunikatów zawiera ponad 2048 wpisów.");
         var now = DateTime.Now;
         // A single picture is often reused by several messages. Decode it once per refresh;
         // DisposePictures already handles shared image references when the list is retired.
@@ -110,6 +116,16 @@ internal static class News
             throw;
         }
         return items;
+    }
+
+    private static byte[] ReadBounded(string path)
+    {
+        using var stream = File.OpenRead(path);
+        if (stream.Length > MaxFileBytes) throw new InvalidDataException("Plik komunikatów przekracza 4 MB.");
+        var bytes = new byte[(int)stream.Length];
+        stream.ReadExactly(bytes);
+        if (stream.ReadByte() != -1) throw new InvalidDataException("Plik komunikatów urósł podczas odczytu.");
+        return bytes;
     }
 
     private static Image DecodePictureFile(string path)

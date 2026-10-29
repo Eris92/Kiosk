@@ -67,6 +67,8 @@ internal sealed class NewsEntry
 internal sealed class NewsFile
 {
     internal const string FileName = "kiosk-news.json";
+    internal const int MaxFileBytes = 4 * 1024 * 1024; // Keep in step with the Kiosk client's limit.
+    internal const int MaxEntries = 2048;
     internal string Folder { get; }
     internal string Path_ => Path.Combine(Folder, FileName);
     internal List<NewsEntry> Entries { get; private set; } = [];
@@ -80,25 +82,39 @@ internal sealed class NewsFile
     internal void Load()
     {
         if (!File.Exists(Path_)) { Entries = []; header = DefaultHeader; loadedFingerprint = null; return; }
-        var bytes = File.ReadAllBytes(Path_);
+        var bytes = ReadBounded(Path_);
         using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var text = reader.ReadToEnd();
         // The comment lines above the list (help for whoever opens the file in Notepad) stay.
         var lines = text.Split('\n');
-        header = string.Concat(lines.TakeWhile(l => l.TrimStart().StartsWith("//") || l.Trim().Length == 0).Select(l => l.TrimEnd('\r') + "\r\n"));
-        Entries = JsonSerializer.Deserialize<List<NewsEntry>>(text, ReadOptions)?.Where(e => e != null).ToList() ?? [];
+        var nextHeader = string.Concat(lines.TakeWhile(l => l.TrimStart().StartsWith("//") || l.Trim().Length == 0).Select(l => l.TrimEnd('\r') + "\r\n"));
+        var nextEntries = JsonSerializer.Deserialize<List<NewsEntry>>(text, ReadOptions)?.Where(e => e != null).ToList() ?? [];
+        if (nextEntries.Count > MaxEntries) throw new InvalidDataException("Plik komunikatów zawiera ponad 2048 wpisów.");
+        header = nextHeader;
+        Entries = nextEntries;
         loadedFingerprint = Fingerprint(bytes);
     }
 
     /// <summary>Someone else saved the file since it was read (another editor, Notepad).</summary>
     internal bool ChangedElsewhere(string? currentFingerprint) => currentFingerprint != loadedFingerprint;
 
-    internal string? CurrentFingerprint() => File.Exists(Path_) ? Fingerprint(File.ReadAllBytes(Path_)) : null;
+    internal string? CurrentFingerprint() => File.Exists(Path_) ? Fingerprint(ReadBounded(Path_)) : null;
 
     private static string Fingerprint(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
+    private static byte[] ReadBounded(string path)
+    {
+        using var stream = File.OpenRead(path);
+        if (stream.Length > MaxFileBytes) throw new InvalidDataException("Plik komunikatów przekracza 4 MB.");
+        var bytes = new byte[(int)stream.Length];
+        stream.ReadExactly(bytes);
+        if (stream.ReadByte() != -1) throw new InvalidDataException("Plik komunikatów urósł podczas odczytu.");
+        return bytes;
+    }
+
     internal void Save(string? expectedFingerprint)
     {
+        if (Entries.Count > MaxEntries) throw new InvalidDataException("Plik komunikatów zawiera ponad 2048 wpisów.");
         // Other editor instances serialize their final check and rename through this sidecar lock.
         using var editLock = new FileStream(Path_ + ".edit.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         if (CurrentFingerprint() != expectedFingerprint)
@@ -109,12 +125,18 @@ internal sealed class NewsFile
             using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
             {
                 writer.WriteStartArray();
-                foreach (var e in Entries) Write(writer, e);
+                foreach (var e in Entries)
+                {
+                    Write(writer, e);
+                    writer.Flush();
+                    if (stream.Length > MaxFileBytes) throw new InvalidDataException("Plik komunikatów przekracza 4 MB.");
+                }
                 writer.WriteEndArray();
             }
             json.Append(Encoding.UTF8.GetString(stream.ToArray()).Replace("\n", "\r\n")).Append("\r\n");
         }
         var data = new UTF8Encoding(false).GetBytes(json.ToString());
+        if (data.Length > MaxFileBytes) throw new InvalidDataException("Plik komunikatów przekracza 4 MB.");
         var temporary = Path_ + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var backup = Path_ + ".bak." + Guid.NewGuid().ToString("N") + ".tmp";
         try
@@ -190,6 +212,28 @@ internal sealed class NewsFile
                 try { first.Save(first.CurrentFingerprint()); throw new InvalidOperationException("Another editor's lock was ignored."); }
                 catch (IOException) { }
             }
+            var previous = File.ReadAllBytes(first.Path_);
+            first.Load();
+            first.Entries[0].Text = new string('x', MaxFileBytes);
+            try { first.Save(first.CurrentFingerprint()); throw new InvalidOperationException("An oversized news file was saved."); }
+            catch (InvalidDataException) { }
+            if (!File.ReadAllBytes(first.Path_).SequenceEqual(previous) || Directory.EnumerateFiles(folder, "*.tmp").Any())
+                throw new InvalidOperationException("An oversized save changed the previous news file.");
+            using (var oversized = File.Create(first.Path_)) oversized.SetLength(MaxFileBytes + 1L);
+            try { first.Load(); throw new InvalidOperationException("An oversized news file was loaded."); }
+            catch (InvalidDataException) { }
+            try { _ = first.CurrentFingerprint(); throw new InvalidOperationException("An oversized news file was hashed."); }
+            catch (InvalidDataException) { }
+            File.WriteAllText(first.Path_, "[" + string.Join(',', Enumerable.Repeat("{}", MaxEntries + 1)) + "]");
+            try { first.Load(); throw new InvalidOperationException("Too many news entries were loaded."); }
+            catch (InvalidDataException) { }
+            File.WriteAllBytes(first.Path_, previous);
+            first.Load();
+            first.Entries = Enumerable.Repeat(new NewsEntry(), MaxEntries + 1).ToList();
+            try { first.Save(first.CurrentFingerprint()); throw new InvalidOperationException("Too many news entries were saved."); }
+            catch (InvalidDataException) { }
+            if (!File.ReadAllBytes(first.Path_).SequenceEqual(previous))
+                throw new InvalidOperationException("A rejected news entry count changed the previous file.");
         }
         finally { Directory.Delete(folder, recursive: true); }
     }

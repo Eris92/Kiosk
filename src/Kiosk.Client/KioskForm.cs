@@ -2352,6 +2352,14 @@ internal sealed partial class KioskForm : Form
                     throw new InvalidOperationException("Repeated news picture was decoded more than once.");
             }
             finally { News.DisposePictures(reused); }
+            using (var oversizedNews = File.Create(Path.Combine(folder, News.FileName)))
+                oversizedNews.SetLength(News.MaxFileBytes + 1L);
+            try { _ = News.Load(folder); throw new InvalidOperationException("An oversized news file was loaded."); }
+            catch (InvalidDataException) { }
+            File.WriteAllText(Path.Combine(folder, News.FileName),
+                "[" + string.Join(',', Enumerable.Repeat("{}", News.MaxEntries + 1)) + "]");
+            try { _ = News.Load(folder); throw new InvalidOperationException("Too many news entries were loaded."); }
+            catch (InvalidDataException) { }
         }
         finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
     }
