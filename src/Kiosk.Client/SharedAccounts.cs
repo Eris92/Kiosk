@@ -20,7 +20,7 @@ internal static class SharedAccounts
 {
     internal const string FileName = "accounts.kiosk";
     private static readonly byte[] KeyEntropy = Encoding.UTF8.GetBytes("Kiosk.SharedAccounts");
-    private static string KeyFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "AccountsKey.cred");
+    internal static string KeyFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "AccountsKey.cred");
 
     internal static bool KeySaved => File.Exists(KeyFile);
 

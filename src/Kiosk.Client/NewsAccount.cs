@@ -11,7 +11,7 @@ namespace Kiosk.Client;
 internal static class NewsAccount
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Kiosk.NewsAccount");
-    private static string File_ => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "NewsAccount.cred");
+    internal static string File_ => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "NewsAccount.cred");
 
     internal static bool LegacySaved => File.Exists(File_);
     internal static bool Saved => CentralConfig.AccountSaved || LegacySaved;

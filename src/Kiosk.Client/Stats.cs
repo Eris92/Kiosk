@@ -155,7 +155,7 @@ internal static class Stats
     // ------------------------------------------------------------------ the export folder's account
 
     private static readonly byte[] AccountEntropy = Encoding.UTF8.GetBytes("Kiosk.StatsAccount");
-    private static string AccountFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "StatsAccount.cred");
+    internal static string AccountFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "StatsAccount.cred");
     internal static bool AccountSaved => File.Exists(AccountFile);
 
     /// <summary>Saves (or with an empty login removes) the account for the export folder; needs an administrator.</summary>

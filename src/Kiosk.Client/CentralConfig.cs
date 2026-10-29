@@ -578,6 +578,73 @@ internal static class CentralConfig
         if (secrets.StatsAccount != null) Stats.WriteAccount(secrets.StatsAccount);
     }
 
+    /// <summary>Publishes the configuration after its secrets, restoring encrypted originals on an ordinary write failure.</summary>
+    internal static void WriteSecretsThen(Secrets secrets, Action publishConfiguration)
+    {
+        Directory.CreateDirectory(KioskData);
+        using var saveLock = new FileStream(Path.Combine(KioskData, ".settings-save.lock"), FileMode.OpenOrCreate,
+            FileAccess.ReadWrite, FileShare.None);
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (secrets.Account != null)
+        {
+            files.Add(CredentialFile);
+            files.Add(NewsAccount.File_);
+            files.Add(Stats.AccountFile);
+        }
+        if (secrets.AccountsKey != null) files.Add(SharedAccounts.KeyFile);
+        if (secrets.NewsAccount != null) files.Add(NewsAccount.File_);
+        if (secrets.StatsAccount != null) files.Add(Stats.AccountFile);
+        WriteSecretsThen(files, () => WriteSecrets(secrets), publishConfiguration);
+    }
+
+    private static void WriteSecretsThen(IEnumerable<string> files, Action writeSecrets, Action publishConfiguration)
+    {
+        var original = new List<(string Path, byte[]? Bytes)>();
+        try
+        {
+            foreach (var path in files) original.Add((path, ReadExisting(path)));
+            try
+            {
+                writeSecrets();
+                publishConfiguration();
+            }
+            catch (Exception failure)
+            {
+                var rollbackFailures = new List<Exception>();
+                foreach (var (path, bytes) in original.AsEnumerable().Reverse())
+                {
+                    try
+                    {
+                        var current = ReadExisting(path);
+                        try
+                        {
+                            if (current == null && bytes == null || current != null && bytes != null && current.SequenceEqual(bytes)) continue;
+                        }
+                        finally { if (current != null) Array.Clear(current); }
+                        if (bytes == null) File.Delete(path);
+                        else WriteProtectedBlob(path, bytes);
+                    }
+                    catch (Exception ex) { rollbackFailures.Add(new IOException("Nie przywrócono " + Path.GetFileName(path), ex)); }
+                }
+                Audit.Write("settings_secret_rollback", rollbackFailures.Count == 0 ? "ok" : "failed");
+                if (rollbackFailures.Count > 0)
+                    throw new IOException("Zapis ustawień nie powiódł się i nie przywrócono wszystkich poprzednich sekretów.",
+                        new AggregateException([failure, .. rollbackFailures]));
+                throw;
+            }
+        }
+        finally
+        {
+            foreach (var (_, bytes) in original) if (bytes != null) Array.Clear(bytes);
+        }
+    }
+
+    private static byte[]? ReadExisting(string path)
+    {
+        try { return File.ReadAllBytes(path); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
+    }
+
     /// <summary>Saves or removes Konto Kiosku; needs an administrator (or SYSTEM). The older separate accounts of the messages and statistics go with it.</summary>
     internal static void WriteAccount(AccountChange change)
     {
@@ -605,8 +672,15 @@ internal static class CentralConfig
     internal static void WriteSecret(string path, byte[] plain, byte[] entropyBytes)
     {
         var fullPath = Path.GetFullPath(path);
-        var temporary = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var blob = Protect(plain, entropyBytes);
+        try { WriteProtectedBlob(fullPath, blob); }
+        finally { Array.Clear(blob); }
+    }
+
+    private static void WriteProtectedBlob(string path, byte[] blob)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var temporary = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             // DPAPI for the computer alone would let any local user read a copied blob. Apply the final ACL
@@ -627,7 +701,6 @@ internal static class CentralConfig
         }
         finally
         {
-            Array.Clear(blob);
             try { File.Delete(temporary); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             { Audit.Write("secret_temporary_cleanup_failed", ex.Message); }
@@ -674,6 +747,34 @@ internal static class CentralConfig
                 rules.Any(rule => rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow ||
                     !allowed.Contains(((System.Security.Principal.SecurityIdentifier)rule.IdentityReference).Value)))
                 throw new InvalidOperationException("Secret replacement did not retain the restricted ACL.");
+
+            var originalSecret = File.ReadAllBytes(path);
+            var another = Path.Combine(folder, "another.cred");
+            var config = Path.Combine(folder, "client.json");
+            File.WriteAllText(config, "old");
+            var failed = false;
+            try
+            {
+                WriteSecretsThen([path, another],
+                    () => { WriteProtectedBlob(path, [7]); WriteProtectedBlob(another, [8]); },
+                    () => throw new IOException("Simulated configuration publication failure."));
+            }
+            catch (IOException) { failed = true; }
+            if (!failed || !File.ReadAllBytes(path).SequenceEqual(originalSecret) || File.Exists(another) ||
+                File.ReadAllText(config) != "old" || Directory.EnumerateFiles(folder, "*.tmp").Any())
+                throw new InvalidOperationException("A failed settings save did not restore its original secrets.");
+
+            var published = false;
+            failed = false;
+            try
+            {
+                WriteSecretsThen([path, another],
+                    () => { WriteProtectedBlob(path, [7]); throw new IOException("Simulated second secret failure."); },
+                    () => published = true);
+            }
+            catch (IOException) { failed = true; }
+            if (!failed || published || !File.ReadAllBytes(path).SequenceEqual(originalSecret) || File.Exists(another))
+                throw new InvalidOperationException("A failed secret write published settings or left a partial change.");
         }
         finally { Directory.Delete(folder, recursive: true); }
     }

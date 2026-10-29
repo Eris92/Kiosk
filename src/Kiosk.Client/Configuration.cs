@@ -280,8 +280,8 @@ internal static class Configuration
         var json = JsonSerializer.Serialize(config, indentedWriteOptions);
         try
         {
-            Replace(path, json);
-            if (secrets is { Any: true }) CentralConfig.WriteSecrets(secrets);
+            if (secrets is { Any: true }) CentralConfig.WriteSecretsThen(secrets, () => Replace(path, json));
+            else Replace(path, json);
             return;
         }
         catch (UnauthorizedAccessException) { }
@@ -311,8 +311,9 @@ internal static class Configuration
         try
         {
             Load(staged);   // validates
-            Replace(path, File.ReadAllText(staged));
-            if (stagedAccount != null) CentralConfig.WriteSecrets(CentralConfig.ReadStaged(stagedAccount));
+            var json = File.ReadAllText(staged);
+            if (stagedAccount != null) CentralConfig.WriteSecretsThen(CentralConfig.ReadStaged(stagedAccount), () => Replace(path, json));
+            else Replace(path, json);
             return 0;
         }
         catch (Exception ex) { Audit.Write("settings_save_failed", ex.Message); return 2; }
