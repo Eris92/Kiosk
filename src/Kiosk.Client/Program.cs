@@ -77,6 +77,7 @@ internal static class Program
 #if KIOSK_SELF_TEST
             if (selfTest)
             {
+                Stats.SelfTestQueue();
                 ConfigManager.SelfTest();
                 CtapCard.SelfTest();
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)

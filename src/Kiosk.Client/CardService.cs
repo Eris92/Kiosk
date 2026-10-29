@@ -83,7 +83,8 @@ internal static class CardService
     private static TimeSpan ResponseTimeout(string op) => op switch
     {
         "watch" or "unwatch" => TimeSpan.FromSeconds(10),
-        "stat" or "syncconfig" or "syncnews" or "syncstats" or "testconfig" or "testnetwork" => TimeSpan.FromMinutes(5),
+        "stat" => TimeSpan.FromSeconds(15),
+        "syncconfig" or "syncnews" or "syncstats" or "testconfig" or "testnetwork" => TimeSpan.FromMinutes(5),
         _ => TimeSpan.FromSeconds(90)
     };
 

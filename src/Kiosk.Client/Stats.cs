@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace Kiosk.Client;
 
@@ -18,6 +19,9 @@ internal static class Stats
     internal static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "Stats");
     private static string SaltFile => Path.Combine(Folder, "Stats.key");
     private const int KeepMonths = 13;
+    private const int MaxKindLength = 40, MaxNameLength = 300, MaxCategoryLength = 300, MaxPersonLength = 2048;
+    private static readonly StatisticsQueue Sender = new(
+        json => CardService.Call(new CardService.Request { Op = "stat", Source = json }), Audit.Write, 128);
 
     internal sealed record Entry
     {
@@ -30,16 +34,58 @@ internal static class Stats
         public string Who { get; init; } = "";
     }
 
-    /// <summary>Kiosk side: hands the event to the service in the background (never slows the screen).</summary>
+    /// <summary>Kiosk side: queues the event for one background sender without blocking the screen.</summary>
     internal static void Record(string kind, string name, string category = "", string person = "")
     {
-        var json = JsonSerializer.Serialize(new Entry { Kind = kind, Name = name.Trim(), Category = category.Trim(), Who = person.Trim() });
-        _ = Task.Run(() =>
-        {
-            var answer = CardService.Call(new CardService.Request { Op = "stat", Source = json });
-            if (answer.Code != 0) Audit.Write("stats_failed", answer.Message);
-        });
+        var json = JsonSerializer.Serialize(Prepare(kind, name, category, person));
+        Sender.Enqueue(json);
     }
+
+    private static Entry Prepare(string kind, string name, string category, string person)
+    {
+        static string Limit(string value, int length)
+        {
+            value = value.Trim();
+            return value.Length <= length ? value : value[..length];
+        }
+        return new Entry
+        {
+            Kind = Limit(kind, MaxKindLength), Name = Limit(name, MaxNameLength),
+            Category = Limit(category, MaxCategoryLength), Who = Limit(person, MaxPersonLength)
+        };
+    }
+
+#if KIOSK_SELF_TEST
+    internal static void SelfTestQueue()
+    {
+        var bounded = Prepare(new string('k', 100), new string('n', 500), new string('c', 500), new string('p', 3000));
+        if (bounded.Kind.Length != MaxKindLength || bounded.Name.Length != MaxNameLength ||
+            bounded.Category.Length != MaxCategoryLength || bounded.Who.Length != MaxPersonLength)
+            throw new InvalidOperationException("Statistics event exceeded its queue size limits.");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var sent = new List<string>();
+        var reports = new List<(string Action, string Detail)>();
+        var queue = new StatisticsQueue(json =>
+        {
+            if (json == "first") { entered.Set(); release.Wait(TimeSpan.FromSeconds(5)); }
+            sent.Add(json);
+            return new CardService.Response();
+        }, (action, detail) => reports.Add((action, detail)), 3);
+        queue.Enqueue("first");
+        if (!entered.Wait(TimeSpan.FromSeconds(5)))
+        {
+            release.Set();
+            throw new InvalidOperationException("Statistics sender did not start.");
+        }
+        for (var i = 0; i < 5; i++) queue.Enqueue(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        release.Set();
+        if (!queue.CompleteForTest().Wait(TimeSpan.FromSeconds(5)) ||
+            !sent.SequenceEqual(["first", "0", "1", "2"]) ||
+            !reports.Contains(("stats_dropped", "2")))
+            throw new InvalidOperationException("Statistics queue lost ordering or exceeded its capacity.");
+    }
+#endif
 
     /// <summary>Kiosk Card service, "stat": one line in this month's file; the person's account becomes their code here.</summary>
     internal static CardService.Response Append(string json)
@@ -47,7 +93,8 @@ internal static class Stats
         try
         {
             var entry = JsonSerializer.Deserialize<Entry>(json) ?? throw new InvalidDataException("Puste zdarzenie.");
-            if (entry.Kind.Length == 0 || entry.Kind.Length > 40 || entry.Name.Length > 300 || entry.Category.Length > 300)
+            if (entry.Kind.Length == 0 || entry.Kind.Length > MaxKindLength || entry.Name.Length > MaxNameLength ||
+                entry.Category.Length > MaxCategoryLength || entry.Who.Length > MaxPersonLength)
                 throw new InvalidDataException("Nieprawidłowe zdarzenie.");
             Directory.CreateDirectory(Folder);
             lock (Lock)
@@ -67,10 +114,13 @@ internal static class Stats
     /// <summary>12 hex characters of an HMAC with this computer's secret: the same person, the same code; no way back to the name.</summary>
     private static string Code(string person)
     {
-        byte[] key;
-        if (File.Exists(SaltFile)) key = CentralConfig.ReadSecret(SaltFile, Entropy);
-        else { key = RandomNumberGenerator.GetBytes(32); CentralConfig.WriteSecret(SaltFile, key, Entropy); }
-        try { return Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(person.ToLowerInvariant())))[..12]; }
+        var exists = File.Exists(SaltFile);
+        var key = exists ? CentralConfig.ReadSecret(SaltFile, Entropy) : RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            if (!exists) CentralConfig.WriteSecret(SaltFile, key, Entropy);
+            return Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(person.ToLowerInvariant())))[..12];
+        }
         finally { Array.Clear(key); }
     }
 
@@ -224,4 +274,60 @@ internal static class Stats
         output.Write(CsvHeader);
         foreach (var entry in FileEntries(file, CancellationToken.None, tolerateReadErrors: false)) WriteCsvRow(output, entry);
     }
+}
+
+/// <summary>Best-effort statistics sender. A failed service cannot accumulate unbounded client tasks.</summary>
+internal sealed class StatisticsQueue
+{
+    private readonly Channel<string> pending;
+    private readonly Func<string, CardService.Response> send;
+    private readonly Action<string, string> log;
+    private readonly Lazy<Task> worker;
+    private long dropped;
+
+    internal StatisticsQueue(Func<string, CardService.Response> send, Action<string, string> log, int capacity)
+    {
+        this.send = send;
+        this.log = log;
+        pending = Channel.CreateBounded<string>(new BoundedChannelOptions(capacity)
+        {
+            SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait
+        });
+        worker = new Lazy<Task>(() => Task.Run(DrainAsync));
+    }
+
+    internal void Enqueue(string json)
+    {
+        if (!pending.Writer.TryWrite(json)) { Interlocked.Increment(ref dropped); return; }
+        _ = worker.Value;
+    }
+
+    private async Task DrainAsync()
+    {
+        await foreach (var json in pending.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            try
+            {
+                var answer = send(json);
+                if (answer.Code != 0) SafeLog("stats_failed", answer.Message);
+            }
+            catch (Exception ex) { SafeLog("stats_failed", ex.Message); }
+            var lost = Interlocked.Exchange(ref dropped, 0);
+            if (lost > 0) SafeLog("stats_dropped", lost.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    private void SafeLog(string action, string detail)
+    {
+        try { log(action, detail); }
+        catch (Exception) { } // Statistics must never stop the kiosk or its background sender.
+    }
+
+#if KIOSK_SELF_TEST
+    internal Task CompleteForTest()
+    {
+        pending.Writer.TryComplete();
+        return worker.IsValueCreated ? worker.Value : Task.CompletedTask;
+    }
+#endif
 }
