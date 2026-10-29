@@ -42,6 +42,7 @@ internal sealed class BrowserView : UserControl
     private readonly List<Tab> tabs = new();
     private Tab? active;
     private CoreWebView2Environment? environment;
+    private CoreWebView2Profile? temporaryProfile;
     private string homeUrl = "about:blank";
     private readonly string userDataFolder;
     /// <summary>Windows shell mode: the person is signed in to Windows, so the browser uses their Windows (Entra ID)
@@ -309,6 +310,7 @@ internal sealed class BrowserView : UserControl
         }
         if (web.IsDisposed) return null;
         var core = web.CoreWebView2;
+        if (shared) temporaryProfile ??= core.Profile;
         // The card's web sign-in (security key) only without a Windows account: with it the page signs in by itself (SSO).
         // A single help page belongs to Kiosk scope even when Windows signed the person in for SSO.
         PageScripts.Attach(core, kiosk: singlePage, sharedFolder && !windowsAccount ? PageScripts.CardSignIn : null);
@@ -566,6 +568,17 @@ internal sealed class BrowserView : UserControl
         if (!url.Contains("://")) url = "https://" + url;
         if (IsWebAddress(url)) active.Web.CoreWebView2.Navigate(url);
         else message.Text = "Podaj adres http:// lub https://.";
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && temporaryProfile is { } profile)
+        {
+            temporaryProfile = null;
+            try { profile.Delete(); }
+            catch (Exception ex) { Audit.Write("browser_temporary_profile_delete_failed", ex.Message); }
+        }
+        base.Dispose(disposing);
     }
 
     /// <summary>The shared InPrivate browser; started again after its processes ended (crash, update of Edge).</summary>
