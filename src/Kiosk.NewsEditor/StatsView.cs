@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Kiosk.Common;
 
 namespace Kiosk.NewsEditor;
 
@@ -146,8 +147,13 @@ internal sealed class StatsView : TabPage
                 {
                     using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                     using var reader = new StreamReader(stream);
-                    while (reader.ReadLine() is { } line)
+                    var lines = new BoundedLineReader(reader, 65536);
+                    while (true)
                     {
+                        string? line;
+                        try { line = lines.ReadLine(cancellation); }
+                        catch (InvalidDataException) { continue; }
+                        if (line == null) break;
                         cancellation.ThrowIfCancellationRequested();
                         if (line.Length == 0) continue;
                         try

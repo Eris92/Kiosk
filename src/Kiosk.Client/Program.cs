@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Kiosk.Common;
 
 // Every P/Invoke in this assembly targets a Windows system DLL.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
@@ -78,6 +79,20 @@ internal static class Program
             if (selfTest)
             {
                 Stats.SelfTestQueue();
+                using (var text = new StringReader(new string('a', 4095) + "\r\n" + new string('x', 4096) + "\nlast"))
+                {
+                    var lines = new BoundedLineReader(text, 4095);
+                    if (lines.ReadLine(CancellationToken.None)?.Length != 4095)
+                        throw new InvalidOperationException("Bounded statistics line reader lost a line ending at its buffer boundary.");
+                    try
+                    {
+                        lines.ReadLine(CancellationToken.None);
+                        throw new InvalidOperationException("Oversized statistics line was accepted.");
+                    }
+                    catch (InvalidDataException) { }
+                    if (lines.ReadLine(CancellationToken.None) != "last" || lines.ReadLine(CancellationToken.None) != null)
+                        throw new InvalidOperationException("Bounded statistics line reader did not recover after an oversized line.");
+                }
                 ConfigManager.SelfTest();
                 CtapCard.SelfTest();
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
@@ -295,11 +310,21 @@ internal static class Program
                 {
                     Directory.CreateDirectory(nestedFolder);
                     var line = JsonSerializer.Serialize(new Stats.Entry { Time = month, Kind = Stats.Option, Name = "test" }) + Environment.NewLine;
-                    File.WriteAllText(rootFile, line + "{\"Time\":\"" + month.ToString("O") + "\",\"Kind\":\"opcja\",\"Who\":null}" + Environment.NewLine);
+                    File.WriteAllText(rootFile, line + new string('x', 65537) + Environment.NewLine +
+                        "{\"Time\":\"" + month.ToString("O") + "\",\"Kind\":\"opcja\",\"Who\":null}" + Environment.NewLine);
                     File.WriteAllText(computerFile, line);
                     File.WriteAllText(nestedFile, line);
                     if (Stats.Read(readRoot, month.LocalDateTime.Date.AddDays(-1)).Count != 2)
                         throw new InvalidOperationException("Statistics reader traversed beyond its per-computer folders.");
+                    using (var csvWriter = new StringWriter())
+                    {
+                        try
+                        {
+                            Stats.WriteCsvFile(rootFile, csvWriter);
+                            throw new InvalidOperationException("Statistics export silently skipped an oversized source row.");
+                        }
+                        catch (InvalidDataException) { }
+                    }
                     var firstDay = new DateTimeOffset(DateTime.Today.AddHours(12));
                     var nextDay = firstDay.AddDays(1);
                     var view = Stats.Summarize([

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Edytor komunikatów Kiosku: a separate small program, run as an ordinary user (no administrator), that edits
-       kiosk-news.json and its pictures and films on the server and shows the statistics there. Nothing shared with Kiosk.Client. -->
+       kiosk-news.json and its pictures and films on the server and shows the statistics there. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -21,5 +21,6 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="KioskKomunikaty.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Compile Include="..\Common\BoundedLineReader.cs" Link="BoundedLineReader.cs" />
   </ItemGroup>
 </Project>

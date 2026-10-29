@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Kiosk.Common;
 
 namespace Kiosk.Client;
 
@@ -19,6 +20,7 @@ internal static class Stats
     internal static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "Stats");
     private static string SaltFile => Path.Combine(Folder, "Stats.key");
     private const int KeepMonths = 13;
+    private const int MaxLineChars = 65536;
     private const int MaxKindLength = 40, MaxNameLength = 300, MaxCategoryLength = 300, MaxPersonLength = 2048;
     private static readonly StatisticsQueue Sender = new(
         json => CardService.Call(new CardService.Request { Op = "stat", Source = json }), Audit.Write, 128);
@@ -249,12 +251,14 @@ internal static class Stats
         using (stream)
         using (var reader = new StreamReader(stream))
         {
+            var lines = new BoundedLineReader(reader, MaxLineChars);
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
                 string? line = null;
                 bool failed = false;
-                try { line = reader.ReadLine(); }
+                try { line = lines.ReadLine(cancellation); }
+                catch (InvalidDataException) { if (!tolerateReadErrors) throw; continue; }
                 catch (IOException) { if (!tolerateReadErrors) throw; failed = true; }
                 catch (UnauthorizedAccessException) { if (!tolerateReadErrors) throw; failed = true; }
                 if (failed || line == null) break;
