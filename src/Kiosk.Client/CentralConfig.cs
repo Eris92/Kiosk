@@ -572,6 +572,7 @@ internal static class CentralConfig
 
     internal static void WriteSecrets(Secrets secrets)
     {
+        RequireSecretWriter();
         if (secrets.Account != null) WriteAccount(secrets.Account);
         if (secrets.AccountsKey != null) SharedAccounts.WriteKey(secrets.AccountsKey);
         if (secrets.NewsAccount != null) NewsAccount.Write(secrets.NewsAccount);
@@ -581,6 +582,7 @@ internal static class CentralConfig
     /// <summary>Publishes the configuration after its secrets, restoring encrypted originals on an ordinary write failure.</summary>
     internal static void WriteSecretsThen(Secrets secrets, Action publishConfiguration)
     {
+        RequireSecretWriter();
         Directory.CreateDirectory(KioskData);
         using var saveLock = new FileStream(Path.Combine(KioskData, ".settings-save.lock"), FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
@@ -671,10 +673,20 @@ internal static class CentralConfig
     /// <summary>A secret for this computer: DPAPI (computer) in a file only SYSTEM and administrators may open.</summary>
     internal static void WriteSecret(string path, byte[] plain, byte[] entropyBytes)
     {
+        RequireSecretWriter();
         var fullPath = Path.GetFullPath(path);
         var blob = Protect(plain, entropyBytes);
         try { WriteProtectedBlob(fullPath, blob); }
         finally { Array.Clear(blob); }
+    }
+
+    private static void RequireSecretWriter()
+    {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        if (identity.User?.IsWellKnown(System.Security.Principal.WellKnownSidType.LocalSystemSid) == true ||
+            new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+            return;
+        throw new UnauthorizedAccessException("Zapis sekretów wymaga uruchomienia jako SYSTEM lub administrator z podniesionymi uprawnieniami.");
     }
 
     private static void WriteProtectedBlob(string path, byte[] blob)
