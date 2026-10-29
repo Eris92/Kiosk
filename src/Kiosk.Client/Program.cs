@@ -295,11 +295,29 @@ internal static class Program
                 {
                     Directory.CreateDirectory(nestedFolder);
                     var line = JsonSerializer.Serialize(new Stats.Entry { Time = month, Kind = Stats.Option, Name = "test" }) + Environment.NewLine;
-                    File.WriteAllText(rootFile, line);
+                    File.WriteAllText(rootFile, line + "{\"Time\":\"" + month.ToString("O") + "\",\"Kind\":\"opcja\",\"Who\":null}" + Environment.NewLine);
                     File.WriteAllText(computerFile, line);
                     File.WriteAllText(nestedFile, line);
                     if (Stats.Read(readRoot, month.LocalDateTime.Date.AddDays(-1)).Count != 2)
                         throw new InvalidOperationException("Statistics reader traversed beyond its per-computer folders.");
+                    var firstDay = new DateTimeOffset(DateTime.Today.AddHours(12));
+                    var nextDay = firstDay.AddDays(1);
+                    var view = Stats.Summarize([
+                        new Stats.Entry { Time = firstDay, Pc = "PC1", Kind = Stats.SignIn, Who = "a" },
+                        new Stats.Entry { Time = firstDay.AddMinutes(1), Pc = "PC1", Kind = Stats.Option, Name = "A", Who = "a" },
+                        new Stats.Entry { Time = firstDay.AddMinutes(2), Pc = "PC2", Kind = Stats.Option, Name = "A", Who = "b" },
+                        new Stats.Entry { Time = nextDay, Pc = "PC2", Kind = Stats.Option, Name = "B", Who = "b" },
+                        new Stats.Entry { Time = nextDay.AddMinutes(1), Pc = "PC2", Kind = Stats.SignIn }
+                    ]);
+                    if (view.SignIns != 2 || view.People != 2 || view.Opened != 3 || view.Computers != 2 ||
+                        view.TopThree != "A (2), B (1)" || view.Options.Count != 2 ||
+                        view.Options[0].Name != "A" || view.Options[0].Count != 2 || view.Options[0].People != 2 ||
+                        view.Options[0].Last != firstDay.AddMinutes(2) || view.Days.Count != 2 ||
+                        view.Days[0].Day != nextDay.LocalDateTime.Date || view.Days[0].SignIns != 1 ||
+                        view.Days[0].People != 1 || view.Days[0].Opened != 1 ||
+                        view.Days[1].Day != firstDay.LocalDateTime.Date || view.Days[1].SignIns != 1 ||
+                        view.Days[1].People != 2 || view.Days[1].Opened != 2)
+                        throw new InvalidOperationException("Statistics one-pass summary differs from the view's counts.");
                     using var cancelled = new CancellationTokenSource();
                     cancelled.Cancel();
                     try

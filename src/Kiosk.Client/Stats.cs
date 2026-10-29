@@ -157,7 +157,8 @@ internal static class Stats
                 cancellation.ThrowIfCancellationRequested();
                 var month = Path.GetFileNameWithoutExtension(file);
                 if (month.Length >= 7 && string.CompareOrdinal(month[^7..], first) < 0) continue;
-                list.AddRange(ReadFile(file, cancellation).Where(e => e.Time.LocalDateTime >= from));
+                foreach (var entry in FileEntries(file, cancellation))
+                    if (entry.Time.LocalDateTime >= from) list.Add(entry);
             }
         }
         ReadFolder(folder);
@@ -167,6 +168,70 @@ internal static class Stats
             ReadFolder(computer);
         }
         return list;
+    }
+
+    internal sealed record OptionSummary(string Name, string Kind, string Category, int Count, int People, DateTimeOffset Last);
+    internal sealed record DaySummary(DateTime Day, int SignIns, int People, int Opened);
+    internal sealed record ViewSummary(int SignIns, int People, int Opened, int Computers, string TopThree,
+        List<OptionSummary> Options, List<DaySummary> Days);
+
+    private sealed class OptionCounter
+    {
+        internal int Count;
+        internal readonly HashSet<string> People = new(StringComparer.Ordinal);
+        internal DateTimeOffset Last;
+    }
+
+    private sealed class DayCounter
+    {
+        internal int SignIns;
+        internal int Opened;
+        internal readonly HashSet<string> People = new(StringComparer.Ordinal);
+    }
+
+    /// <summary>Build the statistics view in one pass outside the WinForms thread.</summary>
+    internal static ViewSummary Summarize(IEnumerable<Entry> entries, CancellationToken cancellation = default)
+    {
+        var people = new HashSet<string>(StringComparer.Ordinal);
+        var computers = new HashSet<string>(StringComparer.Ordinal);
+        var topNames = new Dictionary<string, int>(StringComparer.Ordinal);
+        var options = new Dictionary<(string Kind, string Name, string Category), OptionCounter>();
+        var days = new Dictionary<DateTime, DayCounter>();
+        var signIns = 0;
+        var opened = 0;
+        foreach (var entry in entries)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            computers.Add(entry.Pc);
+            if (entry.Who.Length > 0) people.Add(entry.Who);
+            var day = entry.Time.LocalDateTime.Date;
+            if (!days.TryGetValue(day, out var dayCounter)) days[day] = dayCounter = new DayCounter();
+            if (entry.Who.Length > 0) dayCounter.People.Add(entry.Who);
+            if (entry.Kind == SignIn)
+            {
+                signIns++;
+                dayCounter.SignIns++;
+                continue;
+            }
+            opened++;
+            dayCounter.Opened++;
+            topNames.TryGetValue(entry.Name, out var nameCount);
+            topNames[entry.Name] = nameCount + 1;
+            var key = (entry.Kind, entry.Name, entry.Category);
+            if (!options.TryGetValue(key, out var optionCounter)) options[key] = optionCounter = new OptionCounter();
+            optionCounter.Count++;
+            if (entry.Who.Length > 0) optionCounter.People.Add(entry.Who);
+            if (entry.Time > optionCounter.Last) optionCounter.Last = entry.Time;
+        }
+        cancellation.ThrowIfCancellationRequested();
+        return new ViewSummary(signIns, people.Count, opened, computers.Count,
+            string.Join(", ", topNames.OrderByDescending(pair => pair.Value).Take(3)
+                .Select(pair => pair.Key + " (" + pair.Value + ")")),
+            options.OrderByDescending(pair => pair.Value.Count)
+                .Select(pair => new OptionSummary(pair.Key.Name, pair.Key.Kind, pair.Key.Category,
+                    pair.Value.Count, pair.Value.People.Count, pair.Value.Last)).ToList(),
+            days.OrderByDescending(pair => pair.Key)
+                .Select(pair => new DaySummary(pair.Key, pair.Value.SignIns, pair.Value.People.Count, pair.Value.Opened)).ToList());
     }
 
     /// <summary>One month's file (unreadable lines and files are skipped).</summary>
@@ -197,7 +262,9 @@ internal static class Stats
                 Entry? entry = null;
                 try { entry = JsonSerializer.Deserialize<Entry>(line); }
                 catch (JsonException) { }
-                if (entry != null) yield return entry;
+                if (entry is { Pc: not null, Kind: not null, Name: not null, Category: not null, Who: not null } &&
+                    entry.Time != default)
+                    yield return entry;
             }
         }
     }

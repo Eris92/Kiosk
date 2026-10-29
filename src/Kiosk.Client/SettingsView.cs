@@ -1061,8 +1061,15 @@ internal sealed class SettingsView : UserControl
             shown = [];
             options.Rows.Clear();
             days.Rows.Clear();
-            List<Stats.Entry> read;
-            try { read = await Task.Run(() => Stats.Read(folder, from, currentLoad.Token), currentLoad.Token); }
+            (List<Stats.Entry> Entries, Stats.ViewSummary View) read;
+            try
+            {
+                read = await Task.Run(() =>
+                {
+                    var entries = Stats.Read(folder, from, currentLoad.Token);
+                    return (entries, Stats.Summarize(entries, currentLoad.Token));
+                }, currentLoad.Token);
+            }
             catch (OperationCanceledException) when (currentLoad.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
@@ -1077,21 +1084,22 @@ internal sealed class SettingsView : UserControl
                 currentLoad.Dispose();
             }
             if (IsDisposed || statsTab.IsDisposed || generation != loadGeneration) return;
-            shown = read;
-            var signIns = shown.Where(e => e.Kind == Stats.SignIn).ToList();
-            var opened = shown.Where(e => e.Kind != Stats.SignIn).ToList();
-            int people = shown.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count();
-            int computers = shown.Select(e => e.Pc).Distinct().Count();
-            summary.Text = "Logowania: " + signIns.Count + "     Osoby: " + people + "     Otwarte opcje: " + opened.Count +
-                           (computers > 1 ? "     Komputery: " + computers : "") +
-                           "\n" + (opened.Count == 0 ? "Brak otwartych opcji w tym okresie." : "Najczęściej: " + string.Join(", ",
-                               opened.GroupBy(e => e.Name).OrderByDescending(g => g.Count()).Take(3).Select(g => g.Key + " (" + g.Count() + ")")));
-            foreach (var g in opened.GroupBy(e => (e.Kind, e.Name, e.Category)).OrderByDescending(g => g.Count()))
-                options.Rows.Add(g.Key.Name, g.Key.Kind, g.Key.Category, g.Count(), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
-                    g.Max(e => e.Time).LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
-            foreach (var g in shown.GroupBy(e => e.Time.LocalDateTime.Date).OrderByDescending(g => g.Key))
-                days.Rows.Add(g.Key.ToString("yyyy-MM-dd"), g.Count(e => e.Kind == Stats.SignIn), g.Where(e => e.Who.Length > 0).Select(e => e.Who).Distinct().Count(),
-                    g.Count(e => e.Kind != Stats.SignIn));
+            shown = read.Entries;
+            var view = read.View;
+            summary.Text = "Logowania: " + view.SignIns + "     Osoby: " + view.People + "     Otwarte opcje: " + view.Opened +
+                           (view.Computers > 1 ? "     Komputery: " + view.Computers : "") +
+                           "\n" + (view.Opened == 0 ? "Brak otwartych opcji w tym okresie." : "Najczęściej: " + view.TopThree);
+            options.SuspendLayout();
+            days.SuspendLayout();
+            try
+            {
+                foreach (var option in view.Options)
+                    options.Rows.Add(option.Name, option.Kind, option.Category, option.Count, option.People,
+                        option.Last.LocalDateTime.ToString("yyyy-MM-dd HH:mm"));
+                foreach (var day in view.Days)
+                    days.Rows.Add(day.Day.ToString("yyyy-MM-dd"), day.SignIns, day.People, day.Opened);
+            }
+            finally { options.ResumeLayout(); days.ResumeLayout(); }
             export.Enabled = exporting == null;
         }
         refresh.Click += (_, _) => Load();

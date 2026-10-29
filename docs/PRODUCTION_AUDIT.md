@@ -258,6 +258,8 @@ Zdarzenia statystyk klienta przechodzą przez jednego nadawcę z kolejką ograni
 
 Eksport CSV statystyk z okna konfiguracji zapisuje wiersze na wątku roboczym do pliku tymczasowego obok wyniku i podmienia plik docelowy dopiero po ukończeniu. Zamknięcie karty statystyk anuluje eksport i usuwa niepełny plik. Zapis nie tworzy już całego tekstu CSV w pamięci okna; sortowanie wpisów nadal potrzebuje pamięci proporcjonalnej do liczby wczytanych zdarzeń. Self-test porównuje wynik z dotychczasowym formatem i sprawdza zachowanie poprzedniego pliku po anulowaniu.
 
+Widok statystyk w Konfiguracji pobiera wpisy bez listy pośredniej dla każdego pliku miesięcznego. Liczniki logowań, osób, komputerów, opcji i dni są wyliczane jednym przebiegiem poza wątkiem okna, zamiast wielokrotnie grupować pełną listę już po wczytaniu. Niekompletne wiersze JSONL z polami `null` lub bez czasu są pomijane przed agregacją. Self-test porównuje liczniki, liczbę osób w grupach, ostatnie otwarcie i kolejność dni z reprezentatywnym zestawem zdarzeń oraz odrzucenie niekompletnego wiersza. Duża liczba różnych opcji nadal oznacza wiele wierszy tabeli; rzeczywistą płynność widoku z docelową historią trzeba zmierzyć na stanowisku.
+
 ## Bramka akceptacyjna SelfService przed produkcją
 
 1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.
