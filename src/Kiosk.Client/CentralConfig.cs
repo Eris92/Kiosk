@@ -581,32 +581,103 @@ internal static class CentralConfig
     /// <summary>Saves or removes Konto Kiosku; needs an administrator (or SYSTEM). The older separate accounts of the messages and statistics go with it.</summary>
     internal static void WriteAccount(AccountChange change)
     {
-        if (File.Exists(CredentialFile)) File.Delete(CredentialFile);
-        NewsAccount.RemoveLegacy();
-        Stats.RemoveAccount();
-        if (change.User.Trim().Length == 0) { Audit.Write("config_source_account_removed"); return; }
+        if (change.User.Trim().Length == 0)
+        {
+            if (File.Exists(CredentialFile)) File.Delete(CredentialFile);
+            NewsAccount.RemoveLegacy();
+            Stats.RemoveAccount();
+            Audit.Write("config_source_account_removed");
+            return;
+        }
         var plain = JsonSerializer.SerializeToUtf8Bytes(new ShareAccount(change.User.Trim(), change.Password));
         try { WriteSecret(CredentialFile, plain, Entropy); }
         finally { Array.Clear(plain); }
         Audit.Write("config_source_account_saved", change.User.Trim());
+        try { NewsAccount.RemoveLegacy(); Stats.RemoveAccount(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Audit.Write("legacy_account_cleanup_failed", ex.Message);
+            throw new IOException("Konto Kiosku zapisano, ale nie udało się usunąć starszych kont: " + ex.Message, ex);
+        }
     }
 
     /// <summary>A secret for this computer: DPAPI (computer) in a file only SYSTEM and administrators may open.</summary>
     internal static void WriteSecret(string path, byte[] plain, byte[] entropyBytes)
     {
-        if (File.Exists(path)) File.Delete(path);
+        var fullPath = Path.GetFullPath(path);
+        var temporary = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var blob = Protect(plain, entropyBytes);
-        // Only SYSTEM (the Kiosk Card service) and administrators: DPAPI for the computer alone would let any local user read it.
-        var security = new System.Security.AccessControl.FileSecurity();
-        security.SetAccessRuleProtection(true, false);
-        foreach (var sid in new[] { System.Security.Principal.WellKnownSidType.LocalSystemSid, System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid })
-            security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(sid, null),
-                System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        using var file = FileSystemAclExtensions.Create(new FileInfo(path), FileMode.CreateNew, System.Security.AccessControl.FileSystemRights.FullControl,
-            FileShare.None, 4096, FileOptions.None, security);
-        file.Write(blob);
+        try
+        {
+            // DPAPI for the computer alone would let any local user read a copied blob. Apply the final ACL
+            // before writing, then publish the completed file in the same directory.
+            var security = new System.Security.AccessControl.FileSecurity();
+            security.SetAccessRuleProtection(true, false);
+            foreach (var sid in new[] { System.Security.Principal.WellKnownSidType.LocalSystemSid, System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid })
+                security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(sid, null),
+                    System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            using (var file = FileSystemAclExtensions.Create(new FileInfo(temporary), FileMode.CreateNew, System.Security.AccessControl.FileSystemRights.FullControl,
+                       FileShare.None, 4096, FileOptions.None, security))
+            {
+                file.Write(blob);
+                file.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally
+        {
+            Array.Clear(blob);
+            try { File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { Audit.Write("secret_temporary_cleanup_failed", ex.Message); }
+        }
     }
+
+#if KIOSK_SELF_TEST
+    internal static void SecretWriteSmokeTest()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "kiosk-secret-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "account.cred");
+        var entropy = Encoding.UTF8.GetBytes("Kiosk.SecretWriteSmokeTest");
+        byte[] first = [1, 2, 3], second = [4, 5, 6];
+        try
+        {
+            WriteSecret(path, first, entropy);
+            var original = File.ReadAllBytes(path);
+            if (!ReadSecret(path, entropy).SequenceEqual(first))
+                throw new InvalidOperationException("Initial secret write failed.");
+            var rejected = false;
+            using (var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                try { WriteSecret(path, second, entropy); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { rejected = true; }
+            }
+            if (!rejected || !File.ReadAllBytes(path).SequenceEqual(original) ||
+                Directory.EnumerateFiles(folder, "*.tmp").Any())
+                throw new InvalidOperationException("A failed secret update changed the original or left a temporary file.");
+            File.Delete(path);
+            File.WriteAllBytes(path, [9]); // An older file may have inherited, broader permissions.
+            WriteSecret(path, second, entropy);
+            if (!ReadSecret(path, entropy).SequenceEqual(second))
+                throw new InvalidOperationException("Secret replacement failed.");
+            var access = FileSystemAclExtensions.GetAccessControl(new FileInfo(path));
+            var allowed = new[]
+            {
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null).Value,
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null).Value
+            }.ToHashSet(StringComparer.Ordinal);
+            var rules = access.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier))
+                .Cast<System.Security.AccessControl.FileSystemAccessRule>().ToArray();
+            if (!access.AreAccessRulesProtected || rules.Length != 2 ||
+                rules.Any(rule => rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow ||
+                    !allowed.Contains(((System.Security.Principal.SecurityIdentifier)rule.IdentityReference).Value)))
+                throw new InvalidOperationException("Secret replacement did not retain the restricted ACL.");
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+#endif
 
     internal static byte[] ReadSecret(string path, byte[] entropyBytes) => Unprotect(File.ReadAllBytes(path), entropyBytes);
 
