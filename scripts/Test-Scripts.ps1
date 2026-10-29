@@ -29,6 +29,18 @@ try {
             throw "RDP prerequisite diagnostic did not count $($fixture.Count) profiles for $($fixture.Json)."
         }
     }
+    foreach ($fixture in @(
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService"}'; Auth = 'CardBroker (legacy default)' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":"WindowsSession"}'; Auth = 'WindowsSession' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":"CardBroker"}'; Auth = 'CardBroker' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":null}'; Auth = 'Invalid or missing' }
+    )) {
+        [IO.File]::WriteAllText($rdpConfig, $fixture.Json)
+        $diagnostic = (& (Join-Path $PSScriptRoot 'Test-Prerequisites.ps1') -ConfigPath $rdpConfig | Out-String)
+        if ($diagnostic -notmatch "(?m)^\s*SelfServiceAuthentication\s*:\s*$([regex]::Escape($fixture.Auth))\s*$") {
+            throw "SelfService prerequisite diagnostic did not report $($fixture.Auth) for $($fixture.Json)."
+        }
+    }
 } finally {
     $resolvedRdpFixture = [IO.Path]::GetFullPath($rdpFixtureRoot)
     $outputRoot = [IO.Path]::GetFullPath((Join-Path $root 'out')).TrimEnd('\')
