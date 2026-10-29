@@ -2915,6 +2915,13 @@ internal sealed partial class KioskForm : Form
             File.WriteAllText(legacyAuthFile, """{"ConfigVersion":5,"SessionMode":"Kiosk"}""");
             if (Configuration.Load(legacyAuthFile).SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession)
                 throw new InvalidOperationException("An application-station configuration did not offer Windows SSO when switched to self-service.");
+            using (var oversized = File.Create(legacyAuthFile)) oversized.SetLength(Configuration.MaxFileBytes + 1L);
+            try
+            {
+                Configuration.Load(legacyAuthFile);
+                throw new InvalidOperationException("Oversized configuration was accepted.");
+            }
+            catch (InvalidDataException) { }
         }
         finally { File.Delete(legacyAuthFile); }
         var testConfig = config with
@@ -2940,6 +2947,15 @@ internal sealed partial class KioskForm : Form
             restored.SessionMode != SessionMode.SelfService || restored.SelfServiceAuthentication != SelfServiceAuthentication.WindowsSession ||
             !restored.BrowserOnlyBookmarks || restored.BrowserAllowedDomains.Single() != "login.microsoftonline.com" || restored.EnableBrowser)
             throw new InvalidOperationException("Configuration round-trip failed.");
+        var savedConfig = File.ReadAllBytes(configFile);
+        try
+        {
+            Configuration.Save(configFile, testConfig with { BrandTitle = new string('x', Configuration.MaxFileBytes) });
+            throw new InvalidOperationException("Oversized configuration was saved.");
+        }
+        catch (InvalidDataException) { }
+        if (!File.ReadAllBytes(configFile).SequenceEqual(savedConfig))
+            throw new InvalidOperationException("Oversized save changed the previous configuration.");
         try
         {
             (testConfig with { Bookmarks = [new Bookmark { Name = "Bad", Url = "file:///C:/Windows" }] }).Validate();

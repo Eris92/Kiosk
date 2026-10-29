@@ -250,6 +250,8 @@ Eksport statystyk zapisuje teraz dla każdego miesiąca krótki znacznik SHA-256
 
 Menedżer „Konfiguracje Kiosków” wykonuje kopiowanie nowej konfiguracji na wątku roboczym. Okno pozostaje responsywne; zamknięcie w trakcie operacji prosi o anulowanie i czeka na usunięcie katalogu tymczasowego. Kopia zachowuje zasoby konfiguracji, lecz pomija główny katalog `Stats` z danymi operacyjnymi poprzedniej konfiguracji. Lista konfiguracji również jest odczytywana poza wątkiem UI; ponowne odświeżenie anuluje poprzedni odczyt i nie pokazuje spóźnionych wyników. Self-test sprawdza zachowanie zasobów, brak historii, sprzątnięcie anulowanej operacji, widoczność błędnego pliku i anulowanie listowania. Ręczna próba okna i przerwania dużego kopiowania na docelowym udziale nadal jest potrzebna.
 
+Odczyt `client.json` ma limit 4 MB przed parsowaniem, a zapis sprawdza rozmiar wynikowego UTF-8 przed zmianą pliku i sekretów. Ścieżka zapisu z podniesieniem uprawnień waliduje dokładnie tę treść pliku tymczasowego, którą później publikuje. Test odrzuca plik ponad limitem oraz sprawdza, że próba zapisania zbyt dużej konfiguracji zachowuje poprzedni plik. Przykład repozytorium ma 1332 bajty, a lokalny plik instalacji 7881 bajtów; nie sprawdzono rozmiaru konfiguracji na docelowym serwerze.
+
 ## Bramka akceptacyjna SelfService przed produkcją
 
 1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.

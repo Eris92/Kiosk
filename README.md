@@ -55,7 +55,7 @@ Win32 app. Replace its versioned client path with the installed release path bef
 
 `config/client.json` is the starting configuration. Everything is edited in **Konfiguracja**. A Kiosk
 administrator opens it from the Menu, and any Windows administrator with **Ctrl+Alt+K**, which runs it
-elevated. Saving reloads the running Kiosk.
+elevated. Saving reloads the running Kiosk. The `client.json` file is limited to 4 MB.
 
 - `TestMode` (off unless set) lets everyone close the Kiosk, and makes Uruchom ponownie / Wyłącz do nothing.
   Use it only on a test PC.

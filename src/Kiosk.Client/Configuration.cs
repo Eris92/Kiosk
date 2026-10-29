@@ -235,6 +235,7 @@ internal sealed record MenuCategory
 
 internal static class Configuration
 {
+    internal const int MaxFileBytes = 4 * 1024 * 1024;
     private static readonly JsonSerializerOptions strictReadOptions = new()
     {
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
@@ -242,8 +243,11 @@ internal static class Configuration
     private static readonly JsonSerializerOptions indentedWriteOptions = new() { WriteIndented = true };
 
     internal static Config Load(string path, string? logicalPath = null)
+        => Parse(ReadTextBounded(path), logicalPath ?? path);
+
+    private static Config Parse(string json, string logicalPath)
     {
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        using var document = JsonDocument.Parse(json);
         var config = document.RootElement.Deserialize<Config>(strictReadOptions) ?? throw new InvalidDataException("Konfiguracja jest pusta.");
         // Files written before WindowsSession was the default omitted this property. Preserve their
         // CardBroker behavior; new Config instances serialize an explicit WindowsSession choice.
@@ -252,10 +256,24 @@ internal static class Configuration
             config = config with { SelfServiceAuthentication = SelfServiceAuthentication.CardBroker };
         config = config.Migrate();
         // Logo and messages folder may be given relative to the configuration's folder (Konfiguracja z serwera).
-        var folder = Path.GetDirectoryName(Path.GetFullPath(logicalPath ?? path))!;
+        var folder = Path.GetDirectoryName(Path.GetFullPath(logicalPath))!;
         string Resolve(string value) => value.Length > 0 && !Path.IsPathFullyQualified(value) ? Path.GetFullPath(Path.Combine(folder, value)) : value;
         config = config with { BrandLogo = Resolve(config.BrandLogo ?? ""), NewsFolder = Resolve(config.NewsFolder ?? ""), Folder = folder };
         config.Validate(); return config;
+    }
+
+    private static string ReadTextBounded(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > MaxFileBytes) throw new InvalidDataException("Plik konfiguracji przekracza 4 MB.");
+        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    private static void CheckSerializedSize(string json)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaxFileBytes)
+            throw new InvalidDataException("Plik konfiguracji przekracza 4 MB.");
     }
     internal static bool IsWebUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
@@ -278,6 +296,7 @@ internal static class Configuration
     {
         config.Validate();
         var json = JsonSerializer.Serialize(config, indentedWriteOptions);
+        CheckSerializedSize(json);
         try
         {
             if (secrets is { Any: true }) CentralConfig.WriteSecretsThen(secrets, () => Replace(path, json));
@@ -310,8 +329,9 @@ internal static class Configuration
     {
         try
         {
-            Load(staged);   // validates
-            var json = File.ReadAllText(staged);
+            var json = ReadTextBounded(staged);
+            Parse(json, staged); // Validate the exact content that will be published.
+            CheckSerializedSize(json);
             if (stagedAccount != null) CentralConfig.WriteSecretsThen(CentralConfig.ReadStaged(stagedAccount), () => Replace(path, json));
             else Replace(path, json);
             return 0;
