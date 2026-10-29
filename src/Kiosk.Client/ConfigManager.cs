@@ -48,6 +48,11 @@ internal static class ConfigManager
         private readonly TextBox rootBox = new() { Width = 520 };
         private readonly ListView list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, HideSelection = false };
         private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 28, ForeColor = Color.DimGray, Padding = new Padding(8, 6, 8, 0) };
+        private readonly FlowLayoutPanel top;
+        private readonly FlowLayoutPanel buttons;
+        private CancellationTokenSource? creationCancellation;
+        private bool creating;
+        private bool closeAfterCreate;
 
         internal ManagerForm(string root)
         {
@@ -57,7 +62,7 @@ internal static class ConfigManager
             MinimumSize = new Size(700, 420);
             StartPosition = FormStartPosition.CenterScreen;
 
-            var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
+            top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
             top.Controls.Add(new Label { Text = "Folder główny:", AutoSize = true, Margin = new Padding(0, 7, 6, 0) });
             rootBox.Text = root;
             rootBox.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Reload(); } };
@@ -70,7 +75,7 @@ internal static class ConfigManager
             list.Columns.Add("Uwagi", 360);
             list.DoubleClick += (_, _) => Edit();
 
-            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(8) };
+            buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(8) };
             var edit = Small("Edytuj", Edit);
             buttons.Controls.AddRange([edit, Small("Nowa…", () => Create(copy: false)), Small("Kopiuj jako nową…", () => Create(copy: true)), Small("Otwórz folder", OpenFolder)]);
 
@@ -80,6 +85,14 @@ internal static class ConfigManager
             Controls.Add(top);
             AcceptButton = edit;
             Shown += (_, _) => { if (rootBox.Text.Length > 0) Reload(); else PickRoot(); };
+            FormClosing += (_, e) =>
+            {
+                if (!creating) return;
+                e.Cancel = true;
+                closeAfterCreate = true;
+                creationCancellation?.Cancel();
+                status.Text = "Kończę kopiowanie i sprzątam pliki tymczasowe…";
+            };
         }
 
         private static Button Small(string text, Action action)
@@ -138,40 +151,67 @@ internal static class ConfigManager
             return string.Join(", ", parts);
         }
 
-        private void Create(bool copy)
+        private async void Create(bool copy)
         {
+            if (creating) return;
             if (!Directory.Exists(Root)) { PickRoot(); if (!Directory.Exists(Root)) return; }
             var source = copy ? Selected : null;
             if (copy && source == null) { status.Text = "Zaznacz konfigurację do skopiowania."; return; }
             var name = Ask(copy ? "Nazwa nowej konfiguracji (kopia „" + Path.GetFileName(source) + "”):" : "Nazwa nowej konfiguracji (nazwa folderu):");
             if (name == null) return;
             var folder = Path.Combine(Root, name);
+            using var cancellation = new CancellationTokenSource();
+            creationCancellation = cancellation;
+            creating = true;
+            top.Enabled = buttons.Enabled = list.Enabled = false;
+            UseWaitCursor = true;
+            status.Text = "Tworzę konfigurację…";
+            var created = false;
+            var failed = false;
             try
             {
-                CreateFolder(folder, source);
-                Audit.Write("config_created", folder);
-                Reload(folder);
-                Edit();
+                await Task.Run(() => CreateFolder(folder, source, cancellation.Token), cancellation.Token);
+                created = true;
             }
-            catch (Exception ex) { MessageBox.Show(this, "Nie udało się utworzyć konfiguracji: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                failed = true;
+                if (!closeAfterCreate)
+                    MessageBox.Show(this, "Nie udało się utworzyć konfiguracji: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                creating = false;
+                creationCancellation = null;
+                top.Enabled = buttons.Enabled = list.Enabled = true;
+                UseWaitCursor = false;
+            }
+            if (closeAfterCreate) { Close(); return; }
+            if (!created) { status.Text = failed ? "Nie utworzono konfiguracji." : "Tworzenie konfiguracji anulowano."; return; }
+            Audit.Write("config_created", folder);
+            Reload(folder);
+            Edit();
         }
 
-        private static void CreateFolder(string destination, string? source)
+        private static void CreateFolder(string destination, string? source, CancellationToken cancellation = default)
         {
             var parent = Path.GetDirectoryName(destination) ?? throw new ArgumentException("Configuration folder must have a parent.", nameof(destination));
             if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("Konfiguracja „" + Path.GetFileName(destination) + "” już jest.");
             var staging = Path.Combine(parent, ".kiosk-config-" + Guid.NewGuid().ToString("N"));
             try
             {
-                if (source != null) CopyFolder(source, staging);
+                if (source != null) CopyFolder(source, staging, cancellation);
                 else
                 {
+                    cancellation.ThrowIfCancellationRequested();
                     Directory.CreateDirectory(staging);
                     // The example shipped with the Kiosk, else the built-in defaults.
                     var example = Path.Combine(AppContext.BaseDirectory, CentralConfig.FileName);
                     var config = File.Exists(example) ? Configuration.Load(example) : new Config();
                     Configuration.Save(Path.Combine(staging, CentralConfig.FileName), config with { ConfigSource = "" });
                 }
+                cancellation.ThrowIfCancellationRequested();
                 Directory.Move(staging, destination);
             }
             finally
@@ -180,21 +220,28 @@ internal static class ConfigManager
             }
         }
 
-        private static void CopyFolder(string from, string to)
+        private static void CopyFolder(string from, string to, CancellationToken cancellation)
         {
             if ((File.GetAttributes(from) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Nie można kopiować konfiguracji przez dowiązanie folderu.");
             var options = new EnumerationOptions { AttributesToSkip = 0 };
-            var pending = new Stack<(string Source, string Target)>();
-            pending.Push((from, to));
+            var pending = new Stack<(string Source, string Target, bool Root)>();
+            pending.Push((from, to, true));
             while (pending.TryPop(out var item))
             {
+                cancellation.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(item.Target);
                 foreach (var child in new DirectoryInfo(item.Source).EnumerateFileSystemInfos("*", options))
                 {
+                    cancellation.ThrowIfCancellationRequested();
                     if ((child.Attributes & FileAttributes.ReparsePoint) != 0)
                         throw new IOException("Nie można skopiować konfiguracji z dowiązaniem: " + child.FullName);
-                    if (child is DirectoryInfo) pending.Push((child.FullName, Path.Combine(item.Target, child.Name)));
+                    if (child is DirectoryInfo)
+                    {
+                        // Exports belong to the original configuration and can be large; a new one starts with no history.
+                        if (item.Root && child.Name.Equals("Stats", StringComparison.OrdinalIgnoreCase)) continue;
+                        pending.Push((child.FullName, Path.Combine(item.Target, child.Name), false));
+                    }
                     else if (child is FileInfo) File.Copy(child.FullName, Path.Combine(item.Target, child.Name));
                 }
             }
@@ -210,9 +257,11 @@ internal static class ConfigManager
             try
             {
                 Directory.CreateDirectory(Path.Combine(source, "assets"));
+                Directory.CreateDirectory(Path.Combine(source, "Stats", "PC1"));
                 Directory.CreateDirectory(outside);
                 File.WriteAllText(Path.Combine(source, CentralConfig.FileName), "{}");
                 File.WriteAllText(Path.Combine(source, "assets", "logo.txt"), "logo");
+                File.WriteAllText(Path.Combine(source, "Stats", "PC1", "2026-01.jsonl"), "private history");
                 File.WriteAllText(Path.Combine(outside, "private.txt"), "outside");
                 var fresh = Path.Combine(root, "fresh");
                 CreateFolder(fresh, null);
@@ -220,8 +269,22 @@ internal static class ConfigManager
                     Configuration.Load(Path.Combine(fresh, CentralConfig.FileName)).ConfigSource.Length != 0)
                     throw new InvalidOperationException("Fresh configuration was not published or kept a server source.");
                 CreateFolder(copied, source);
-                if (File.ReadAllText(Path.Combine(copied, "assets", "logo.txt")) != "logo")
-                    throw new InvalidOperationException("Configuration copy lost an asset.");
+                if (File.ReadAllText(Path.Combine(copied, "assets", "logo.txt")) != "logo" ||
+                    Directory.Exists(Path.Combine(copied, "Stats")))
+                    throw new InvalidOperationException("Configuration copy lost an asset or duplicated statistics history.");
+                using (var stopped = new CancellationTokenSource())
+                {
+                    stopped.Cancel();
+                    try
+                    {
+                        CreateFolder(Path.Combine(root, "cancelled"), source, stopped.Token);
+                        throw new InvalidOperationException("Cancelled configuration copy was published.");
+                    }
+                    catch (OperationCanceledException) { }
+                    if (Directory.Exists(Path.Combine(root, "cancelled")) ||
+                        Directory.EnumerateDirectories(root, ".kiosk-config-*").Any())
+                        throw new InvalidOperationException("Cancelled configuration copy left a staging folder.");
+                }
 
                 var link = Path.Combine(source, "linked");
                 var linked = false;
