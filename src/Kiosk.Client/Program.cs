@@ -611,10 +611,7 @@ internal static class Program
             // so every account and every copy of the Kiosk on this PC shows the same Konfiguracja.
             var shared = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Kiosk", "client.json");
             var path = args.Length > 0 ? Path.GetFullPath(args[0]) : File.Exists(shared) ? shared : Path.Combine(AppContext.BaseDirectory, "client.json");
-            // Konfiguracja z serwera: the server's client.json and files are fetched first (CentralConfig).
-            var loaded = CentralConfig.Load(path);
-            var config = loaded.Effective;
-            KioskTheme.SetAccent(config.AccentColor);
+            // Take the session mutex before a potentially slow network configuration sync. A duplicate exits without it.
             using var instance = new Mutex(true, "Local\\Kiosk.Client", out var first);
             // "Uruchom ponownie": the previous copy may still be closing — wait for it a moment.
             if (!first)
@@ -624,6 +621,10 @@ internal static class Program
             }
             // Already running here (e.g. the watchdog and Windows both started it after a crash): this copy leaves quietly.
             if (!first) { Audit.Write("already_running"); return 0; }
+            // Konfiguracja z serwera: the server's client.json and files are fetched before opening the window (CentralConfig).
+            var loaded = CentralConfig.Load(path);
+            var config = loaded.Effective;
+            KioskTheme.SetAccent(config.AccentColor);
             // A new installation asks once: this PC's own configuration, or a server's (FirstRunSetup).
             if (FirstRunSetup.RunIfNeeded(path, loaded.Local))
             {
