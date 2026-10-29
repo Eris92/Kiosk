@@ -11,7 +11,7 @@ internal sealed class MainForm : Form
     private const int PictureWidth = 1920, PictureHeight = 1080;
     private readonly EditorSettings settings;
     private NewsFile file;
-    private bool dirty, loading;
+    private bool dirty, loading, reloading, saving, closeRequested, closeConfirmed, closePromptInProgress;
 
     private readonly EntryList list = new() { Dock = DockStyle.Fill, IntegralHeight = false, Font = new Font("Segoe UI", 10) };
     private readonly CheckBox enabled = new() { Text = "Pokazuj na kioskach", AutoSize = true };
@@ -31,6 +31,7 @@ internal sealed class MainForm : Form
     private readonly Label folderLabel = new() { AutoSize = true, Margin = new Padding(8, 8, 8, 0) };
     private readonly Label status = new() { AutoSize = true, Margin = new Padding(12, 8, 8, 0), ForeColor = Color.DimGray };
     private readonly Button save = new() { Text = "Zapisz na serwerze", AutoSize = true };
+    private readonly TabPage newsTab = new("Komunikaty");
     private readonly TableLayoutPanel fields = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(8) };
     private Image? previewImage;
     private CancellationTokenSource? previewLoadStop;
@@ -48,7 +49,6 @@ internal sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        var newsTab = new TabPage("Komunikaty");
         tabs.TabPages.Add(newsTab);
         tabs.TabPages.Add(new StatsView(settings) { Text = "Statystyki" });
         Controls.Add(tabs);
@@ -91,9 +91,9 @@ internal sealed class MainForm : Form
         newsTab.Controls.Add(split);
 
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(4) };
-        bottom.Controls.AddRange([save, Small("Wczytaj ponownie", Reload), Small("Zmień folder…", ChangeFolder), folderLabel, status]);
+        bottom.Controls.AddRange([save, Small("Wczytaj ponownie", () => _ = ReloadAsync()), Small("Zmień folder…", () => _ = ChangeFolderAsync()), folderLabel, status]);
         newsTab.Controls.Add(bottom);
-        save.Click += (_, _) => Save();
+        save.Click += async (_, _) => await SaveAsync();
 
         list.SelectedIndexChanged += (_, _) => Show(list.SelectedItem as NewsEntry);
         foreach (Control c in new Control[] { title, text, image, video, button, action, color, textColor }) c.TextChanged += (_, _) => Changed();
@@ -103,11 +103,16 @@ internal sealed class MainForm : Form
         until.ValueChanged += (_, _) => Changed();
         FormClosing += (_, e) =>
         {
+            if (saving) { closeRequested = true; Status("Poczekaj na zakończenie zapisu."); e.Cancel = true; return; }
             if (mediaCopyStop != null) { mediaCopyStop.Cancel(); Status("Anuluję kopiowanie pliku. Zamknij okno ponownie po zakończeniu."); e.Cancel = true; return; }
-            if (dirty && !AskSave()) e.Cancel = true;
+            if (dirty && !closeConfirmed)
+            {
+                e.Cancel = true;
+                if (!closePromptInProgress) _ = ConfirmCloseAsync();
+            }
         };
         FormClosed += (_, _) => mediaCopyStop?.Cancel();
-        Shown += (_, _) => Reload();
+        Shown += (_, _) => _ = ReloadAsync();
     }
 
     private static DateTimePicker Picker() =>
@@ -136,57 +141,104 @@ internal sealed class MainForm : Form
 
     // ------------------------------------------------------------------ the file
 
-    private void Reload()
+    private async Task ReloadAsync()
     {
+        if (saving || reloading) return;
         if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return; }
-        if (dirty && !AskSave()) return;
+        if (dirty && !await AskSaveAsync()) return;
+        if (IsDisposed) return;
         folderLabel.Text = "Folder: " + file.Folder;
+        var folder = file.Folder;
+        reloading = true;
+        newsTab.Enabled = false;
+        Status("Wczytuję komunikaty…");
         try
         {
-            if (!Directory.Exists(file.Folder)) throw new DirectoryNotFoundException("Nie ma folderu " + file.Folder + ". Wybierz go: Zmień folder…");
-            file.Load();
-            Status(File.Exists(file.Path_) ? "Wczytano " + file.Entries.Count + " komunikatów." : "Brak " + NewsFile.FileName + ": pierwszy zapis go utworzy.");
+            var result = await Task.Run(() =>
+            {
+                if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Nie ma folderu " + folder + ". Wybierz go: Zmień folder…");
+                var loaded = new NewsFile(folder);
+                loaded.Load();
+                return (File: loaded, Exists: File.Exists(loaded.Path_));
+            });
+            if (IsDisposed) return;
+            file = result.File;
+            Status(result.Exists ? "Wczytano " + file.Entries.Count + " komunikatów." : "Brak " + NewsFile.FileName + ": pierwszy zapis go utworzy.");
         }
-        catch (Exception ex) { file = new NewsFile(file.Folder); Status("Nie udało się wczytać: " + ex.Message); }
+        catch (Exception ex) { if (IsDisposed) return; file = new NewsFile(folder); Status("Nie udało się wczytać: " + ex.Message); }
+        finally { reloading = false; if (!IsDisposed) newsTab.Enabled = true; }
+        if (IsDisposed) return;
         list.Items.Clear();
         foreach (var entry in file.Entries) list.Items.Add(entry);
         SetDirty(false);
         if (list.Items.Count > 0) list.SelectedIndex = 0; else Show(null);
     }
 
-    private void Save()
+    private async Task<bool> SaveAsync()
     {
+        if (saving) return false;
+        if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return false; }
+        saving = true;
+        newsTab.Enabled = false;
+        Status("Zapisuję komunikaty…");
         try
         {
-            var fingerprint = file.CurrentFingerprint();
+            var fingerprint = await Task.Run(file.CurrentFingerprint);
             if (file.ChangedElsewhere(fingerprint) && MessageBox.Show(this, "Ktoś inny zapisał komunikaty po ich wczytaniu. Zastąpić jego zmiany Twoimi?",
-                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-            file.Save(fingerprint);
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return false;
+            await Task.Run(() => file.Save(fingerprint));
             SetDirty(false);
             Status("Zapisano " + DateTime.Now.ToString("HH:mm:ss") + ". Kioski pobiorą zmiany przy najbliższym odświeżeniu komunikatów (poprzednia wersja: " + NewsFile.FileName + ".bak).");
+            return true;
         }
-        catch (Exception ex) { MessageBox.Show(this, "Nie udało się zapisać: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        catch (Exception ex) { MessageBox.Show(this, "Nie udało się zapisać: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); return false; }
+        finally
+        {
+            saving = false;
+            newsTab.Enabled = true;
+            if (closeRequested && !dirty)
+            {
+                closeRequested = false;
+                closeConfirmed = true;
+                Close();
+                closeConfirmed = false;
+            }
+            else closeRequested = false;
+        }
     }
 
-    private bool AskSave()
+    private async Task<bool> AskSaveAsync()
     {
         var answer = MessageBox.Show(this, "Zapisać zmiany w komunikatach?", Text, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
         if (answer == DialogResult.Cancel) return false;
-        if (answer == DialogResult.Yes) { Save(); return !dirty; }
+        if (answer == DialogResult.Yes) return await SaveAsync();
         return true;
     }
 
-    private void ChangeFolder()
+    private async Task ConfirmCloseAsync()
+    {
+        closePromptInProgress = true;
+        try
+        {
+            if (!await AskSaveAsync() || IsDisposed) return;
+            closeConfirmed = true;
+            Close();
+        }
+        finally { closeConfirmed = false; closePromptInProgress = false; }
+    }
+
+    private async Task ChangeFolderAsync()
     {
         if (mediaCopyStop != null) { Status("Poczekaj na zakończenie kopiowania pliku."); return; }
         using var dialog = new FolderBrowserDialog { Description = "Folder z " + NewsFile.FileName + " (zwykle udział na serwerze)", InitialDirectory = file.Folder, UseDescriptionForTitle = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        if (dirty && !AskSave()) return;
+        if (dirty && !await AskSaveAsync()) return;
+        if (IsDisposed) return;
         dirty = false;
         settings.NewsFolder = dialog.SelectedPath;
         try { settings.Save(); } catch (Exception ex) { Status("Nie zapamiętano folderu: " + ex.Message); }
         file = new NewsFile(dialog.SelectedPath);
-        Reload();
+        await ReloadAsync();
     }
 
     private void SetDirty(bool value)
@@ -197,6 +249,43 @@ internal sealed class MainForm : Form
     }
 
     private void Status(string message) => status.Text = message;
+
+#if KIOSK_SELF_TEST
+    internal static void AsyncFileSmokeTest()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "KioskNewsUiTest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        Exception? failure = null;
+        try
+        {
+            using var form = new MainForm(new EditorSettings { NewsFolder = folder });
+            using var context = new ApplicationContext();
+            EventHandler? start = null;
+            start = async (_, _) =>
+            {
+                Application.Idle -= start;
+                try
+                {
+                    await form.ReloadAsync();
+                    var uiThread = Environment.CurrentManagedThreadId;
+                    form.AddEntry();
+                    form.title.Text = "Async news save test";
+                    if (!await form.SaveAsync()) throw new InvalidOperationException("News editor did not save the entry.");
+                    await form.ReloadAsync();
+                    if (Environment.CurrentManagedThreadId != uiThread || form.file.Entries.Count != 1 ||
+                        form.file.Entries[0].Title != "Async news save test" || form.dirty)
+                        throw new InvalidOperationException("News editor did not reload the saved entry on its UI thread.");
+                }
+                catch (Exception ex) { failure = ex; }
+                finally { context.ExitThread(); }
+            };
+            Application.Idle += start;
+            Application.Run(context);
+            if (failure != null) throw failure;
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+#endif
 
     // ------------------------------------------------------------------ the list
 
