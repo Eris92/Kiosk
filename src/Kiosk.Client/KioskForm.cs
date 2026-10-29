@@ -2577,6 +2577,17 @@ internal sealed partial class KioskForm : Form
         noteView.Editor.Clear();
         noteView.LoadFile(path);
         if (noteView.Editor.Text != sample || noteView.Dirty) throw new InvalidOperationException("Notes file round-trip failed.");
+        noteView.Editor.Text = "This update must not replace a locked note.";
+        var saveBlocked = false;
+        using (var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            try { noteView.SaveFile(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { saveBlocked = true; }
+        }
+        if (!saveBlocked || File.ReadAllText(path) != sample || !noteView.Dirty ||
+            Directory.EnumerateFiles(AppContext.BaseDirectory, ".self-test-note.txt.*.tmp").Any())
+            throw new InvalidOperationException("A failed note save changed the original or left a temporary file.");
+        noteView.LoadFile(path);
 
         var browserView = new BrowserView([new Bookmark { Name = "Test bookmark", Url = "https://bookmark.invalid/" }]);
         aliceSession.Browser = browserView;
