@@ -50,12 +50,16 @@ internal static class ConfigManager
         private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 28, ForeColor = Color.DimGray, Padding = new Padding(8, 6, 8, 0) };
         private readonly FlowLayoutPanel top;
         private readonly FlowLayoutPanel buttons;
+        private readonly bool rememberRoot;
         private CancellationTokenSource? creationCancellation;
+        private CancellationTokenSource? reloadCancellation;
+        private int reloadGeneration;
         private bool creating;
         private bool closeAfterCreate;
 
-        internal ManagerForm(string root)
+        internal ManagerForm(string root, bool rememberRoot = true)
         {
+            this.rememberRoot = rememberRoot;
             Text = "Konfiguracje Kiosków";
             Font = new Font("Segoe UI", 10);
             Size = new Size(900, 600);
@@ -87,6 +91,7 @@ internal static class ConfigManager
             Shown += (_, _) => { if (rootBox.Text.Length > 0) Reload(); else PickRoot(); };
             FormClosing += (_, e) =>
             {
+                reloadCancellation?.Cancel();
                 if (!creating) return;
                 e.Cancel = true;
                 closeAfterCreate = true;
@@ -114,31 +119,75 @@ internal static class ConfigManager
             Reload();
         }
 
-        private void Reload(string? select = null)
+        private void Reload(string? select = null) => _ = ReloadAsync(select);
+
+        private sealed record ConfigurationRow(string Folder, string Name, string Changed, string Note);
+
+        private static List<ConfigurationRow>? ReadConfigurations(string root, CancellationToken cancellation)
         {
+            cancellation.ThrowIfCancellationRequested();
+            if (!Directory.Exists(root)) return null;
+            var rows = new List<ConfigurationRow>();
+            var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
+            foreach (var folder in Directory.EnumerateDirectories(root, "*", options).OrderBy(f => f, StringComparer.CurrentCultureIgnoreCase))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(folder);
+                if (name.StartsWith(".kiosk-config-", StringComparison.OrdinalIgnoreCase) &&
+                    Guid.TryParseExact(name[".kiosk-config-".Length..], "N", out _)) continue;
+                var file = Path.Combine(folder, CentralConfig.FileName);
+                if (!File.Exists(file)) continue; // Other folders are not configurations.
+                string changed, note;
+                try
+                {
+                    note = Describe(Configuration.Load(file));
+                    changed = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
+                }
+                catch (Exception ex) { changed = ""; note = "Błąd w pliku: " + ex.Message; }
+                rows.Add(new ConfigurationRow(folder, name, changed, note));
+            }
+            return rows;
+        }
+
+        private async Task<bool> ReloadAsync(string? select = null)
+        {
+            reloadCancellation?.Cancel();
+            var generation = ++reloadGeneration;
+            using var cancellation = new CancellationTokenSource();
+            reloadCancellation = cancellation;
+            var root = Root;
             list.Items.Clear();
-            if (!Directory.Exists(Root)) { status.Text = Root.Length == 0 ? "Wybierz folder główny." : "Nie ma folderu " + Root + "."; return; }
-            Remember(Root);
+            status.Text = root.Length == 0 ? "Wybierz folder główny." : "Wczytuję konfiguracje…";
+            if (root.Length == 0) { reloadCancellation = null; return false; }
             try
             {
-                var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint };
-                foreach (var folder in Directory.EnumerateDirectories(Root, "*", options).OrderBy(f => f, StringComparer.CurrentCultureIgnoreCase))
+                var rows = await Task.Run(() => ReadConfigurations(root, cancellation.Token), cancellation.Token);
+                if (IsDisposed || generation != reloadGeneration || cancellation.IsCancellationRequested) return false;
+                if (rows == null) { status.Text = "Nie ma folderu " + root + "."; return false; }
+                if (rememberRoot) Remember(root);
+                list.BeginUpdate();
+                try
                 {
-                    var name = Path.GetFileName(folder);
-                    if (name.StartsWith(".kiosk-config-", StringComparison.OrdinalIgnoreCase) &&
-                        Guid.TryParseExact(name[".kiosk-config-".Length..], "N", out _)) continue;
-                    var file = Path.Combine(folder, CentralConfig.FileName);
-                    if (!File.Exists(file)) continue;   // Other folders (pictures, messages, statistics) are not configurations.
-                    string note;
-                    try { var config = Configuration.Load(file); note = Describe(config); }
-                    catch (Exception ex) { note = "Błąd w pliku: " + ex.Message; }
-                    var item = new ListViewItem([Path.GetFileName(folder), File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm"), note]) { Tag = folder };
-                    list.Items.Add(item);
-                    if (string.Equals(folder, select, StringComparison.OrdinalIgnoreCase)) { item.Selected = true; item.EnsureVisible(); }
+                    foreach (var row in rows)
+                    {
+                        var item = new ListViewItem([row.Name, row.Changed, row.Note]) { Tag = row.Folder };
+                        list.Items.Add(item);
+                        if (string.Equals(row.Folder, select, StringComparison.OrdinalIgnoreCase))
+                        { item.Selected = true; item.EnsureVisible(); }
+                    }
                 }
-                status.Text = list.Items.Count == 0 ? "W tym folderze nie ma jeszcze konfiguracji – dodaj nową." : list.Items.Count + " konfiguracji. Dwuklik otwiera do edycji.";
+                finally { list.EndUpdate(); }
+                status.Text = rows.Count == 0 ? "W tym folderze nie ma jeszcze konfiguracji – dodaj nową." :
+                    rows.Count + " konfiguracji. Dwuklik otwiera do edycji.";
+                return true;
             }
-            catch (Exception ex) { status.Text = "Nie można odczytać folderu: " + ex.Message; }
+            catch (OperationCanceledException) { return false; }
+            catch (Exception ex)
+            {
+                if (!IsDisposed && generation == reloadGeneration) status.Text = "Nie można odczytać folderu: " + ex.Message;
+                return false;
+            }
+            finally { if (ReferenceEquals(reloadCancellation, cancellation)) reloadCancellation = null; }
         }
 
         private static string Describe(Config config)
@@ -160,6 +209,8 @@ internal static class ConfigManager
             var name = Ask(copy ? "Nazwa nowej konfiguracji (kopia „" + Path.GetFileName(source) + "”):" : "Nazwa nowej konfiguracji (nazwa folderu):");
             if (name == null) return;
             var folder = Path.Combine(Root, name);
+            reloadCancellation?.Cancel();
+            reloadGeneration++;
             using var cancellation = new CancellationTokenSource();
             creationCancellation = cancellation;
             creating = true;
@@ -190,8 +241,7 @@ internal static class ConfigManager
             if (closeAfterCreate) { Close(); return; }
             if (!created) { status.Text = failed ? "Nie utworzono konfiguracji." : "Tworzenie konfiguracji anulowano."; return; }
             Audit.Write("config_created", folder);
-            Reload(folder);
-            Edit();
+            if (await ReloadAsync(folder)) Edit();
         }
 
         private static void CreateFolder(string destination, string? source, CancellationToken cancellation = default)
@@ -272,9 +322,33 @@ internal static class ConfigManager
                 if (File.ReadAllText(Path.Combine(copied, "assets", "logo.txt")) != "logo" ||
                     Directory.Exists(Path.Combine(copied, "Stats")))
                     throw new InvalidOperationException("Configuration copy lost an asset or duplicated statistics history.");
+                var invalid = Path.Combine(root, "invalid");
+                Directory.CreateDirectory(invalid);
+                File.WriteAllText(Path.Combine(invalid, CentralConfig.FileName), "{broken json");
+                var rows = ReadConfigurations(root, CancellationToken.None) ??
+                    throw new InvalidOperationException("Configuration listing lost its root.");
+                if (rows.Count != 4 || rows.All(row => row.Folder != invalid || !row.Note.StartsWith("Błąd w pliku:", StringComparison.Ordinal)) ||
+                    rows.Any(row => row.Folder == outside))
+                    throw new InvalidOperationException("Configuration listing lost a valid folder or hid an invalid configuration.");
+                using (var form = new ManagerForm(root, rememberRoot: false) { ShowInTaskbar = false, Opacity = 0 })
+                {
+                    form.Show();
+                    var deadline = Environment.TickCount64 + 5000;
+                    while (form.list.Items.Count != rows.Count && Environment.TickCount64 < deadline)
+                    { Application.DoEvents(); Thread.Sleep(10); }
+                    if (form.list.Items.Count != rows.Count || form.status.Text.Contains("Nie można", StringComparison.Ordinal))
+                        throw new InvalidOperationException("Asynchronous configuration listing did not populate the WinForms view.");
+                    form.Close();
+                }
                 using (var stopped = new CancellationTokenSource())
                 {
                     stopped.Cancel();
+                    try
+                    {
+                        ReadConfigurations(root, stopped.Token);
+                        throw new InvalidOperationException("Cancelled configuration listing continued.");
+                    }
+                    catch (OperationCanceledException) { }
                     try
                     {
                         CreateFolder(Path.Combine(root, "cancelled"), source, stopped.Token);
