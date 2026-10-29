@@ -413,19 +413,18 @@ internal static class CentralConfig
         while (pending.TryPop(out var next))
         {
             Directory.CreateDirectory(next.Destination);
-            foreach (var file in Directory.EnumerateFiles(next.Source, "*", options))
+            foreach (var entry in new DirectoryInfo(next.Source).EnumerateFileSystemInfos("*", options))
             {
-                var name = Path.GetFileName(file);
-                if (EditorFile(name) || skipStatistics && next.StatsDepth == 1 && IsStatsExportFile(name, next.Computer)) continue;
-                File.Copy(file, Path.Combine(next.Destination, name), true);
-            }
-            foreach (var folder in Directory.EnumerateDirectories(next.Source, "*", options))
-            {
-                var name = Path.GetFileName(folder);
-                var statsDepth = next.Root && name.Equals("Stats", StringComparison.OrdinalIgnoreCase) ? 0
-                    : next.StatsDepth >= 0 ? next.StatsDepth + 1 : -1;
-                pending.Push((folder, Path.Combine(next.Destination, name), false, statsDepth,
-                    statsDepth == 1 ? name : next.Computer));
+                var name = entry.Name;
+                if (entry is DirectoryInfo)
+                {
+                    var statsDepth = next.Root && name.Equals("Stats", StringComparison.OrdinalIgnoreCase) ? 0
+                        : next.StatsDepth >= 0 ? next.StatsDepth + 1 : -1;
+                    pending.Push((entry.FullName, Path.Combine(next.Destination, name), false, statsDepth,
+                        statsDepth == 1 ? name : next.Computer));
+                }
+                else if (!EditorFile(name) && !(skipStatistics && next.StatsDepth == 1 && IsStatsExportFile(name, next.Computer)))
+                    File.Copy(entry.FullName, Path.Combine(next.Destination, name), true);
             }
         }
     }
