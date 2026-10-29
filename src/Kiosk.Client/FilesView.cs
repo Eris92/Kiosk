@@ -623,10 +623,7 @@ internal sealed class FilesView : UserControl
                 var to = Free(Path.Combine(destination, Path.GetFileName(from.TrimEnd('\\'))));
                 if (Directory.Exists(from))
                 {
-                    var source = Path.GetFullPath(from).TrimEnd('\\') + "\\";
-                    var targetFolder = Path.GetFullPath(destination).TrimEnd('\\') + "\\";
-                    if (targetFolder.StartsWith(source, StringComparison.OrdinalIgnoreCase))
-                        throw new IOException("Nie można wkleić folderu do niego samego.");
+                    EnsureDestinationOutsideFolder(from, destination);
                     if (c.Move && !forceCopy && string.Equals(Path.GetPathRoot(from), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
                         Directory.Move(from, to);
                     else
@@ -767,6 +764,34 @@ internal sealed class FilesView : UserControl
         var full = Path.GetFullPath(path);
         if (full.StartsWith(@"\\?\", StringComparison.Ordinal)) return full;
         return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full[2..] : @"\\?\" + full;
+    }
+
+    private static void EnsureDestinationOutsideFolder(string source, string destination)
+    {
+        var from = FinalDirectoryPath(source).TrimEnd('\\');
+        var to = FinalDirectoryPath(destination).TrimEnd('\\');
+        if (string.Equals(to, from, StringComparison.OrdinalIgnoreCase) ||
+            to.StartsWith(from + "\\", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Nie można wkleić folderu do niego samego.");
+    }
+
+    private static string FinalDirectoryPath(string path)
+    {
+        using var handle = CreateFileW(ExtendedWindowsPath(path), 0x80, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+        if (handle.IsInvalid)
+            throw new IOException("Nie można sprawdzić ścieżki folderu: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
+        uint capacity = 512;
+        while (capacity <= 32768)
+        {
+            var buffer = new System.Text.StringBuilder((int)capacity);
+            var length = GetFinalPathNameByHandleW(handle, buffer, capacity, 0);
+            if (length == 0)
+                throw new IOException("Nie można rozpoznać ścieżki folderu: " + new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);
+            if (length < capacity) return buffer.ToString();
+            if (length >= 32768) break;
+            capacity = length + 1;
+        }
+        throw new PathTooLongException("Ścieżka folderu jest zbyt długa do sprawdzenia.");
     }
 
     private static void DeleteCopiedFolder(string from, string to, MoveManifest manifest, CancellationToken cancellation)
@@ -989,6 +1014,8 @@ internal sealed class FilesView : UserControl
     private struct FileAttributeTagInfo { public uint Attributes; public uint ReparseTag; }
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, System.Text.StringBuilder path, uint length, uint flags);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileAttributeTagInfo info, uint size);
     [DllImport("kernel32.dll", SetLastError = true)]

@@ -3085,6 +3085,22 @@ internal sealed partial class KioskForm : Form
                 (File.GetAttributes(Path.Combine(destination, "source", "nested")) & FileAttributes.Hidden) == 0 ||
                 Math.Abs((Directory.GetLastWriteTimeUtc(Path.Combine(destination, "source", "nested")) - directoryTime).TotalSeconds) > 2)
                 throw new InvalidOperationException("Background folder copy failed.");
+            if (await files.PasteForSmokeTestAsync([source], nested, move: false))
+                throw new InvalidOperationException("A folder was copied into its own child.");
+            var alias = Path.Combine(root, "source-alias");
+            var linked = false;
+            try { Directory.CreateSymbolicLink(alias, nested); linked = true; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { }
+            if (linked)
+            {
+                try
+                {
+                    if (await files.PasteForSmokeTestAsync([source], alias, move: false) ||
+                        Directory.EnumerateFileSystemEntries(nested, "source.partial-*").Any())
+                        throw new InvalidOperationException("A directory link allowed recursive folder copy.");
+                }
+                finally { Directory.Delete(alias); }
+            }
             if (!await files.ZipForSmokeTestAsync([source])) throw new InvalidOperationException("Background ZIP failed.");
             var archive = Path.Combine(root, "source.zip");
             if (!File.Exists(archive) || !await files.UnzipForSmokeTestAsync(archive) ||
