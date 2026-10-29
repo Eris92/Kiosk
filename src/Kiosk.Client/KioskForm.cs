@@ -2956,6 +2956,37 @@ internal sealed partial class KioskForm : Form
         catch (InvalidDataException) { }
         if (!File.ReadAllBytes(configFile).SequenceEqual(savedConfig))
             throw new InvalidOperationException("Oversized save changed the previous configuration.");
+        var openedFingerprint = Configuration.LoadSnapshot(configFile).Fingerprint;
+        Configuration.Save(configFile, testConfig with { BrandTitle = "A" }, expectedFingerprint: openedFingerprint);
+        if (!File.ReadAllBytes(configFile + ".bak").SequenceEqual(savedConfig))
+            throw new InvalidOperationException("Conditional configuration save did not preserve the previous version.");
+        var firstChangedFingerprint = Configuration.CurrentFingerprint(configFile);
+        var sameTime = File.GetLastWriteTimeUtc(configFile);
+        Configuration.Save(configFile, testConfig with { BrandTitle = "B" });
+        File.SetLastWriteTimeUtc(configFile, sameTime);
+        var latestFingerprint = Configuration.CurrentFingerprint(configFile);
+        if (latestFingerprint == firstChangedFingerprint)
+            throw new InvalidOperationException("Configuration fingerprint missed a same-size change.");
+        try
+        {
+            Configuration.Save(configFile, testConfig, expectedFingerprint: firstChangedFingerprint);
+            throw new InvalidOperationException("Stale configuration edit was accepted.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Konfiguracja zmieniła się", StringComparison.Ordinal)) { }
+        if (Configuration.SaveElevated(configFile, configFile, expectedFingerprint: firstChangedFingerprint) != 3 ||
+            Configuration.CurrentFingerprint(configFile) != latestFingerprint)
+            throw new InvalidOperationException("Elevated configuration save accepted a stale edit.");
+        using (new FileStream(configFile + ".edit.lock", FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            try
+            {
+                Configuration.Save(configFile, testConfig, expectedFingerprint: latestFingerprint);
+                throw new InvalidOperationException("Concurrent configuration save ignored the edit lock.");
+            }
+            catch (IOException) { }
+        }
+        if (Configuration.CurrentFingerprint(configFile) != latestFingerprint)
+            throw new InvalidOperationException("Rejected configuration save modified the file.");
         try
         {
             (testConfig with { Bookmarks = [new Bookmark { Name = "Bad", Url = "file:///C:/Windows" }] }).Validate();

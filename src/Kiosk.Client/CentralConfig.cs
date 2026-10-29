@@ -489,6 +489,7 @@ internal static class CentralConfig
     private static bool EditorFile(string name) =>
         name.StartsWith("KioskKomunikaty.", StringComparison.OrdinalIgnoreCase) ||
         name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+        name.Equals(FileName + ".edit.lock", StringComparison.OrdinalIgnoreCase) ||
         name.Equals(News.FileName + ".edit.lock", StringComparison.OrdinalIgnoreCase);
 
     private static void TryDelete(string folder)

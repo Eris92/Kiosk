@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace Kiosk.Client;
@@ -245,6 +247,24 @@ internal static class Configuration
     internal static Config Load(string path, string? logicalPath = null)
         => Parse(ReadTextBounded(path), logicalPath ?? path);
 
+    internal static (Config Config, string Fingerprint) LoadSnapshot(string path)
+    {
+        var json = ReadTextBounded(path);
+        return (Parse(json, path), Fingerprint(json));
+    }
+
+    internal static string? CurrentFingerprint(string path) => File.Exists(path) ? Fingerprint(ReadTextBounded(path)) : null;
+
+    private static string Fingerprint(string json) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+
+    private sealed class ConfigurationConflictException() : InvalidOperationException("Konfiguracja zmieniła się na dysku. Wczytaj ją ponownie przed zapisem.");
+
+    private static void RequireFingerprint(string path, string? expected)
+    {
+        if (expected != null && CurrentFingerprint(path) != expected)
+            throw new ConfigurationConflictException();
+    }
+
     private static Config Parse(string json, string logicalPath)
     {
         using var document = JsonDocument.Parse(json);
@@ -292,15 +312,18 @@ internal static class Configuration
     /// a person's own Windows session Windows asks for an administrator, and only that one copy step runs elevated.
     /// </summary>
     /// <param name="secrets">The share's account and the shared accounts' key to save or remove (null = unchanged), in the same step.</param>
-    internal static void Save(string path, Config config, CentralConfig.Secrets? secrets = null)
+    internal static void Save(string path, Config config, CentralConfig.Secrets? secrets = null,
+        string? expectedFingerprint = null)
     {
         config.Validate();
         var json = JsonSerializer.Serialize(config, indentedWriteOptions);
         CheckSerializedSize(json);
         try
         {
-            if (secrets is { Any: true }) CentralConfig.WriteSecretsThen(secrets, () => Replace(path, json));
-            else Replace(path, json);
+            using var editLock = new FileStream(path + ".edit.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            RequireFingerprint(path, expectedFingerprint);
+            if (secrets is { Any: true }) CentralConfig.WriteSecretsThen(secrets, () => Replace(path, json, expectedFingerprint));
+            else Replace(path, json, expectedFingerprint);
             return;
         }
         catch (UnauthorizedAccessException) { }
@@ -312,9 +335,12 @@ internal static class Configuration
             using var copy = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
             {
                 UseShellExecute = true, Verb = "runas", WorkingDirectory = AppContext.BaseDirectory,
-                Arguments = "\"" + SaveArgument + "\" \"" + staged + "\" \"" + path + "\"" + (stagedAccount == null ? "" : " \"" + stagedAccount + "\"")
+                Arguments = "\"" + SaveArgument + "\" \"" + staged + "\" \"" + path + "\"" +
+                    (stagedAccount == null ? "" : " \"" + stagedAccount + "\"") +
+                    (expectedFingerprint == null ? "" : " \"sha256:" + expectedFingerprint + "\"")
             })!;
             copy.WaitForExit();
+            if (copy.ExitCode == 3) throw new InvalidOperationException("Konfiguracja zmieniła się na dysku. Wczytaj ją ponownie przed zapisem.");
             if (copy.ExitCode != 0) throw new UnauthorizedAccessException("Administrator nie zapisał konfiguracji (kod " + copy.ExitCode + ").");
         }
         catch (System.ComponentModel.Win32Exception)
@@ -325,27 +351,34 @@ internal static class Configuration
     }
 
     /// <summary>Kiosk.Client.exe --save-config &lt;staged file&gt; &lt;configuration&gt; [&lt;staged account&gt;] (elevated): validates and copies.</summary>
-    internal static int SaveElevated(string staged, string path, string? stagedAccount = null)
+    internal static int SaveElevated(string staged, string path, string? stagedAccount = null, string? expectedFingerprint = null)
     {
         try
         {
+            if (expectedFingerprint != null && (expectedFingerprint.Length != 64 || expectedFingerprint.Any(c => !Uri.IsHexDigit(c))))
+                throw new InvalidDataException("Nieprawidłowy odcisk konfiguracji.");
             var json = ReadTextBounded(staged);
             Parse(json, staged); // Validate the exact content that will be published.
             CheckSerializedSize(json);
-            if (stagedAccount != null) CentralConfig.WriteSecretsThen(CentralConfig.ReadStaged(stagedAccount), () => Replace(path, json));
-            else Replace(path, json);
+            using var editLock = new FileStream(path + ".edit.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            RequireFingerprint(path, expectedFingerprint);
+            if (stagedAccount != null) CentralConfig.WriteSecretsThen(CentralConfig.ReadStaged(stagedAccount), () => Replace(path, json, expectedFingerprint));
+            else Replace(path, json, expectedFingerprint);
             return 0;
         }
+        catch (ConfigurationConflictException ex)
+        { Audit.Write("settings_save_conflict", ex.Message); return 3; }
         catch (Exception ex) { Audit.Write("settings_save_failed", ex.Message); return 2; }
     }
 
-    private static void Replace(string path, string json)
+    private static void Replace(string path, string json, string? expectedFingerprint = null)
     {
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.WriteAllText(temporary, json);
-            if (File.Exists(path)) File.Replace(temporary, path, null);
+            RequireFingerprint(path, expectedFingerprint);
+            if (File.Exists(path)) File.Replace(temporary, path, expectedFingerprint != null ? path + ".bak" : null);
             else File.Move(temporary, path);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }

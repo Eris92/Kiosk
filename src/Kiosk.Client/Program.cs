@@ -49,7 +49,24 @@ internal static class Program
         if (args.Length == 2 && args[0] == CardPageHost.Argument) return CardPageHost.Run(args[1]);
         if (args.Length == 2 && args[0] == AdminSettings.Argument) return AdminSettings.Run(args[1]);
         if (args.Length is 1 or 2 && args[0] == ConfigManager.Argument) return ConfigManager.Run(args.Length == 2 ? args[1] : null);
-        if (args.Length is 3 or 4 && args[0] == Configuration.SaveArgument) return Configuration.SaveElevated(args[1], args[2], args.Length == 4 ? args[3] : null);
+        if ((args.Length is >= 3 and <= 5) && args[0] == Configuration.SaveArgument)
+        {
+            string? account = null, fingerprint = null;
+            for (var i = 3; i < args.Length; i++)
+            {
+                if (args[i].StartsWith("sha256:", StringComparison.Ordinal))
+                {
+                    if (fingerprint != null) return 2;
+                    fingerprint = args[i][7..];
+                }
+                else
+                {
+                    if (account != null) return 2;
+                    account = args[i];
+                }
+            }
+            return Configuration.SaveElevated(args[1], args[2], account, fingerprint);
+        }
         if (args.Length == 2 && args[0] == RdpUserHost.Argument) return RdpUserHost.Run(args[1]);
         if (args.Length == 1 && args[0] == FilesHost.Argument) return FilesHost.Run();
 #if KIOSK_SELF_TEST
@@ -369,7 +386,8 @@ internal static class Program
                 var copiedStamp = "PC-" + copiedMonthName + ".sha256";
                 var copiedTemporary = copiedMonth + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 var newsEditLock = Path.Combine("news", News.FileName + ".edit.lock");
-                var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"), newsEditLock,
+                var configEditLock = CentralConfig.FileName + ".edit.lock";
+                var copiedFiles = new[] { "client.json", configEditLock, Path.Combine("news", "item.txt"), newsEditLock,
                     Path.Combine("Stats", "PC", copiedMonth), Path.Combine("Stats", "PC", copiedCsv),
                     Path.Combine("Stats", "PC", copiedStamp),
                     Path.Combine("Stats", "PC", copiedTemporary), Path.Combine("Stats", "PC", "asset.txt"),
@@ -386,6 +404,7 @@ internal static class Program
                         CentralConfig.Copy(copySource, newsCopy, skipStatistics: false);
                     }
                     if (!File.Exists(Path.Combine(configCopy, "client.json")) ||
+                        File.Exists(Path.Combine(configCopy, configEditLock)) ||
                         !File.Exists(Path.Combine(configCopy, "news", "item.txt")) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedMonth)) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedCsv)) ||
@@ -395,6 +414,7 @@ internal static class Program
                         !File.Exists(Path.Combine(configCopy, "Stats", "root-logo.txt")) ||
                         File.Exists(Path.Combine(configCopy, "KioskKomunikaty.tmp")) ||
                         File.Exists(Path.Combine(configCopy, newsEditLock)) ||
+                        File.Exists(Path.Combine(newsCopy, configEditLock)) ||
                         File.Exists(Path.Combine(newsCopy, newsEditLock)) ||
                         !File.Exists(Path.Combine(newsCopy, "Stats", "PC", copiedMonth)))
                         throw new InvalidOperationException("Central configuration copy included monthly exports or lost required assets.");

@@ -55,6 +55,7 @@ internal static class ConfigManager
         private CancellationTokenSource? reloadCancellation;
         private int reloadGeneration;
         private bool creating;
+        private bool editing;
         private bool closeAfterCreate;
 
         internal ManagerForm(string root, bool rememberRoot = true)
@@ -260,6 +261,7 @@ internal static class ConfigManager
                     var example = Path.Combine(AppContext.BaseDirectory, CentralConfig.FileName);
                     var config = File.Exists(example) ? Configuration.Load(example) : new Config();
                     Configuration.Save(Path.Combine(staging, CentralConfig.FileName), config with { ConfigSource = "" });
+                    File.Delete(Path.Combine(staging, CentralConfig.FileName + ".edit.lock"));
                 }
                 cancellation.ThrowIfCancellationRequested();
                 Directory.Move(staging, destination);
@@ -292,7 +294,10 @@ internal static class ConfigManager
                         if (item.Root && child.Name.Equals("Stats", StringComparison.OrdinalIgnoreCase)) continue;
                         pending.Push((child.FullName, Path.Combine(item.Target, child.Name), false));
                     }
-                    else if (child is FileInfo) File.Copy(child.FullName, Path.Combine(item.Target, child.Name));
+                    else if (child is FileInfo && !(item.Root &&
+                        (child.Name.Equals(CentralConfig.FileName + ".edit.lock", StringComparison.OrdinalIgnoreCase) ||
+                         child.Name.Equals(CentralConfig.FileName + ".bak", StringComparison.OrdinalIgnoreCase))))
+                        File.Copy(child.FullName, Path.Combine(item.Target, child.Name));
                 }
             }
         }
@@ -310,18 +315,23 @@ internal static class ConfigManager
                 Directory.CreateDirectory(Path.Combine(source, "Stats", "PC1"));
                 Directory.CreateDirectory(outside);
                 File.WriteAllText(Path.Combine(source, CentralConfig.FileName), "{}");
+                File.WriteAllText(Path.Combine(source, CentralConfig.FileName + ".edit.lock"), "");
+                File.WriteAllText(Path.Combine(source, CentralConfig.FileName + ".bak"), "previous");
                 File.WriteAllText(Path.Combine(source, "assets", "logo.txt"), "logo");
                 File.WriteAllText(Path.Combine(source, "Stats", "PC1", "2026-01.jsonl"), "private history");
                 File.WriteAllText(Path.Combine(outside, "private.txt"), "outside");
                 var fresh = Path.Combine(root, "fresh");
                 CreateFolder(fresh, null);
                 if (!File.Exists(Path.Combine(fresh, CentralConfig.FileName)) ||
+                    File.Exists(Path.Combine(fresh, CentralConfig.FileName + ".edit.lock")) ||
                     Configuration.Load(Path.Combine(fresh, CentralConfig.FileName)).ConfigSource.Length != 0)
                     throw new InvalidOperationException("Fresh configuration was not published or kept a server source.");
                 CreateFolder(copied, source);
                 if (File.ReadAllText(Path.Combine(copied, "assets", "logo.txt")) != "logo" ||
-                    Directory.Exists(Path.Combine(copied, "Stats")))
-                    throw new InvalidOperationException("Configuration copy lost an asset or duplicated statistics history.");
+                    Directory.Exists(Path.Combine(copied, "Stats")) ||
+                    File.Exists(Path.Combine(copied, CentralConfig.FileName + ".edit.lock")) ||
+                    File.Exists(Path.Combine(copied, CentralConfig.FileName + ".bak")))
+                    throw new InvalidOperationException("Configuration copy lost an asset or duplicated operational files.");
                 var invalid = Path.Combine(root, "invalid");
                 Directory.CreateDirectory(invalid);
                 File.WriteAllText(Path.Combine(invalid, CentralConfig.FileName), "{broken json");
@@ -422,40 +432,86 @@ internal static class ConfigManager
             if (Directory.Exists(folder)) Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"") { UseShellExecute = true });
         }
 
-        private void Edit()
+        private async void Edit()
         {
+            if (editing || creating) return;
             if (Selected is not { } folder) { status.Text = "Zaznacz konfigurację."; return; }
             var file = Path.Combine(folder, CentralConfig.FileName);
-            Config config;
-            DateTime opened;
-            try { opened = File.GetLastWriteTimeUtc(file); config = Configuration.Load(file); }
-            catch (Exception ex) { MessageBox.Show(this, "Nie można otworzyć " + file + ": " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
-
-            using var form = new Form
+            reloadCancellation?.Cancel();
+            reloadGeneration++;
+            editing = true;
+            top.Enabled = buttons.Enabled = list.Enabled = false;
+            UseWaitCursor = true;
+            status.Text = "Otwieram konfigurację…";
+            try
             {
-                Text = "Konfiguracja „" + Path.GetFileName(folder) + "” – " + file, Size = new Size(1280, 860),
-                StartPosition = FormStartPosition.CenterParent, WindowState = FormWindowState.Maximized
-            };
-            var view = new SettingsView(config, fileEditor: true);
-            view.SaveRequested += updated =>
-            {
-                try
+                (Config config, string openedFingerprint) snapshot;
+                try { snapshot = await Task.Run(() => Configuration.LoadSnapshot(file)); }
+                catch (Exception ex)
                 {
-                    // Someone else saved it meanwhile (as in Komunikaty): ask before overwriting their change.
-                    if (File.GetLastWriteTimeUtc(file) != opened && MessageBox.Show(form,
-                            "Ktoś zmienił tę konfigurację, odkąd ją otworzyłeś. Zapisać mimo to (jego zmiany przepadną)?", form.Text,
-                            MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                    File.Copy(file, file + ".bak", overwrite: true);
-                    Configuration.Save(file, updated);
-                    Audit.Write("config_edited", folder);
-                    form.Close();
+                    if (!IsDisposed) MessageBox.Show(this, "Nie można otworzyć " + file + ": " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
-                catch (Exception ex) { MessageBox.Show(form, "Nie zapisano: " + ex.Message, form.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-            };
-            view.CancelRequested += form.Close;
-            form.Controls.Add(view);
-            form.ShowDialog(this);
-            Reload(folder);
+                if (IsDisposed) return;
+                UseWaitCursor = false;
+                using var form = new Form
+                {
+                    Text = "Konfiguracja „" + Path.GetFileName(folder) + "” – " + file, Size = new Size(1280, 860),
+                    StartPosition = FormStartPosition.CenterParent, WindowState = FormWindowState.Maximized
+                };
+                var formTitle = form.Text;
+                var view = new SettingsView(snapshot.config, fileEditor: true);
+                var saving = false;
+                form.FormClosing += (_, e) =>
+                {
+                    if (!saving) return;
+                    e.Cancel = true;
+                    form.Text = "Trwa zapis konfiguracji…";
+                };
+                view.SaveRequested += async updated =>
+                {
+                    if (saving) return;
+                    saving = true;
+                    view.Enabled = false;
+                    form.UseWaitCursor = true;
+                    var saved = false;
+                    try
+                    {
+                        var current = await Task.Run(() => Configuration.CurrentFingerprint(file)) ??
+                            throw new FileNotFoundException("Konfiguracja została usunięta.", file);
+                        if (current != snapshot.openedFingerprint && MessageBox.Show(form,
+                                "Ktoś zmienił tę konfigurację, odkąd ją otworzyłeś. Zapisać mimo to (jego zmiany przepadną)?", form.Text,
+                                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                        await Task.Run(() => Configuration.Save(file, updated, expectedFingerprint: current));
+                        Audit.Write("config_edited", folder);
+                        saved = true;
+                    }
+                    catch (Exception ex) { MessageBox.Show(form, "Nie zapisano: " + ex.Message, form.Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                    finally
+                    {
+                        saving = false;
+                        if (!form.IsDisposed) { view.Enabled = true; form.UseWaitCursor = false; form.Text = formTitle; }
+                    }
+                    if (saved) form.Close();
+                };
+                view.CancelRequested += form.Close;
+                form.Controls.Add(view);
+                form.ShowDialog(this);
+                if (!IsDisposed) await ReloadAsync(folder);
+            }
+            catch (Exception ex)
+            {
+                if (!IsDisposed) MessageBox.Show(this, "Nie można otworzyć edytora: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                editing = false;
+                if (!IsDisposed)
+                {
+                    top.Enabled = buttons.Enabled = list.Enabled = true;
+                    UseWaitCursor = false;
+                }
+            }
         }
     }
 }

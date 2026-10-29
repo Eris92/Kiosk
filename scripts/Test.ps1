@@ -15,6 +15,31 @@ if ($PSVersionTable.PSVersion.Major -ge 7 -and (Get-Command powershell.exe -Erro
 }
 & (Join-Path $PSScriptRoot 'Build.ps1') -SelfTest
 $directory = Join-Path $root 'out\self-test'
+$stagedConfig = Join-Path $directory 'cli-save-staged.json'
+$savedConfig = Join-Path $directory 'cli-save-target.json'
+try {
+    [IO.File]::WriteAllText($stagedConfig, '{}')
+    [IO.File]::WriteAllText($savedConfig, '{}')
+    $fingerprint = (Get-FileHash -LiteralPath $savedConfig -Algorithm SHA256).Hash
+    $saveArgs = '--save-config "' + $stagedConfig + '" "' + $savedConfig + '" "sha256:' + $fingerprint + '"'
+    $saveProcess = Start-Process -FilePath (Join-Path $directory 'Kiosk.Client.exe') -ArgumentList $saveArgs -Wait -PassThru -WindowStyle Hidden
+    try {
+        if ($saveProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath ($savedConfig + '.bak'))) {
+            throw 'Conditional save CLI did not publish a backup.'
+        }
+    } finally { $saveProcess.Dispose() }
+    [IO.File]::WriteAllText($savedConfig, '{"BrandTitle":"changed"}')
+    $staleProcess = Start-Process -FilePath (Join-Path $directory 'Kiosk.Client.exe') -ArgumentList $saveArgs -Wait -PassThru -WindowStyle Hidden
+    try {
+        if ($staleProcess.ExitCode -ne 3 -or [IO.File]::ReadAllText($savedConfig) -ne '{"BrandTitle":"changed"}') {
+            throw 'Conditional save CLI accepted a stale configuration.'
+        }
+    } finally { $staleProcess.Dispose() }
+} finally {
+    foreach ($path in @($stagedConfig, $savedConfig, ($savedConfig + '.bak'), ($savedConfig + '.edit.lock'))) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+}
 $brokerPolicyTest = Join-Path $PSScriptRoot 'Test-BrokerPolicy.ps1'
 $brokerPath = Join-Path $directory 'fido\FidoRun.exe'
 if ($PSVersionTable.PSVersion.Major -ge 7) {
