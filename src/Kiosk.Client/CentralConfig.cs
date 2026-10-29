@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -183,8 +184,12 @@ internal static class CentralConfig
     /// Excel), as Konto Kiosku (or an older export account saved before it), else the computer.
     /// Nothing is lost when the share is away: the months stay here and go with the next copy.
     /// </summary>
+    private static int statsExportRunning;
+
     internal static CardService.Response SyncStatsForMachine()
     {
+        if (Interlocked.Exchange(ref statsExportRunning, 1) != 0)
+            return new CardService.Response { Code = -3, Message = "Eksport statystyk już trwa." };
         try
         {
             var folder = StatsFolder();
@@ -200,6 +205,7 @@ internal static class CentralConfig
                 foreach (var file in files)
                 {
                     var month = Path.GetFileNameWithoutExtension(file);
+                    if (HasCurrentStatsExport(file, target, Environment.MachineName, month)) continue;
                     PublishStatsMonth(file, target, Environment.MachineName, month);
                     count++;
                 }
@@ -207,7 +213,7 @@ internal static class CentralConfig
                 PruneStatsExport(target, Environment.MachineName,
                     files.Select(file => Path.GetFileNameWithoutExtension(file)!).ToHashSet(StringComparer.OrdinalIgnoreCase));
                 Audit.Write("stats_export_ok", target);
-                return new CardService.Response { Message = "Wysłano " + count + " mies. do " + target };
+                return new CardService.Response { Message = "Zaktualizowano " + count + " mies. do " + target };
             }
         }
         catch (Exception ex)
@@ -215,6 +221,7 @@ internal static class CentralConfig
             Audit.Write("stats_export_failed", ex.Message);
             return new CardService.Response { Code = -1, Message = ex.Message };
         }
+        finally { Volatile.Write(ref statsExportRunning, 0); }
     }
 
     private static bool IsMonthName(string month) =>
@@ -227,24 +234,56 @@ internal static class CentralConfig
         var suffix = "." + Guid.NewGuid().ToString("N") + ".tmp";
         var jsonDestination = Path.Combine(target, month + ".jsonl");
         var csvDestination = Path.Combine(target, computer + "-" + month + ".csv");
+        var stampDestination = Path.Combine(target, computer + "-" + month + ".sha256");
         var jsonTemporary = jsonDestination + suffix;
         var csvTemporary = csvDestination + suffix;
+        var stampTemporary = stampDestination + suffix;
         try
         {
             File.Copy(source, jsonTemporary);
             using (var writer = new StreamWriter(csvTemporary, append: false, new UTF8Encoding(true)))
                 Stats.WriteCsvFile(jsonTemporary, writer); // The CSV and JSON describe the same copied snapshot.
+            using (var snapshot = new FileStream(jsonTemporary, FileMode.Open, FileAccess.Read, FileShare.Read))
+                File.WriteAllText(stampTemporary,
+                    "v1:" + Convert.ToHexString(SHA256.HashData(snapshot)) + ":" + snapshot.Length.ToString(CultureInfo.InvariantCulture) +
+                    ":" + new FileInfo(csvTemporary).Length.ToString(CultureInfo.InvariantCulture), Encoding.ASCII);
+            // Remove the old completion marker before replacing either output. A crash must force a retry.
+            File.Delete(stampDestination);
             File.Move(jsonTemporary, jsonDestination, true);
             File.Move(csvTemporary, csvDestination, true);
+            File.Move(stampTemporary, stampDestination);
         }
         finally
         {
-            foreach (var temporary in new[] { jsonTemporary, csvTemporary })
+            foreach (var temporary in new[] { jsonTemporary, csvTemporary, stampTemporary })
             {
                 try { File.Delete(temporary); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Audit.Write("stats_export_cleanup_failed", ex.Message); }
             }
         }
+    }
+
+    /// <summary>The marker is published last; missing or incomplete output is always regenerated.</summary>
+    internal static bool HasCurrentStatsExport(string source, string target, string computer, string month)
+    {
+        if (!IsMonthName(month)) return false;
+        var json = Path.Combine(target, month + ".jsonl");
+        var csv = Path.Combine(target, computer + "-" + month + ".csv");
+        var stamp = Path.Combine(target, computer + "-" + month + ".sha256");
+        try
+        {
+            var stampInfo = new FileInfo(stamp);
+            if (!stampInfo.Exists || stampInfo.Length > 200 || !File.Exists(json) || !File.Exists(csv)) return false;
+            var fields = File.ReadAllText(stamp, Encoding.ASCII).Split(':');
+            if (fields.Length != 4 || fields[0] != "v1" || fields[1].Length != 64 ||
+                !long.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var jsonLength) ||
+                !long.TryParse(fields[3], NumberStyles.None, CultureInfo.InvariantCulture, out var csvLength) ||
+                new FileInfo(source).Length != jsonLength || new FileInfo(json).Length != jsonLength ||
+                new FileInfo(csv).Length != csvLength) return false;
+            using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return fields[1].Equals(Convert.ToHexString(SHA256.HashData(input)), StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>Only files created by this computer's stats export may be removed from a shared folder.</summary>
@@ -259,6 +298,8 @@ internal static class CentralConfig
             {
                 ".jsonl" => Path.GetFileNameWithoutExtension(name),
                 ".csv" when Path.GetFileNameWithoutExtension(name).StartsWith(csvPrefix, StringComparison.OrdinalIgnoreCase)
+                    => Path.GetFileNameWithoutExtension(name)[csvPrefix.Length..],
+                ".sha256" when Path.GetFileNameWithoutExtension(name).StartsWith(csvPrefix, StringComparison.OrdinalIgnoreCase)
                     => Path.GetFileNameWithoutExtension(name)[csvPrefix.Length..],
                 _ => ""
             };
@@ -277,9 +318,9 @@ internal static class CentralConfig
         var output = withoutTmp[..lastDot];
         if (output.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) return IsMonthName(output[..^6]);
         var prefix = computer + "-";
-        return output.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) &&
-               output.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-               IsMonthName(output[prefix.Length..^4]);
+        if (!output.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        return output.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) && IsMonthName(output[prefix.Length..^4]) ||
+               output.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase) && IsMonthName(output[prefix.Length..^7]);
     }
 
     // ------------------------------------------------------------------ Komunikaty on a share
@@ -438,6 +479,8 @@ internal static class CentralConfig
             ".jsonl" => IsMonthName(month),
             ".csv" => month.StartsWith(computer + "-", StringComparison.OrdinalIgnoreCase) &&
                       IsMonthName(month[(computer.Length + 1)..]),
+            ".sha256" => month.StartsWith(computer + "-", StringComparison.OrdinalIgnoreCase) &&
+                         IsMonthName(month[(computer.Length + 1)..]),
             _ => false
         };
     }

@@ -274,11 +274,12 @@ internal static class Program
                 var currentMonth = DateTime.Today.ToString("yyyy-MM");
                 var exportFiles = new[]
                 {
-                    oldMonth + ".jsonl", "PC1-" + oldMonth + ".csv",
-                    currentMonth + ".jsonl", "PC1-" + currentMonth + ".csv",
+                    oldMonth + ".jsonl", "PC1-" + oldMonth + ".csv", "PC1-" + oldMonth + ".sha256",
+                    currentMonth + ".jsonl", "PC1-" + currentMonth + ".csv", "PC1-" + currentMonth + ".sha256",
                     "PC2-" + oldMonth + ".csv", "report-" + oldMonth + ".csv", "notes.jsonl"
                 };
                 var abandonedTemporary = currentMonth + ".jsonl." + Guid.NewGuid().ToString("N") + ".tmp";
+                var abandonedStamp = "PC1-" + currentMonth + ".sha256." + Guid.NewGuid().ToString("N") + ".tmp";
                 var unrelatedTemporary = "report." + Guid.NewGuid().ToString("N") + ".tmp";
                 var sourceFile = Path.Combine(exportRoot, "source.txt");
                 try
@@ -286,11 +287,13 @@ internal static class Program
                     Directory.CreateDirectory(exportRoot);
                     foreach (var file in exportFiles) File.WriteAllText(Path.Combine(exportRoot, file), "test");
                     File.WriteAllText(Path.Combine(exportRoot, abandonedTemporary), "partial");
+                    File.WriteAllText(Path.Combine(exportRoot, abandonedStamp), "partial");
                     File.WriteAllText(Path.Combine(exportRoot, unrelatedTemporary), "keep");
                     CentralConfig.PruneStatsExport(exportRoot, "PC1", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { currentMonth });
-                    if (exportFiles.Take(2).Any(file => File.Exists(Path.Combine(exportRoot, file))) ||
-                        exportFiles.Skip(2).Any(file => !File.Exists(Path.Combine(exportRoot, file))) ||
+                    if (exportFiles.Take(3).Any(file => File.Exists(Path.Combine(exportRoot, file))) ||
+                        exportFiles.Skip(3).Any(file => !File.Exists(Path.Combine(exportRoot, file))) ||
                         File.Exists(Path.Combine(exportRoot, abandonedTemporary)) ||
+                        File.Exists(Path.Combine(exportRoot, abandonedStamp)) ||
                         !File.Exists(Path.Combine(exportRoot, unrelatedTemporary)))
                         throw new InvalidOperationException("Statistics export removed a file outside its own expired months.");
                     var publishedEntries = new[]
@@ -306,10 +309,32 @@ internal static class Program
                     CentralConfig.PublishStatsMonth(sourceFile, exportRoot, "PC1", currentMonth);
                     var publishedJson = File.ReadAllText(Path.Combine(exportRoot, currentMonth + ".jsonl"));
                     var publishedCsv = File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"));
+                    var publishedJsonBytes = File.ReadAllBytes(sourceFile);
+                    var publishedCsvBytes = File.ReadAllBytes(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"));
+                    var publishedStamp = File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".sha256"));
                     if (!publishedJson.Contains("published", StringComparison.Ordinal) ||
                         publishedCsv != Stats.Csv(Stats.ReadFile(Path.Combine(exportRoot, currentMonth + ".jsonl"))) ||
-                        publishedCsv != Stats.Csv(publishedEntries))
+                        publishedCsv != Stats.Csv(publishedEntries) ||
+                        !CentralConfig.HasCurrentStatsExport(sourceFile, exportRoot, "PC1", currentMonth))
                         throw new InvalidOperationException("Streaming statistics export changed CSV contents or lost an event.");
+                    var changedBytes = (byte[])publishedJsonBytes.Clone();
+                    changedBytes[0] ^= 1;
+                    File.WriteAllBytes(sourceFile, changedBytes);
+                    if (CentralConfig.HasCurrentStatsExport(sourceFile, exportRoot, "PC1", currentMonth))
+                        throw new InvalidOperationException("Statistics export missed a same-length source change.");
+                    File.WriteAllBytes(sourceFile, publishedJsonBytes);
+                    File.Delete(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"));
+                    if (CentralConfig.HasCurrentStatsExport(sourceFile, exportRoot, "PC1", currentMonth))
+                        throw new InvalidOperationException("Statistics export accepted a missing CSV.");
+                    File.WriteAllBytes(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"), publishedCsvBytes);
+                    File.Delete(Path.Combine(exportRoot, "PC1-" + currentMonth + ".sha256"));
+                    File.WriteAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv"), "stale");
+                    if (CentralConfig.HasCurrentStatsExport(sourceFile, exportRoot, "PC1", currentMonth))
+                        throw new InvalidOperationException("Statistics export accepted an interrupted publication.");
+                    CentralConfig.PublishStatsMonth(sourceFile, exportRoot, "PC1", currentMonth);
+                    if (!CentralConfig.HasCurrentStatsExport(sourceFile, exportRoot, "PC1", currentMonth) ||
+                        File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv")) != publishedCsv)
+                        throw new InvalidOperationException("Statistics export did not recover an interrupted publication.");
                     try
                     {
                         CentralConfig.PublishStatsMonth(Path.Combine(exportRoot, "missing.jsonl"), exportRoot, "PC1", currentMonth);
@@ -318,6 +343,7 @@ internal static class Program
                     catch (FileNotFoundException) { }
                     if (File.ReadAllText(Path.Combine(exportRoot, currentMonth + ".jsonl")) != publishedJson ||
                         File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".csv")) != publishedCsv ||
+                        File.ReadAllText(Path.Combine(exportRoot, "PC1-" + currentMonth + ".sha256")) != publishedStamp ||
                         !File.Exists(Path.Combine(exportRoot, unrelatedTemporary)) ||
                         Directory.EnumerateFiles(exportRoot, "*.tmp")
                             .Any(file => !Path.GetFileName(file).Equals(unrelatedTemporary, StringComparison.OrdinalIgnoreCase)))
@@ -326,7 +352,7 @@ internal static class Program
                 finally
                 {
                     if (File.Exists(sourceFile)) File.Delete(sourceFile);
-                    foreach (var file in exportFiles.Append(abandonedTemporary).Append(unrelatedTemporary))
+                    foreach (var file in exportFiles.Append(abandonedTemporary).Append(abandonedStamp).Append(unrelatedTemporary))
                     {
                         var exportPath = Path.Combine(exportRoot, file);
                         if (File.Exists(exportPath)) File.Delete(exportPath);
@@ -340,10 +366,12 @@ internal static class Program
                 var copiedMonthName = DateTime.Today.ToString("yyyy-MM");
                 var copiedMonth = copiedMonthName + ".jsonl";
                 var copiedCsv = "PC-" + copiedMonthName + ".csv";
+                var copiedStamp = "PC-" + copiedMonthName + ".sha256";
                 var copiedTemporary = copiedMonth + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 var newsEditLock = Path.Combine("news", News.FileName + ".edit.lock");
                 var copiedFiles = new[] { "client.json", Path.Combine("news", "item.txt"), newsEditLock,
                     Path.Combine("Stats", "PC", copiedMonth), Path.Combine("Stats", "PC", copiedCsv),
+                    Path.Combine("Stats", "PC", copiedStamp),
                     Path.Combine("Stats", "PC", copiedTemporary), Path.Combine("Stats", "PC", "asset.txt"),
                     Path.Combine("Stats", "root-logo.txt"), "KioskKomunikaty.tmp" };
                 try
@@ -361,6 +389,7 @@ internal static class Program
                         !File.Exists(Path.Combine(configCopy, "news", "item.txt")) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedMonth)) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedCsv)) ||
+                        File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedStamp)) ||
                         File.Exists(Path.Combine(configCopy, "Stats", "PC", copiedTemporary)) ||
                         !File.Exists(Path.Combine(configCopy, "Stats", "PC", "asset.txt")) ||
                         !File.Exists(Path.Combine(configCopy, "Stats", "root-logo.txt")) ||
