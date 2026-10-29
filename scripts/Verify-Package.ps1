@@ -22,6 +22,33 @@ function Get-KioskSha256([string]$Path) {
         finally { $sha.Dispose() }
     } finally { $stream.Dispose() }
 }
+function Read-KioskBoundedBytes([string]$Path, [int]$MaxBytes, [string]$ExceededMessage) {
+    # FileShare.Read prevents a concurrent writer from changing the file during this read.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        if ($stream.Length -gt $MaxBytes) { throw $ExceededMessage }
+        $bytes = New-Object byte[] ([int]$stream.Length)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $read = $stream.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($read -eq 0) { throw 'Package metadata changed while reading.' }
+            $offset += $read
+        }
+        if ($stream.ReadByte() -ne -1) { throw $ExceededMessage }
+        return ,$bytes
+    } finally { $stream.Dispose() }
+}
+function Convert-KioskMetadataText([byte[]]$Bytes) {
+    $memory = [IO.MemoryStream]::new($Bytes, $false)
+    $reader = [IO.StreamReader]::new($memory, [Text.Encoding]::UTF8, $true)
+    try { return $reader.ReadToEnd() }
+    finally { $reader.Dispose() }
+}
+function Get-KioskSha256Bytes([byte[]]$Bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($Bytes)).Replace('-', '') }
+    finally { $sha.Dispose() }
+}
 function Assert-OrdinaryPackagePath([string]$Path) {
     # A hash of a junction/link target does not authenticate the link or
     # keep installation reads inside the extracted package.
@@ -38,15 +65,15 @@ $root = (Resolve-Path -LiteralPath $PackagePath).ProviderPath.TrimEnd('\')
 Assert-OrdinaryPackagePath $root
 $manifestFile = Join-Path $root 'package.json'
 Assert-OrdinaryPackagePath $manifestFile
-if ((Get-Item -LiteralPath $manifestFile).Length -gt $maxManifestBytes) { throw 'Package manifest exceeds 1 MB.' }
-$manifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+$manifestBytes = Read-KioskBoundedBytes $manifestFile $maxManifestBytes 'Package manifest exceeds 1 MB.'
+$manifest = Convert-KioskMetadataText $manifestBytes | ConvertFrom-Json
 if ($manifest.Format -notin @(1, 2) -or -not $manifest.Files) { throw 'Invalid Kiosk package manifest.' }
 $sealFile = Join-Path $root 'package.sha256.ps1'
 if ($manifest.Format -eq 2) {
     if (-not (Test-Path -LiteralPath $sealFile -PathType Leaf)) { throw 'Package manifest seal is missing.' }
     Assert-OrdinaryPackagePath $sealFile
-    if ((Get-Item -LiteralPath $sealFile).Length -gt $maxSealBytes) { throw 'Package manifest seal exceeds 256 KB.' }
-    $sealLines = @([IO.File]::ReadAllLines($sealFile))
+    $sealBytes = Read-KioskBoundedBytes $sealFile $maxSealBytes 'Package manifest seal exceeds 256 KB.'
+    $sealLines = @((Convert-KioskMetadataText $sealBytes) -split '\r\n|\n|\r')
     $digestLines = @($sealLines | Where-Object { $_ -like '# Kiosk package.json SHA256:*' })
     $digest = if ($digestLines.Count -eq 1) {
         [regex]::Match($digestLines[0], '^# Kiosk package\.json SHA256: ([A-F0-9]{64})$')
@@ -57,7 +84,7 @@ if ($manifest.Format -eq 2) {
     foreach ($line in $sealLines) {
         if ($line.Trim() -and -not $line.StartsWith('#')) { throw 'Package manifest seal contains executable content.' }
     }
-    if ((Get-KioskSha256 $manifestFile) -cne $digest.Groups[1].Value) {
+    if ((Get-KioskSha256Bytes $manifestBytes) -cne $digest.Groups[1].Value) {
         throw 'Package manifest seal hash mismatch.'
     }
     if ($verifySignatures) {
