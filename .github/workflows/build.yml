@@ -20,6 +20,19 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.402'
+      - name: Audit locked NuGet dependencies
+        shell: pwsh
+        run: |
+          $projects = @(
+            'src/Kiosk.Client/Kiosk.Client.csproj',
+            'src/Kiosk.ConfigTool/KioskKonfiguracje.csproj',
+            'src/Kiosk.NewsEditor/KioskKomunikaty.csproj',
+            'src/Kiosk.FidoBroker/FidoRun.csproj'
+          )
+          foreach ($project in $projects) {
+            dotnet restore $project --locked-mode -p:NuGetAudit=true -p:NuGetAuditMode=all -warnaserror:NU1900,NU1901,NU1902,NU1903,NU1904,NU1905
+            if ($LASTEXITCODE -ne 0) { throw "NuGet audit failed: $project" }
+          }
       - name: Validate scripts and run separate embedded UI self-tests
         shell: pwsh
         run: ./scripts/Test.ps1
