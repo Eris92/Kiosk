@@ -58,11 +58,10 @@ internal sealed partial class KioskForm
             if (ready != null && desktop.Page != null) { _ = Task.Run(ready.Dispose); return; }   // A page opened meanwhile.
             if (ready == null)
             {
-                if (reason.Contains("account adapter has not been verified", StringComparison.OrdinalIgnoreCase) ||
-                    reason.Contains("Native CTAP assertion entry is unavailable", StringComparison.OrdinalIgnoreCase))
+                if (FidoSignIn.IsUnsupported(reason))
                 {
                     signInUnsupported = true;
-                    notice = "Logowanie kartą jest niedostępne na tej wersji Windows. Strony pomocy możesz otworzyć bez logowania. Skontaktuj się z administratorem.";
+                    notice = "Logowanie kartą jest niedostępne na tym komputerze. Strony pomocy możesz otworzyć bez logowania. Skontaktuj się z administratorem.";
                     Audit.Write("fido_unsupported_windows", reason);
                 }
                 else
@@ -104,6 +103,14 @@ internal sealed partial class KioskForm
                 // A new or reset card: no account knows it. PIN, then registration, instead of the bare error.
                 Audit.Write("selfservice_card_unknown", outcome.Message[FidoSignIn.UnknownKey.Length..]);
                 _ = RegisterUnknownCardAsync();
+                return;
+            }
+            if (FidoSignIn.IsUnsupported(outcome.Message))
+            {
+                signInUnsupported = true;
+                notice = "Logowanie kartą jest niedostępne na tym komputerze. Strony pomocy możesz otworzyć bez logowania. Skontaktuj się z administratorem.";
+                Audit.Write("fido_unsupported_windows", outcome.Message);
+                RefreshChrome();
                 return;
             }
             // A fresh sign-in screen follows after the usual pause (not at once: a screen per tick piled up).

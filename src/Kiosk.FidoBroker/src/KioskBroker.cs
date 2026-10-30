@@ -144,6 +144,9 @@ namespace FidoRun
         // instead of leaving Windows' "this security key is probably unknown" on the screen.
         internal const string UnknownKey = "UNKNOWN_KEY ";
 
+        // The Windows credential provider refused to start on this PC. The Kiosk must not retry this session.
+        internal const string Unsupported = "UNSUPPORTED ";
+
         // Windows' own text from the native tile; no status code says it, so the words of its message (Polish or English).
         internal static void ProviderMessage(string text)
         {

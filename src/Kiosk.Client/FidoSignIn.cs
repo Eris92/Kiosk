@@ -36,6 +36,12 @@ internal sealed class FidoSignIn : IDisposable
 
     /// <summary>The sign-in ended because Windows does not know the card (FidoRun's KioskBroker.UnknownKey).</summary>
     internal const string UnknownKey = "UNKNOWN_KEY ";
+    internal const string Unsupported = "UNSUPPORTED ";
+
+    internal static bool IsUnsupported(string message) =>
+        message.StartsWith(Unsupported, StringComparison.Ordinal) ||
+        message.Contains("account adapter has not been verified", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("Native CTAP assertion entry is unavailable", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Starts Windows' card sign-in inside the Kiosk window <paramref name="place"/> and waits until it listens for a

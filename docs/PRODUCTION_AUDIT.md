@@ -268,6 +268,8 @@ Edytor komunikatów również liczy teraz podsumowanie statystyk w jednym przebi
 
 Przy zwykłym uruchomieniu klient zajmuje blokadę jednej instancji przed pobraniem konfiguracji z udziału. Drugi proces uruchomiony przez Windows lub watchdog czeka najwyżej 15 sekund na poprzedni, a jeśli ten nadal działa, kończy się bez powtarzania kopiowania sieciowego. Po uzyskaniu blokady konfiguracja nadal jest wczytywana przed pokazaniem okna. Lokalna próba z blokadą trzymaną przez drugi proces i nieistniejącą konfiguracją zakończyła klienta kodem 0 po 15,7 s, potwierdzając pominięcie odczytu pliku. Zachowanie dwóch procesów podczas bardzo wolnego startu trzeba sprawdzić na stanowisku z docelowym udziałem.
 
+Broker starszego logowania kartą oznacza teraz odmowę `SetUsageScenario` jako `UNSUPPORTED`. Klient rozpoznaje odpowiedź zarówno podczas przygotowania ekranu, jak i późniejszego oczekiwania, pokazuje komunikat administratorowi i nie uruchamia ponownie tego samego logowania w bieżącej sesji. Pozostałe błędy zachowują ponawianie z opóźnieniem. Lokalny `scripts/Test.ps1` przeszedł po zmianie, w tym test klasyfikacji odpowiedzi; odpowiedź prawdziwego dostawcy Windows trzeba potwierdzić na docelowym obrazie tylko wtedy, gdy starszy `CardBroker` ma być używany.
+
 ## Bramka akceptacyjna SelfService przed produkcją
 
 1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.

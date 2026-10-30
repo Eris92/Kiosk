@@ -2441,6 +2441,10 @@ internal sealed partial class KioskForm : Form
         brokerReply.Secret = "KioskFido-" + Environment.ProcessId + "-0";
         if (FidoSignIn.TryGetBrokerEndpoint(brokerReply, out _, out _))
             throw new InvalidOperationException("A card sign-in broker without a verified process was accepted.");
+        if (!FidoSignIn.IsUnsupported("UNSUPPORTED Windows refused the credential provider") ||
+            !FidoSignIn.IsUnsupported("Native CTAP assertion entry is unavailable") ||
+            FidoSignIn.IsUnsupported("The card sign-in process ended unexpectedly"))
+            throw new InvalidOperationException("Card sign-in provider refusal classification failed.");
 
         var categorized = new HelpAction { Category = " Pomoc / Konto // " };
         if (categorized.CategoryPath != "Pomoc/Konto" ||
