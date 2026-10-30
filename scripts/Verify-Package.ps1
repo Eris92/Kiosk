@@ -72,28 +72,32 @@ $sealFile = Join-Path $root 'package.sha256.ps1'
 if ($manifest.Format -eq 2) {
     if (-not (Test-Path -LiteralPath $sealFile -PathType Leaf)) { throw 'Package manifest seal is missing.' }
     Assert-OrdinaryPackagePath $sealFile
-    $sealBytes = Read-KioskBoundedBytes $sealFile $maxSealBytes 'Package manifest seal exceeds 256 KB.'
-    $sealLines = @((Convert-KioskMetadataText $sealBytes) -split '\r\n|\n|\r')
-    $digestLines = @($sealLines | Where-Object { $_ -like '# Kiosk package.json SHA256:*' })
-    $digest = if ($digestLines.Count -eq 1) {
-        [regex]::Match($digestLines[0], '^# Kiosk package\.json SHA256: ([A-F0-9]{64})$')
-    } else { $null }
-    if (-not $digest -or -not $digest.Success) {
-        throw 'Package manifest seal is invalid.'
-    }
-    foreach ($line in $sealLines) {
-        if ($line.Trim() -and -not $line.StartsWith('#')) { throw 'Package manifest seal contains executable content.' }
-    }
-    if ((Get-KioskSha256Bytes $manifestBytes) -cne $digest.Groups[1].Value) {
-        throw 'Package manifest seal hash mismatch.'
-    }
-    if ($verifySignatures) {
-        $sealSignature = Get-AuthenticodeSignature -LiteralPath $sealFile
-        if ($sealSignature.Status -ne 'Valid') { throw 'A trusted Authenticode signature is required for the package manifest seal.' }
-        if ($thumbprint -and $sealSignature.SignerCertificate.Thumbprint -ne $thumbprint) {
-            throw 'Unexpected Authenticode signer for package manifest seal.'
+    # Keep the same file in place while its text and Authenticode signature are checked.
+    $sealLock = [IO.File]::Open($sealFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sealBytes = Read-KioskBoundedBytes $sealFile $maxSealBytes 'Package manifest seal exceeds 256 KB.'
+        $sealLines = @((Convert-KioskMetadataText $sealBytes) -split '\r\n|\n|\r')
+        $digestLines = @($sealLines | Where-Object { $_ -like '# Kiosk package.json SHA256:*' })
+        $digest = if ($digestLines.Count -eq 1) {
+            [regex]::Match($digestLines[0], '^# Kiosk package\.json SHA256: ([A-F0-9]{64})$')
+        } else { $null }
+        if (-not $digest -or -not $digest.Success) {
+            throw 'Package manifest seal is invalid.'
         }
-    }
+        foreach ($line in $sealLines) {
+            if ($line.Trim() -and -not $line.StartsWith('#')) { throw 'Package manifest seal contains executable content.' }
+        }
+        if ((Get-KioskSha256Bytes $manifestBytes) -cne $digest.Groups[1].Value) {
+            throw 'Package manifest seal hash mismatch.'
+        }
+        if ($verifySignatures) {
+            $sealSignature = Get-AuthenticodeSignature -LiteralPath $sealFile
+            if ($sealSignature.Status -ne 'Valid') { throw 'A trusted Authenticode signature is required for the package manifest seal.' }
+            if ($thumbprint -and $sealSignature.SignerCertificate.Thumbprint -ne $thumbprint) {
+                throw 'Unexpected Authenticode signer for package manifest seal.'
+            }
+        }
+    } finally { $sealLock.Dispose() }
 } elseif ($verifySignatures) {
     throw 'Signed deployment requires a sealed format-2 Kiosk package.'
 }

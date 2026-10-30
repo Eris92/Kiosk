@@ -248,6 +248,12 @@ try {
     catch { if ($_.Exception.Message -ne 'Package manifest seal exceeds 256 KB.') { throw } }
     Write-TestPackageManifest $manifest $manifestPath
     & $verify -PackagePath $fixture | Out-Null
+    $writer = [IO.File]::Open($sealPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+    try {
+        try { & $verify -PackagePath $fixture | Out-Null; throw 'Verifier accepted a seal open for writing.' }
+        catch { if ($_.Exception.InnerException -isnot [IO.IOException]) { throw } }
+    } finally { $writer.Dispose() }
+    & $verify -PackagePath $fixture | Out-Null
     $previousWhatIf = $WhatIfPreference
     try {
         $WhatIfPreference = $true
