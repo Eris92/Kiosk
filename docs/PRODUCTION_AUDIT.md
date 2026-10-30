@@ -272,6 +272,8 @@ Broker starszego logowania kartą oznacza teraz odmowę `SetUsageScenario` jako 
 
 ## Bramka akceptacyjna SelfService przed produkcją
 
+Aktualny wynik przygotowania stanowiska i lista otwartych prób: [SELFSERVICE_TEST_2026-10-30.md](SELFSERVICE_TEST_2026-10-30.md).
+
 1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.
 2. Sprawdzić Windows Shell Launcher, natywny kafelek, aktualizację i rollback na dedykowanym obrazie Windows. Lokalne i CI kompilacje DLL już przeszły; wymagany jest jeszcze podpis organizacji. Nie zastępować działającej instalacji w Program Files podczas testu.
 3. Podpisać finalną paczkę certyfikatem organizacji i sprawdzić `Verify-Package.ps1 -RequireSigned -TrustedSignerThumbprint ...`; dobrać politykę dystrybucji oraz retencję logów.
