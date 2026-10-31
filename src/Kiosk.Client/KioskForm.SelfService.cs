@@ -11,6 +11,7 @@ internal sealed partial class KioskForm
     // Retained for the old configuration schema. OS session ownership now belongs only to WindowsShell.
     private bool SelfServiceWindowsSession => false;
     private bool localCardAttempted;
+    private string? localAttemptedCardId;
     private Task? cardSessionClosing;
 
     /// <summary>The person signed in to Windows with the card and its PIN; null = nobody (pages open as a guest).</summary>
@@ -138,7 +139,7 @@ internal sealed partial class KioskForm
         await CompleteCardSignInAsync(logon);
     }
 
-    private async Task CompleteCardSignInAsync(UserLogon logon)
+    private async Task CompleteCardSignInAsync(UserLogon logon, string? expectedCardId = null)
     {
         string? cardSnapshot = null;
         cardSignInFinalizing = true;
@@ -167,6 +168,14 @@ internal sealed partial class KioskForm
             RefreshChrome();
             return;
         }
+        if (expectedCardId != null && identifyCard()?.Id != expectedCardId)
+        {
+            logon.Dispose();
+            notice = "Karta została zmieniona podczas logowania. Spróbuj ponownie swoją kartą.";
+            Audit.Write("selfservice_card_changed_during_signin");
+            RefreshChrome();
+            return;
+        }
         helpBrowser?.Close();
         cardLogon = logon;
         cardAwaySinceMilliseconds = null;
@@ -180,6 +189,19 @@ internal sealed partial class KioskForm
         try { ready = await Task.Run(logon.EnsureProfile); }
         catch (Exception ex) { ready = false; Audit.Write("profile_failed", ex.Message); }
         if (cardLogon != logon) return;
+        bool sameCard;
+        try
+        {
+            sameCard = reader.Snapshot(config.ReaderName) == signedInCardSnapshot &&
+                (expectedCardId == null || identifyCard()?.Id == expectedCardId);
+        }
+        catch (Exception ex) { Audit.Write("selfservice_card_monitor_failed", ex.Message); sameCard = false; }
+        if (!sameCard)
+        {
+            EndCardSession("selfservice_card_changed_during_profile");
+            RefreshChrome();
+            return;
+        }
         // Nothing opens by itself: the person chooses from Szybka pomoc.
         if (!ready) notice = "Windows nie utworzył profilu dla " + logon.DisplayName + ". Strony otworzą się bez logowania Windows.";
         // Most people open a page: its window and browser start now, hidden, so the page they choose opens at once.
@@ -240,16 +262,25 @@ internal sealed partial class KioskForm
             return;
         }
         var key = ReadSelfServiceCardSnapshot();
-        if (key != cardKey) nextPeriodicChromeRefreshMilliseconds = 0;
-        if (key != null && key != cardKey) cardPlacedAtMilliseconds = Environment.TickCount64;
+        bool cardChanged = key != cardKey;
+        if (cardChanged) nextPeriodicChromeRefreshMilliseconds = 0;
+        if (key != null && cardChanged) cardPlacedAtMilliseconds = Environment.TickCount64;
         cardKey = key;
         if (config.CardAuthentication == CardAuthentication.Local)
         {
-            if (key == null) localCardAttempted = false;
-            else if (cardLogon == null && !localCardAttempted)
+            if (key == null) { localCardAttempted = false; localAttemptedCardId = null; }
+            else
             {
-                localCardAttempted = true;
-                _ = StartLocalSelfServiceAsync();
+                // CTAP can reset the same card and change the reader event counter. Retry only
+                // when a different card is actually present, never merely after a failed PIN.
+                if (cardChanged && localCardAttempted && cardLogon == null &&
+                    identifyCard() is { } observed && observed.Id != localAttemptedCardId)
+                    localCardAttempted = false;
+                if (cardLogon == null && !localCardAttempted)
+                {
+                    localCardAttempted = true;
+                    _ = StartLocalSelfServiceAsync();
+                }
             }
         }
         else PrepareCardSignIn();

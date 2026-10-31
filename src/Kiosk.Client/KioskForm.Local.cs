@@ -54,8 +54,9 @@ internal sealed partial class KioskForm
         try
         {
             var identity = identifyCard() ?? UncertifiedCard();
+            localAttemptedCardId = identity.Id;
             var logon = await SignInLocalAsync(identity);
-            if (logon != null) await CompleteCardSignInAsync(logon);
+            if (logon != null) await CompleteCardSignInAsync(logon, identity.Id);
         }
         finally { verifying = false; RefreshChrome(); }
     }
