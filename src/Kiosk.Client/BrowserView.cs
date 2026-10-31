@@ -469,6 +469,8 @@ internal sealed class BrowserView : UserControl
         }
         core.NavigationStarting += (_, e) =>
         {
+            if (singlePage && Uri.TryCreate(e.Uri, UriKind.Absolute, out var navigation))
+                Audit.Write("help_navigation_start", navigation.Host);
             // NavigateToString uses an internal data document (also used by the smoke test).
             if (!IsWebAddress(e.Uri) && e.Uri != "about:blank" && !e.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase) && !policy.Allows(e.Uri)) e.Cancel = true;
             else if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
@@ -488,6 +490,7 @@ internal sealed class BrowserView : UserControl
         core.HistoryChanged += (_, _) => { if (tab == active) UpdateNavigation(); };
         core.NavigationCompleted += (_, e) =>
         {
+            if (singlePage) Audit.Write("help_navigation_done", e.IsSuccess ? "success" : e.WebErrorStatus.ToString());
             if (tab.Blocked) { tab.Blocked = false; return; } // Keep the "not allowed" message.
             if (tab == active) message.Text = e.IsSuccess ? "" : "Nie udało się wczytać strony: " + e.WebErrorStatus;
         };

@@ -230,6 +230,7 @@ namespace FidoRun
             // Wrap the two status labels to the window width instead of clipping/overflowing.
             Resize += delegate
             {
+                if (Embedded) return; // Fixed layout owns the label bounds, including their height.
                 int w = Embedded ? TextWidth : pinScreen ? FieldWidth : ClientSize.Width - 28;
                 if (w < 80) return;
                 providerStatus.MaximumSize = new Size(w, 0);
@@ -467,9 +468,11 @@ namespace FidoRun
                 BackColor = surface, Padding = Embedded ? new Padding(0) : new Padding(48, 40, 48, 36), Margin = new Padding(16)
             };
             card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            if (Embedded) card.MinimumSize = new Size(FieldWidth, (int)(360 * scale));
             for (int row = 0; row < 6; row++) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             Label title = new Label { Text = "Zaloguj się kartą", AutoSize = true, Font = new Font("Segoe UI Semibold", 26f * scale), ForeColor = text, Margin = new Padding(0, 0, 0, 8) };
+            signInTitle = title;
             card.Controls.Add(title, 0, 0);
 
             providerStatus.AutoSize = true; providerStatus.Margin = new Padding(0, 0, 0, 16);
@@ -508,6 +511,27 @@ namespace FidoRun
             buttons.Controls.Add(submit);
             buttons.Controls.Add(restart);
             card.Controls.Add(buttons, 0, 4);
+            if (Embedded)
+            {
+                loginProgress = new SmoothProgressPanel { Width = FieldWidth, Height = (int)(52 * scale), Visible = false };
+                System.Diagnostics.Stopwatch animationClock = System.Diagnostics.Stopwatch.StartNew();
+                loginProgress.Paint += delegate(object sender, PaintEventArgs e)
+                {
+                    e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    float diameter = (float)(30 * scale);
+                    using (Pen pen = new Pen(accent, (float)(3 * scale)))
+                    {
+                        pen.StartCap = pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                        e.Graphics.DrawArc(pen, (loginProgress.Width - diameter) / 2, (loginProgress.Height - diameter) / 2, diameter, diameter, (float)(animationClock.Elapsed.TotalMilliseconds * 0.24 % 360), 270);
+                    }
+                };
+                Timer animation = new Timer { Interval = 16 };
+                animation.Tick += delegate { loginProgress.Invalidate(); };
+                loginProgress.VisibleChanged += delegate { animation.Enabled = loginProgress.Visible; };
+                loginProgress.Disposed += delegate { animation.Dispose(); };
+                card.RowCount = 7;
+                card.Controls.Add(loginProgress, 0, 6);
+            }
 
             state.AutoSize = true; state.Margin = new Padding(0, 4, 0, 0);
             state.ForeColor = Embedded ? muted : Color.FromArgb(90, 90, 90);
@@ -520,6 +544,33 @@ namespace FidoRun
             if (Embedded) ApplyKioskLook(title, buttons, restart);
             outer.Controls.Add(card, 1, 1);
             Controls.Add(outer);
+            if (Embedded)
+            {
+                Panel content = new Panel { Dock = DockStyle.Fill, BackColor = surface };
+                Control[] parts = { title, providerStatus, providerFeedback, fields, buttons, state, loginProgress };
+                foreach (Control part in parts) if (part != null) { part.Parent.Controls.Remove(part); content.Controls.Add(part); }
+                Controls.Remove(outer);
+                outer.Dispose();
+                pinCard = null; // The old auto-sized card no longer participates in sizing.
+                Controls.Add(content);
+                Action arrange = delegate
+                {
+                    int width = Math.Min(FieldWidth, Math.Max(0, content.Width - (int)(24 * scale)));
+                    int left = (content.Width - width) / 2;
+                    title.AutoSize = false; title.MaximumSize = Size.Empty;
+                    title.SetBounds(0, (int)(36 * scale), content.Width, (int)(70 * scale));
+                    providerStatus.AutoSize = false; providerStatus.MaximumSize = Size.Empty;
+                    providerStatus.SetBounds(0, (int)(116 * scale), content.Width, (int)(64 * scale));
+                    fields.SetBounds(left, (int)(180 * scale), width, fields.PreferredSize.Height);
+                    buttons.SetBounds(left, (int)(260 * scale), width, (int)(46 * scale));
+                    if (loginProgress != null) loginProgress.SetBounds(left, (int)(190 * scale), width, (int)(52 * scale));
+                };
+                content.Resize += delegate { arrange(); };
+                arrange();
+                title.Text = "Logowanie";
+                providerFeedback.Visible = false;
+                state.Visible = false;
+            }
         }
 
         // Inside the Kiosk: centred like the Kiosk's own cards, its colours, its buttons.
@@ -562,7 +613,7 @@ namespace FidoRun
             restart.Margin = Padding.Empty;
             buttons.WrapContents = false;
             // "Przyłóż kartę" / "Wpisz PIN" repeat the line under the heading; the line under the buttons is for news only.
-            state.TextChanged += delegate { state.Visible = !IsInstruction(state.Text); };
+            state.TextChanged += delegate { state.Visible = false; };
             state.Visible = !IsInstruction(state.Text);
         }
 
@@ -753,25 +804,62 @@ namespace FidoRun
         // Inside the Kiosk: a failed card exchange is said in the Kiosk's words and in red, and the tile listens again by
         // itself (no "OK" link to press). Windows reports it when the key still lies on the reader instead of being tapped.
         private bool problemShown;
+        private bool awaitingCardRemoval;
+        private bool touchRequested;
+        private bool pinRejected;
+        private const string WaitingForCard = "Przyłóż klucz do czytnika lub włóż go do USB, a następnie dotknij klucza. Jeśli był już włożony, wyjmij go i włóż ponownie.";
+        internal static bool IsRejectedPin(string message)
+        {
+            string value = (message ?? "").ToLowerInvariant();
+            return value.Contains("pin") && (value.Contains("niepopraw") || value.Contains("nieprawid") || value.Contains("błęd") || value.Contains("incorrect") || value.Contains("wrong"));
+        }
         private Timer retryTimer;
 
         private void ShowProviderText(Label label, string message)
         {
             message = message ?? "";
             if (!Embedded) { label.Text = message; return; }
+            label = providerStatus;
+            if (String.IsNullOrWhiteSpace(message)) message = working ? "Sprawdzanie PIN-u…" : "Przyłóż kartę do czytnika.";
             string lower = message.ToLowerInvariant();
+            bool rejectedPin = IsRejectedPin(message);
+            if (rejectedPin)
+            {
+                working = false;
+                touchRequested = false;
+                pinRejected = true;
+                ApplyInteractionState();
+                FocusPin();
+                return;
+            }
             bool failed = lower.Contains("nie można zakończyć logowania") || lower.Contains("couldn't complete") || lower.Contains("can't complete");
             bool unknown = lower.Contains("nieznany") || lower.Contains("unknown");
             bool tapAgain = lower.StartsWith("dotknij") || lower.StartsWith("włóż") || lower.StartsWith("touch") || lower.StartsWith("insert");
+            if (working && !tapAgain && !lower.StartsWith("przyłóż")) touchRequested = false;
+            if (awaitingCardRemoval && !unknown) return;
+            // Windows often sends a generic status immediately after rejecting a PIN.
+            // Keep the useful error alongside the same editable PIN field until the
+            // person types again, instead of flashing the waiting-for-card screen.
+            if (pinRejected && !working && !unknown && !failed) return;
+            if (!working && (tapAgain || lower.StartsWith("przyłóż"))) message = WaitingForCard;
+            if (working && !failed && !unknown && (tapAgain || lower.StartsWith("przyłóż") || lower.StartsWith("zalogowano")))
+            {
+                touchRequested = tapAgain || lower.StartsWith("przyłóż");
+                label.Text = touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Trwa logowanie…";
+                label.Visible = true;
+                label.ForeColor = kioskAccent;
+                return;
+            }
             if (failed)
             {
-                message = "Zabierz klucz z czytnika i dotknij nim czytnika ponownie, aby się zalogować.";
+                message = "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować.";
+                awaitingCardRemoval = true;
                 ScheduleRetry();
             }
             // While the red request stands, Windows' own "touch the reader" after the retry does not replace it.
-            else if (problemShown && (tapAgain || message.Length == 0)) return;
-            problemShown = failed || unknown;
-            label.ForeColor = problemShown ? ProblemColor() : (label == state ? kioskMuted : kioskAccent);
+            else if (problemShown && message.Length == 0) return;
+            problemShown = failed || unknown || rejectedPin;
+            label.ForeColor = problemShown ? ProblemColor() : kioskAccent;
             label.Text = message;
             if (problemShown) label.Visible = true;
             // The other line must not keep an old red text.
@@ -790,17 +878,21 @@ namespace FidoRun
         {
             if (retryTimer == null)
             {
-                retryTimer = new Timer { Interval = 1500 };
+                retryTimer = new Timer { Interval = 250 };
                 retryTimer.Tick += delegate
                 {
-                    retryTimer.Stop();
                     if (closing || IsDisposed || working || host == null) return;
+                    // A timer is not evidence that the person removed their key.
+                    // Unknown reader state also must not trigger another FIDO request.
+                    if (BrokerPolicy.AnyCardPresent() != false) return;
+                    awaitingCardRemoval = false;
                     foreach (KeyValuePair<uint, FieldData> pair in fieldData)
                     {
                         Control input, container;
                         if (pair.Value.Type != 3 || !inputs.TryGetValue(pair.Key, out input) || !input.Enabled) continue;
                         if (!containers.TryGetValue(pair.Key, out container) || !container.Visible) continue;
                         log.Write("Embedded=AutoRetry; Field=" + pair.Key);
+                        retryTimer.Stop();
                         host.Command(fieldGeneration, pair.Key);
                         return;
                     }
@@ -810,16 +902,33 @@ namespace FidoRun
             retryTimer.Start();
         }
         private FlowLayoutPanel buttons;
+        private Label signInTitle;
+        private Panel loginProgress;
+        private sealed class SmoothProgressPanel : Panel
+        {
+            internal SmoothProgressPanel() { DoubleBuffered = true; ResizeRedraw = true; }
+        }
         private void ApplyInteractionState()
         {
             bool hasInput = false;
             foreach (FieldData field in fieldData.Values)
                 if (FieldData.CanSubmit(field.Type, field.State, field.Interactive)) { hasInput = true; break; }
-            if (options.Broker && Embedded && buttons != null) buttons.Visible = hasInput || working;
+            if (options.Broker && Embedded && buttons != null)
+            {
+                buttons.Visible = hasInput && !working;
+                fields.Visible = !working;
+                if (signInTitle != null) signInTitle.Text = "Logowanie";
+                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : pinRejected && !working ? "Błędny PIN. Spróbuj ponownie." : working ? touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, potem dotknij klucza." : WaitingForCard;
+                providerStatus.Visible = true;
+                providerStatus.ForeColor = awaitingCardRemoval || pinRejected && !working ? ProblemColor() : kioskAccent;
+                state.Visible = false;
+                if (loginProgress != null) loginProgress.Visible = working;
+                if (providerFeedback != null) providerFeedback.Visible = false;
+            }
             submit.Enabled = !working && canSubmit && !preparingFields && !fieldUpdatesFailed && (hasInput || serializationAvailable);
             fields.Enabled = !working && canSubmit && !fieldUpdatesFailed;
         }
-        public void Busy(bool value) { Post(delegate { working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
+        public void Busy(bool value) { Post(delegate { if (signedInAccount != null) return; if (value && !working) { touchRequested = false; pinRejected = false; } working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
 
         // Diagnostics for "the PIN box takes no keys": focus changes and how many characters arrived, never the PIN.
         // A click on the box takes the keyboard explicitly, also when the Kiosk around this window holds it.
@@ -864,7 +973,17 @@ namespace FidoRun
                 serializationAvailable = false;
                 canSubmit = false;
                 pendingFieldUpdates.Clear();
-                ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
+                // Keep the PIN control in the same position while Windows replaces its
+                // credential fields. Clear its value and disable it until ShowFields
+                // swaps the new controls in one UI turn; removing it here exposed an
+                // empty card between an incorrect PIN and the retry field.
+                rendering = true;
+                try
+                {
+                    foreach (Control input in inputs.Values)
+                        if (input is TextBox box && box.UseSystemPasswordChar) box.Clear();
+                }
+                finally { rendering = false; }
                 ApplyInteractionState();
             });
         }
@@ -936,6 +1055,7 @@ namespace FidoRun
             {
                 if (generation != fieldGeneration) return;
                 rendering = true;
+                fields.SuspendLayout();
                 try
                 {
                     ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
@@ -956,7 +1076,7 @@ namespace FidoRun
                             case 4: case 5:
                                 TextBox text = new TextBox { Width = FieldWidth, Text = field.Type == 5 ? "" : (field.Value ?? ""), UseSystemPasswordChar = field.Type == 5 };
                                 if (pinScreen && field.Type == 5) text.Font = new Font(Font.FontFamily, 22f * scale);
-                                text.TextChanged += delegate { if (!rendering && !closing) host.StringValue(generation, field.Id, text.Text); };
+                                text.TextChanged += delegate { if (!rendering && !closing) { if (pinRejected && text.Text.Length > 0) { pinRejected = false; ApplyInteractionState(); } host.StringValue(generation, field.Id, text.Text); } };
                                 text.ReadOnly = field.Interactive == 1;
                                 if (field.Type == 5) WatchPinBox(text);
                                 input = text; break;
@@ -1000,7 +1120,7 @@ namespace FidoRun
                         fields.Controls.Add(container);
                     }
                 }
-                finally { rendering = false; }
+                finally { fields.ResumeLayout(false); rendering = false; }
                 preparingFields = false;
                 foreach (Action update in pendingFieldUpdates) update();
                 pendingFieldUpdates.Clear();

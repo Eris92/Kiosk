@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -83,6 +84,7 @@ internal sealed class ApplicationView : Panel
     /// already in the sign-in's own Job). Its window is then recognised as a new window of a process of that program.
     /// </summary>
     private string? untrackedProgram;
+    private string? untrackedSid;
     /// <summary>The untracked launch itself: closed with this view even before its window appeared.</summary>
     private IntPtr untrackedProcess;
     private uint untrackedPid;
@@ -166,6 +168,7 @@ internal sealed class ApplicationView : Panel
                 job.Dispose();
                 job = null;
                 untrackedProgram = Path.GetFileNameWithoutExtension(entry.Path);
+                untrackedSid = (logon as UserLogon)?.Sid;
                 untrackedBefore = windowsBefore;
                 untrackedProcess = process.Process;
                 untrackedPid = AppNative.GetProcessId(process.Process);
@@ -276,6 +279,10 @@ internal sealed class ApplicationView : Panel
         bool wasVisible = AppNative.IsWindowVisible(HostedWindow);
         if (!wasVisible || r.Left != area.Left || r.Top != area.Top || r.Right - r.Left != area.Width || r.Bottom - r.Top != area.Height)
         {
+            // A WinForms page hidden while parked needs WM_SHOWWINDOW when it returns.
+            // SetWindowPos(SHOWWINDOW) alone can display its frame while its child controls
+            // still have Visible=false, leaving a blank WebView2 page.
+            if (!wasVisible) AppNative.ShowWindow(HostedWindow, 5); // SW_SHOW
             AppNative.SetWindowPos(HostedWindow, IntPtr.Zero, area.Left, area.Top, area.Width, area.Height,
                 (uint)(0x0010 | 0x0004 | 0x0040 | 0x0020)); // NOACTIVATE | NOZORDER | SHOWWINDOW | FRAMECHANGED
             if (sideInset > 0) SendSideInset(force: true);
@@ -378,7 +385,8 @@ internal sealed class ApplicationView : Panel
                     {
                         var process = System.Diagnostics.Process.GetProcessById((int)pid);
                         openedProcesses.Add(process); // Reuse one process object for its windows in this scan.
-                        matches = process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase);
+                        matches = process.ProcessName.Equals(untrackedProgram, StringComparison.OrdinalIgnoreCase) &&
+                            (pid == untrackedPid || !string.IsNullOrEmpty(untrackedSid) && ProcessHasSid(pid, untrackedSid));
                     }
                     catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception) { matches = false; }
                     matchingProcesses[pid] = matches;
@@ -390,6 +398,35 @@ internal sealed class ApplicationView : Panel
         finally { foreach (var process in openedProcesses) process.Dispose(); }
         return found;
     }
+
+    private static bool ProcessHasSid(uint pid, string sid)
+    {
+        try
+        {
+            using var process = AppNative.OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+            if (process.IsInvalid || !OpenProcessToken(process, 0x0008, out var token)) return false; // TOKEN_QUERY
+            using (token)
+            using (var identity = new WindowsIdentity(token.DangerousGetHandle()))
+                return string.Equals(identity.User?.Value, sid, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is Win32Exception or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+#if KIOSK_SELF_TEST
+    internal static void VerifyProcessSidForTest()
+    {
+        var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("Current test account has no SID.");
+        if (!ProcessHasSid((uint)Environment.ProcessId, sid) || ProcessHasSid((uint)Environment.ProcessId, "S-1-0-0"))
+            throw new InvalidOperationException("Untracked application process SID check failed.");
+    }
+#endif
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(SafeFileHandle process, uint access, out SafeAccessTokenHandle token);
 
     /// <summary>The application's main window: visible, top-level, unowned, titled, not a tool window.</summary>
     private IntPtr FindMainWindow() => (untrackedProgram != null ? UntrackedWindows() : JobWindows(includeOwned: false)).FirstOrDefault(w => !IsDialog(w) &&
@@ -496,9 +533,14 @@ internal sealed class ApplicationView : Panel
         if (HostedWindow == IntPtr.Zero) return [];
         if (job != null) return JobWindows(includeOwned: true).Where(w => w != HostedWindow).ToList();
         var found = new List<IntPtr>();
+        AppNative.GetWindowThreadProcessId(HostedWindow, out var hostedPid);
         AppNative.EnumWindows((window, _) =>
         {
-            if (window != HostedWindow && AppNative.IsWindowVisible(window) && AppNative.GetWindow(window, 4) == HostedWindow) found.Add(window);
+            if (window == HostedWindow || !AppNative.IsWindowVisible(window) || hostedWindows.Contains(window)) return true;
+            AppNative.GetWindowThreadProcessId(window, out var pid);
+            // A program without our Job may open an unowned popup. Hide its windows too, but
+            // never hide another account's window merely because it has the same EXE name.
+            if (pid == hostedPid || AppNative.GetWindow(window, 4) == HostedWindow) found.Add(window);
             return true;
         }, IntPtr.Zero);
         return found;
@@ -533,10 +575,11 @@ internal sealed class ApplicationView : Panel
             hostedWindows.Remove(HostedWindow);
             // An adopted window belongs to another view's process: close just this window.
             if ((adopted || untrackedProgram != null) && AppNative.IsWindow(HostedWindow)) AppNative.PostMessage(HostedWindow, 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE
-            // Closed before its window appeared (another page chosen at once): the launch ends too, no stray window later.
+            // A process launched for this card session must end even if Windows refused job assignment.
+            // This handle belongs to our own launch; an adopted pre-existing window has no such handle.
             if (untrackedProcess != IntPtr.Zero)
             {
-                if (!Started && AlwaysOverlay) AppNative.TerminateProcess(untrackedProcess, 1);
+                AppNative.TerminateProcess(untrackedProcess, 1);
                 AppNative.CloseHandle(untrackedProcess);
                 untrackedProcess = IntPtr.Zero;
             }

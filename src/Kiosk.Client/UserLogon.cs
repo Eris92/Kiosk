@@ -7,7 +7,7 @@ namespace Kiosk.Client;
 /// The person signed in to Windows with a card and PIN. The sign-in broker keeps their token;
 /// the Kiosk asks it to start programs as that person without receiving a password or token.
 /// </summary>
-internal sealed class UserLogon : IDisposable, IProgramStarter
+internal sealed partial class UserLogon : IDisposable, IProgramStarter
 {
     private FidoSignIn? card;
 
@@ -24,7 +24,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
         var logon = new UserLogon(name)
         {
             card = signIn, Sid = signIn.Sid, IsAdministrator = signIn.IsAdministrator,
-            FriendlyName = People.FriendlyName("", account, name)
+            FriendlyName = People.FriendlyName(signIn.PersonName, account, name)
         };
         return logon;
     }
@@ -42,7 +42,7 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
 
     /// <summary>Starts a program as this person, suspended, through the sign-in broker.</summary>
     public (IntPtr Process, IntPtr Thread) Start(string application, string commandLine, string? directory, short show = 4)
-        => card?.Start(application, commandLine, directory, show) ?? throw new ObjectDisposedException(nameof(UserLogon));
+        => card?.Start(application, commandLine, directory, show) ?? StartLocal(application, commandLine, directory, show);
 
     /// <summary>
     /// First use on this PC: Windows creates the person's profile (C:\Users\…) when a program first starts as them.
@@ -77,9 +77,15 @@ internal sealed class UserLogon : IDisposable, IProgramStarter
     }
 
     public void Dispose()
+        => _ = CloseAsync();
+
+    internal Task CloseAsync()
     {
-        // Signs the person out: their programs close with it. In the background: the answer can take seconds.
-        if (card is { } signIn) { card = null; _ = Task.Run(signIn.Dispose); }
+        if (secret != null) { Array.Clear(secret); secret = null; }
+        // The caller closes its owned application windows first. A card broker also ends its retained
+        // token and processes; Local only erases the password held by this object.
+        if (card is { } signIn) { card = null; return Task.Run(signIn.Dispose); }
+        return Task.CompletedTask;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint ResumeThread(IntPtr thread);

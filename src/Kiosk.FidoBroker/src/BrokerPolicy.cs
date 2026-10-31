@@ -116,6 +116,28 @@ namespace FidoRun
 
         private static readonly Dictionary<string, string> serials = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        // Read presence only. Never connect to the card or send APDUs while Windows owns FIDO.
+        internal static bool? AnyCardPresent()
+        {
+            IntPtr context;
+            if (SCardEstablishContext(2, IntPtr.Zero, IntPtr.Zero, out context) != 0) return null;
+            try
+            {
+                bool observed = false;
+                foreach (string reader in Readers(context))
+                {
+                    if (reader.IndexOf("UICC", StringComparison.OrdinalIgnoreCase) >= 0 || reader.IndexOf("SIM", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                    ReaderState[] state = { new ReaderState { Reader = reader, Atr = new byte[36] } };
+                    if (SCardGetStatusChange(context, 0, state, 1) != 0) return null;
+                    if ((state[0].EventState & (0x1u | 0x4u | 0x8u)) != 0) return null;
+                    observed = true;
+                    if ((state[0].EventState & 0x20) != 0) return true;
+                }
+                return observed ? (bool?)false : null;
+            }
+            finally { SCardReleaseContext(context); }
+        }
+
         private static HashSet<string> Present()
         {
             HashSet<string> found = new HashSet<string>(StringComparer.Ordinal);

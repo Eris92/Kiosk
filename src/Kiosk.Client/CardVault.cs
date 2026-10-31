@@ -1,17 +1,134 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace Kiosk.Client;
 
 /// <summary>
-/// Leftovers of the former card login (account password sealed with the card's FIDO2 hmac-secret, replaced by Windows'
-/// own card + PIN sign-in): a reset or forgotten card still removes its old file from %LOCALAPPDATA%\Kiosk\Cards.
+/// Remembers which account a FIDO2 card belongs to, so after the first "Zaloguj" the card and its PIN are enough.
+/// The account password is encrypted (AES-GCM) with a key the card itself derives (FIDO2 hmac-secret) only after
+/// its PIN is verified (typed in Kiosk, sent to the card encrypted), for a credential that exists only on that card. Without the card and its PIN nobody,
+/// administrators included, can decrypt it. Files: %LOCALAPPDATA%\Kiosk\Cards, one per card.
 /// </summary>
 internal static class CardVault
 {
-    private static string FileFor(string cardId) =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Cards",
-            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cardId))) + ".json");
+    private const string RelyingParty = "kiosk.local";
 
-    internal static void Forget(string cardId) { try { File.Delete(FileFor(cardId)); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+    private sealed class Entry
+    {
+        public int Format { get; set; }
+        public string CredentialId { get; set; } = "";
+        public string Salt { get; set; } = "";
+        public string Nonce { get; set; } = "";
+        public string Tag { get; set; } = "";
+        public string Cipher { get; set; } = "";
+        public string User { get; set; } = "";
+        public string? Domain { get; set; }
+        /// <summary>Set up through Kiosk's own PIN field (direct CTAP2); older entries are set up again.</summary>
+        public bool Direct { get; set; }
+    }
+    private sealed record AccountData(string User, string? Domain, char[] Password);
+
+    internal sealed record Result(UserLogon? Logon, int Code, string Message);
+
+    internal static bool Available => true;
+
+    private static string FileFor(string cardId)
+    {
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kiosk", "Cards");
+        Directory.CreateDirectory(directory);
+        return Path.Combine(directory, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cardId))) + ".json");
+    }
+
+    internal static bool IsEnrolled(string cardId) => File.Exists(FileFor(cardId));
+
+    internal static void Forget(string cardId) { try { File.Delete(FileFor(cardId)); } catch (IOException) { } }
+
+    /// <summary>
+    /// Card + PIN typed in Kiosk: the card derives the key and the stored account is opened.
+    /// Code CardPin.Verified with Logon null means the PIN was fine but the password no longer works (changed);
+    /// CardPin.NoKey means the card has to be set up again (Enroll).
+    /// </summary>
+    internal static Result Open(string cardId, string reader, string pin)
+    {
+        var path = FileFor(cardId);
+        if (new FileInfo(path).Length > 65536) throw new InvalidDataException("Zapis konta karty jest zbyt duży.");
+        var entry = JsonSerializer.Deserialize<Entry>(File.ReadAllText(path)) ?? throw new InvalidDataException("Nieprawidłowy zapis konta.");
+        if (entry.Format != 2) return new(null, CardPin.NoKey, "Przypisz konto do karty ponownie.");
+        if (!entry.Direct) { Forget(cardId); return new(null, CardPin.NoKey, "Kartę trzeba zapamiętać ponownie."); }
+        var answer = CardService.Call(new CardService.Request { Op = "open", Reader = reader, Pin = pin, CredentialId = entry.CredentialId, Salt = entry.Salt });
+        if (answer.Code == 0x2E) { Forget(cardId); return new(null, CardPin.NoKey, answer.Message); }
+        if (answer.Code != 0 || answer.Secret == null) return new(null, answer.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, answer.Message);
+        byte[]? key = null;
+        byte[]? plain = null;
+        try
+        {
+            key = Convert.FromBase64String(answer.Secret);
+            var cipher = Convert.FromBase64String(entry.Cipher);
+            plain = new byte[cipher.Length];
+            using (var aes = new AesGcm(key, 16)) aes.Decrypt(Convert.FromBase64String(entry.Nonce), cipher, Convert.FromBase64String(entry.Tag), plain);
+            var account = JsonSerializer.Deserialize<AccountData>(plain) ?? throw new InvalidDataException("Nieprawidłowy zapis konta.");
+            var password = account.Password;
+            int length = Array.IndexOf(password, '\0');
+            if (length < 0 || length > 256) { Array.Clear(password); throw new InvalidDataException("Nieprawidłowy zapis konta."); }
+            try
+            {
+                var logon = UserLogon.TryLogon(account.User, account.Domain, password, length, out int code);
+                return logon != null ? new(logon, CardPin.Verified, "")
+                    : new(null, CardPin.Verified, UserLogon.Explain(code));
+            }
+            finally { Array.Clear(password); }
+        }
+        catch (CryptographicException) { return new(null, CardPin.NoKey, "Karta nie pasuje do zapisanego konta."); }
+        finally
+        {
+            if (plain != null) Array.Clear(plain);
+            if (key != null) Array.Clear(key);
+        }
+    }
+
+    /// <summary>First use of a card (or a changed password): the account is saved for this card.</summary>
+    internal static Result Enroll(string cardId, UserLogon logon, string reader, string pin)
+    {
+        var salt = RandomNumberGenerator.GetBytes(32);
+        var answer = CardService.Call(new CardService.Request { Op = "enroll", Reader = reader, Pin = pin, Salt = Convert.ToBase64String(salt) });
+        if (answer.Code != 0 || answer.Secret == null || answer.CredentialId == null)
+            return new(null, answer.Code == 0x31 ? CardPin.WrongPin : CardPin.Failed, answer.Message);
+        byte[]? key = null;
+        byte[]? plain = null;
+        char[]? password = null;
+        try
+        {
+            key = Convert.FromBase64String(answer.Secret);
+            var credentialId = Convert.FromBase64String(answer.CredentialId);
+            password = logon.Reveal();
+            plain = JsonSerializer.SerializeToUtf8Bytes(new AccountData(logon.User, logon.Domain, password));
+            var nonce = RandomNumberGenerator.GetBytes(12);
+            var cipher = new byte[plain.Length];
+            var tag = new byte[16];
+            using (var aes = new AesGcm(key, 16)) aes.Encrypt(nonce, plain, cipher, tag);
+            var entry = new Entry
+            {
+                Format = 2,
+                Direct = true, CredentialId = Convert.ToBase64String(credentialId), Salt = Convert.ToBase64String(salt),
+                Nonce = Convert.ToBase64String(nonce), Tag = Convert.ToBase64String(tag), Cipher = Convert.ToBase64String(cipher),
+                User = "", Domain = null
+            };
+            var path = FileFor(cardId);
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, JsonSerializer.Serialize(entry));
+                File.Move(temporary, path, overwrite: true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            return new(logon, CardPin.Verified, "");
+        }
+        finally
+        {
+            if (password != null) Array.Clear(password);
+            if (plain != null) Array.Clear(plain);
+            if (key != null) Array.Clear(key);
+        }
+    }
 }

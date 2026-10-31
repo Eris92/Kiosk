@@ -709,9 +709,76 @@ internal sealed partial class DesktopView
     internal void SetPageTitle(string? title) { pageTitleText = title; UpdatePortalHeader(); }
 
     /// <summary>In the portal the card is on screen only for the sign-in someone asked for, a question or the PIN.</summary>
-    private bool PortalCard => signingIn && signInWanted || AskingPin || Asking || PortalHome;
+    private bool PortalCard => cardLoginActive || signingIn && signInWanted || AskingPin || Asking || PortalHome;
     /// <summary>"Strona główna": the start screen as before, the card (sign-in, PIN, greeting) in the middle and the messages under it.</summary>
     private bool PortalHome => portal && nav.Selected.Length == 0;
+    private bool showSidebar = true;
+    private bool classicSidebar;
+    internal bool UseClassicSidebar
+    {
+        get => classicSidebar;
+        set
+        {
+            if (classicSidebar == value) return;
+            classicSidebar = value;
+            nav.Select("");
+            Tiles.ShowCategory("");
+            ApplyVisibility();
+            ArrangeControls();
+            Invalidate();
+        }
+    }
+
+    internal static void SidebarLayoutSmokeTest()
+    {
+        using var window = new Form { ClientSize = new Size(1280, 900), ShowInTaskbar = false };
+        using var view = new DesktopView { Dock = DockStyle.Fill, Portal = true };
+        window.Controls.Add(view);
+        window.Show();
+        using var page = new Panel();
+        foreach (bool openedPage in new[] { false, true })
+        {
+            view.ShowPage(openedPage ? page : null);
+            view.UseClassicSidebar = false;
+            view.ArrangeControls();
+            var controls = new Control[] { view.card, view.News, view.clock, view.date, view.account, view.brand, view.subtitle };
+            var before = controls.Select(c => c.Bounds).ToArray();
+            view.UseClassicSidebar = true;
+            view.ArrangeControls();
+            if (!before.SequenceEqual(controls.Select(c => c.Bounds)))
+                throw new InvalidOperationException("Changing sidebar style moved content outside the navigation area.");
+            if (view.nav.Visible || !view.Help.Visible)
+                throw new InvalidOperationException("Sidebar navigation variants overlap.");
+        }
+        view.ShowPage(null);
+        Rectangle? loginFrame = null;
+        foreach (DesktopView.CardLoginStage stage in Enum.GetValues<DesktopView.CardLoginStage>())
+        {
+            view.SetCardLogin(stage, "Test logowania");
+            loginFrame ??= view.card.Bounds;
+            if (view.card.Bounds != loginFrame || view.resume.Visible ||
+                (view.signInPlace.Visible && view.heading.Visible) ||
+                (stage == DesktopView.CardLoginStage.Provider && !view.signInPlace.Visible))
+                throw new InvalidOperationException("Login stages changed the frame or showed two login screens.");
+        }
+        view.ClearCardLogin();
+        window.Close();
+    }
+    internal bool ShowSidebar
+    {
+        get => showSidebar;
+        set
+        {
+            if (showSidebar == value) return;
+            showSidebar = value;
+            nav.Visible = value;
+            brand.Visible = value && brand.Text.Length > 0;
+            subtitle.Visible = value && subtitle.Text.Length > 0;
+            logo.Visible = value && logo.Image != null;
+            clock.Visible = date.Visible = value;
+            ArrangeControls();
+        }
+    }
 
     private void ApplyPortalVisibility(bool page)
     {
@@ -719,7 +786,7 @@ internal sealed partial class DesktopView
         card.Visible = cardOn;
         Tiles.Visible = !cardOn;
         Tiles.Busy = Asking || AskingPin;
-        if (Help.Visible) Help.Visible = false;
+        Help.Visible = ShowSidebar && UseClassicSidebar;
         if (!PortalHome && News.Visible) News.Visible = false;
         UpdatePortalHeader();
     }
@@ -728,7 +795,10 @@ internal sealed partial class DesktopView
     private Rectangle ArrangePortal(int bar, int cardWidth, int cardHeight, bool page)
     {
         int margin = Scale(24), side = Math.Min(Scale(270), Math.Max(Scale(200), Width / 5));
+        if (!ShowSidebar) side = 0;
         portalSide = side;
+        if (ShowSidebar)
+        {
         // The left column: logo and name, the categories, the time at the bottom.
         int y = bar + Scale(22);
         if (logo.Image != null)
@@ -757,14 +827,29 @@ internal sealed partial class DesktopView
         portalPerson.TextAlign = ContentAlignment.MiddleLeft;
         if (portalSignedIn) bottom = portalPerson.Top - Scale(8);
         nav.SetBounds(Scale(14), y, side - Scale(28), Math.Max(0, Math.Min(nav.Needed, bottom - Scale(8) - y)));
+        nav.Visible = !UseClassicSidebar;
+        Help.Vertical = true;
+        Help.SetBounds(Scale(14), y, side - Scale(28), Math.Max(0, bottom - Scale(8) - y));
+        Help.Visible = UseClassicSidebar;
         // No bar on top: the chosen category is marked in the left column, a page has its own bar.
         foreach (var c in new Control[] { portalTitle, portalLine }) if (c.Visible) c.Visible = false;
         if (portalPerson.Visible != portalSignedIn) portalPerson.Visible = portalSignedIn;
         if (portalLogin.Visible != (portalSignedIn && login)) portalLogin.Visible = portalSignedIn && login;
         if (account.Visible != portalSignedIn) account.Visible = portalSignedIn;
+        }
+        else
+        {
+            Help.Visible = false;
+            foreach (var item in new Control[] { brand, subtitle, logo, nav, portalPerson, portalLogin }) item.Visible = false;
+            clock.Visible = date.Visible = true;
+            clock.SetBounds(margin, bar + Scale(12), Scale(210), Scale(50));
+            date.SetBounds(margin, bar + Scale(62), Scale(260), Scale(28));
+            account.Visible = portalSignedIn;
+            account.SetBounds(Width - margin - Scale(220), bar + Scale(24), Scale(220), Scale(48));
+        }
         // The tiles as far from the line as the left column's entries are.
         int left = side + Scale(14), right = Width - margin;
-        var middle = new Rectangle(left, bar + margin, Math.Max(Scale(200), right - left), 0);
+        var middle = new Rectangle(left, bar + (ShowSidebar ? margin : Scale(108)), Math.Max(Scale(200), right - left), 0);
         middle.Height = Math.Max(Scale(200), Height - margin - middle.Top);
         Tiles.Bounds = middle;
         // A page starts right after the left column's line: no gap, no second line.

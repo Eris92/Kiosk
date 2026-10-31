@@ -8,12 +8,19 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\config\client.json' }
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$auth = 'Not applicable'
-if ($config.SessionMode -eq 'SelfService') {
-    $authProperty = $config.PSObject.Properties['SelfServiceAuthentication']
-    if ($null -eq $authProperty) { $auth = 'CardBroker (legacy default)' }
-    elseif ($authProperty.Value -in @('CardBroker', 'WindowsSession')) { $auth = [string]$authProperty.Value }
-    else { $auth = 'Invalid or missing' }
+$auth = switch ([string]$config.SessionMode) {
+    { $_ -in @('SelfService', 'Kiosk') } {
+        $choice = $config.PSObject.Properties['CardAuthentication']
+        if ($null -eq $choice -or $null -eq $choice.Value) {
+            if ($config.SessionMode -eq 'SelfService') { 'Sso (legacy default)' } else { 'Card identity (legacy)' }
+        }
+        elseif ($choice.Value -in @('Sso', 'Local')) { [string]$choice.Value }
+        else { 'Invalid' }
+        break
+    }
+    'WindowsShell' { 'Windows session'; break }
+    'Announcements' { 'None'; break }
+    default { 'Invalid session mode' }
 }
 $readers = Get-Service SCardSvr -ErrorAction SilentlyContinue
 $cardService = Get-Service KioskCard -ErrorAction SilentlyContinue
@@ -48,7 +55,7 @@ $deviceJoin = if ($joinFlags.AzureAdJoined -eq 'YES' -and $joinFlags.DomainJoine
     KioskCardService = if ($cardService) { [string]$cardService.Status } else { 'Not installed' }
     RdpActiveX = Test-Path 'Registry::HKEY_CLASSES_ROOT\CLSID\{8B918B82-7985-4C24-89DF-C33AD2BBFBCD}'
     SessionMode = $config.SessionMode
-    SelfServiceAuthentication = $auth
+    CardAuthentication = $auth
     RdpProfiles = @($connections | Where-Object { $_ }).Count
     TestMode = $config.TestMode
     ConfigPath = (Resolve-Path -LiteralPath $ConfigPath).ProviderPath

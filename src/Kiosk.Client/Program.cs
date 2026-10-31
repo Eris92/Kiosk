@@ -594,6 +594,9 @@ internal static class Program
                         form.SmokeTest();
                         await SharePointNewsSmokeTestAsync(form);
                         await form.EmbeddedSmokeTestAsync();
+                        await form.VideoSmokeTestAsync();
+                        await NewsCarousel.VideoTransitionSmokeTestAsync();
+                        DesktopView.SidebarLayoutSmokeTest();
                         await form.ApplicationSmokeTestAsync();
                         await form.IdleScreenRecoverySmokeTestAsync();
                         await form.CommandSmokeTestAsync();

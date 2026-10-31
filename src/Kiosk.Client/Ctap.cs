@@ -206,6 +206,52 @@ internal sealed class CtapCard : IDisposable
         };
     }
 
+    // ------------------------------------------------------------------ credentials
+
+    /// <summary>Creates a non-resident credential with hmac-secret on the card; returns its ID.</summary>
+    internal byte[] MakeCredential(string rpId)
+    {
+        var clientDataHash = RandomNumberGenerator.GetBytes(32);
+        var reply = Command(0x01, Cbor.Map(
+            (1L, clientDataHash),
+            (2L, Cbor.Map(("id", rpId), ("name", "Kiosk"))),
+            (3L, Cbor.Map(("id", RandomNumberGenerator.GetBytes(16)), ("name", "Kiosk"), ("displayName", "Karta Kiosku"))),
+            (4L, new List<object> { Cbor.Map(("alg", -7L), ("type", "public-key")) }),
+            (6L, Cbor.Map(("hmac-secret", true))),
+            (8L, PinAuth(clientDataHash)),
+            (9L, 1L)));
+        var authData = (byte[])reply[2L];
+        // rpIdHash 32, flags 1, counter 4, AAGUID 16, credential ID length 2, credential ID.
+        if (authData.Length < 55 || (authData[32] & 0x40) == 0) throw new CtapException(-1, "Niepełna odpowiedź klucza karty.");
+        int length = authData[53] << 8 | authData[54];
+        if (length == 0 || length > authData.Length - 55) throw new CtapException(-1, "Nieprawidłowa długość klucza karty.");
+        return authData.AsSpan(55, length).ToArray();
+    }
+
+    /// <summary>The card's HMAC of <paramref name="salt"/> for the given credential (FIDO2 hmac-secret).</summary>
+    internal byte[] HmacSecret(string rpId, byte[] credentialId, byte[] salt)
+    {
+        if (salt.Length != 32 || credentialId.Length is < 1 or > 4096) throw new ArgumentException("Nieprawidłowe parametry klucza karty.");
+        var clientDataHash = RandomNumberGenerator.GetBytes(32);
+        var saltEnc = Encrypt(salt);
+        var saltAuth = HMACSHA256.HashData(shared!, saltEnc).AsSpan(0, 16).ToArray();
+        var reply = Command(0x02, Cbor.Map(
+            (1L, rpId),
+            (2L, clientDataHash),
+            (3L, new List<object> { Cbor.Map(("id", credentialId), ("type", "public-key")) }),
+            (4L, Cbor.Map(("hmac-secret", Cbor.Map((1L, PlatformCose()), (2L, saltEnc), (3L, saltAuth))))),
+            (6L, PinAuth(clientDataHash)),
+            (7L, 1L)));
+        var authData = (byte[])reply[2L];
+        if (authData.Length < 38) throw new CtapException(-1, "Niepełna odpowiedź karty.");
+        if ((authData[32] & 0x04) == 0) throw new CtapException(-1, "Karta nie potwierdziła PIN-u.");
+        if ((authData[32] & 0x80) == 0) throw new CtapException(-1, "Karta nie obsługuje zapamiętywania konta (hmac-secret).");
+        var extensions = (Dictionary<object, object>)Cbor.Decode(authData.AsSpan(37).ToArray(), out _);
+        return Decrypt((byte[])extensions["hmac-secret"]);
+    }
+
+
+    private byte[] PinAuth(byte[] clientDataHash) => HMACSHA256.HashData(pinToken!, clientDataHash).AsSpan(0, 16).ToArray();
     // ------------------------------------------------------------------ plumbing
 
     private Dictionary<object, object> PlatformCose()

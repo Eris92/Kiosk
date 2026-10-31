@@ -28,6 +28,7 @@ internal sealed class FidoSignIn : IDisposable
 
     internal string Sid { get; private set; } = "";
     internal string WindowsName { get; private set; } = "";
+    internal string PersonName { get; private set; } = "";
     /// <summary>The account as the card names it (e.g. jan@firma.pl).</summary>
     internal string Account { get; private set; } = "";
     internal bool IsAdministrator { get; private set; }
@@ -119,6 +120,7 @@ internal sealed class FidoSignIn : IDisposable
         WindowsName = parts.Length > 1 ? parts[1] : "";
         Account = parts.Length > 2 && parts[2].Length > 0 ? parts[2] : WindowsName;
         IsAdministrator = parts.Length > 3 && parts[3] == "1";
+        PersonName = parts.Length > 4 ? parts[4] : "";
         return new(this, "");
     }
 
@@ -248,6 +250,10 @@ internal sealed class FidoSignIn : IDisposable
             "P " + kiosk,
             "P " + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Microsoft\Edge\Application\msedge.exe")
         };
+        // ProfileList is populated on the first start under this person's token. Permit only
+        // the exact, hidden no-op used by UserLogon.EnsureProfile, never arbitrary cmd.exe.
+        var profileCommand = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        lines.Add("C " + profileCommand + "\t\"" + profileCommand + "\" /c exit");
         lines.AddRange(config.Applications.Where(a => !a.IsBuiltIn && a.RunAs.Trim().Length == 0).Select(a => "P " + a.Path));
         lines.AddRange(config.IdleScreens.Where(s => s.Url.Length == 0 && s.Path.Length > 0).Select(s => "P " + s.Path));   // Screens reopened as the person.
         lines.AddRange(config.Commands.Where(c => c.AsUser).Select(c =>

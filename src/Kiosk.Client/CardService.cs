@@ -30,6 +30,8 @@ internal static class CardService
         public string NewPin { get; set; } = "";
         public string Reader { get; set; } = "";
         public string Pin { get; set; } = "";
+        public string? CredentialId { get; set; }
+        public string? Salt { get; set; }
         public string Source { get; set; } = "";      // testconfig: share; sharedaccount: name/site/use JSON; newsaccount: configured SharePoint site
         public string Embed { get; set; } = "";       // fidosignin: the Kiosk window the sign-in screen is drawn in (FidoSignIn.ValidEmbed)
     }
@@ -39,6 +41,7 @@ internal static class CardService
         public int Code { get; set; }                 // 0 = OK, CTAP error code, or -1 / -2
         public string Message { get; set; } = "";
         public string? Secret { get; set; }
+        public string? CredentialId { get; set; }
         public long Process { get; set; }             // runas: the suspended program's handles, valid in the Kiosk's process
         public long Thread { get; set; }
     }
@@ -112,8 +115,15 @@ internal static class CardService
             if (request.Op == "testnetwork") return CentralConfig.TestNetworkForMachine(); // Konto Kiosku → Sprawdź: only the saved folders.
             // Reject unsupported operations before opening a reader. The installer probes the listener
             // without a card, and malformed requests must not touch one.
-            if (request.Op is not ("reset" or "info" or "haspin" or "setpin" or "changepin" or "verify"))
+            if (request.Op is not ("reset" or "info" or "haspin" or "setpin" or "changepin" or "verify" or "enroll" or "open"))
                 return new Response { Code = -2, Message = "Nieznane polecenie." };
+            if (request.Op is "enroll" or "open")
+            {
+                if (request.Salt == null || Convert.FromBase64String(request.Salt).Length != 32)
+                    return new Response { Code = -2, Message = "Nieprawidłowy parametr klucza karty." };
+                if (request.Op == "open" && (request.CredentialId == null || Convert.FromBase64String(request.CredentialId).Length is < 1 or > 4096))
+                    return new Response { Code = -2, Message = "Nieprawidłowy identyfikator klucza karty." };
+            }
             if (request.Op == "reset")
             {
                 // The card's own reset: the holder starts over (no PIN, no keys). Only right after power-up, so power it again first.
@@ -146,6 +156,20 @@ internal static class CardService
             {
                 case "verify":
                     return new Response { Message = "PIN karty potwierdzony." };
+                case "enroll":
+                {
+                    var id = card.MakeCredential("kiosk.local");
+                    card.UsePin(request.Pin);
+                    var secret = card.HmacSecret("kiosk.local", id, Convert.FromBase64String(request.Salt!));
+                    try { return new Response { CredentialId = Convert.ToBase64String(id), Secret = Convert.ToBase64String(secret) }; }
+                    finally { CryptographicOperations.ZeroMemory(secret); }
+                }
+                case "open":
+                {
+                    var secret = card.HmacSecret("kiosk.local", Convert.FromBase64String(request.CredentialId!), Convert.FromBase64String(request.Salt!));
+                    try { return new Response { Secret = Convert.ToBase64String(secret) }; }
+                    finally { CryptographicOperations.ZeroMemory(secret); }
+                }
                 default:
                     return new Response { Code = -2, Message = "Nieznane polecenie." };
             }
