@@ -269,6 +269,15 @@ internal sealed partial class KioskForm : Form
             pinCheck?.Cancel();
             Park(current, "card_changed");
         }
+        // ATR and reader name identify a device model, not a particular person's card.
+        // Never reuse a parked session when neither a certificate nor a UID is available.
+        if (identity.Id.StartsWith("card:", StringComparison.Ordinal))
+        {
+            notice = "Nie można odczytać unikatowego identyfikatora karty. Wyjmij ją i przyłóż ponownie.";
+            Audit.Write("card_identity_unavailable", reader.ActiveReader);
+            RefreshChrome();
+            return;
+        }
         if (!sessions.TryGetValue(identity.Id, out var session))
         {
             session = new UserSession { Identity = identity };
@@ -413,7 +422,7 @@ internal sealed partial class KioskForm : Form
     }
 
     private bool CardMatchesSession(UserSession session) =>
-        current == session && cardPresent() && (identifyCard()?.Id ?? session.Identity.Id) == session.Identity.Id;
+        current == session && cardPresent() && (identifyCard() ?? UncertifiedCard()).Id == session.Identity.Id;
 
     private void CloseStaleCardLogon(UserSession session)
     {
@@ -2697,12 +2706,17 @@ internal sealed partial class KioskForm : Form
         cardPresent = () => true;
         config = config with { UnlockMethod = UnlockMethod.Card, ChangeUserAfterSeconds = 600 };
 
+        CardInserted(new CardIdentity("card:reader|atr", "Karta"));
+        if (current != null || sessions.Count != 0)
+            throw new InvalidOperationException("A card without a unique identity was allowed to reuse a workstation session.");
         CardInserted(alice);
         var aliceSession = current;
         if (aliceSession?.Identity != alice || aliceSession.Locked) throw new InvalidOperationException("Card did not open a session.");
         if (!CardMatchesSession(aliceSession)) throw new InvalidOperationException("Current card was rejected after sign-in.");
         identifyCard = () => bob;
         if (CardMatchesSession(aliceSession)) throw new InvalidOperationException("A swapped card could finish another person's sign-in.");
+        identifyCard = () => null;
+        if (CardMatchesSession(aliceSession)) throw new InvalidOperationException("Missing card identity was treated as the previous person's card.");
         identifyCard = () => current?.Identity;
         cardPresent = () => false;
         if (CardMatchesSession(aliceSession)) throw new InvalidOperationException("A removed card could finish sign-in.");
