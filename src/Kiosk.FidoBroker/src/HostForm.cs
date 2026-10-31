@@ -973,7 +973,17 @@ namespace FidoRun
                 serializationAvailable = false;
                 canSubmit = false;
                 pendingFieldUpdates.Clear();
-                ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
+                // Keep the PIN control in the same position while Windows replaces its
+                // credential fields. Clear its value and disable it until ShowFields
+                // swaps the new controls in one UI turn; removing it here exposed an
+                // empty card between an incorrect PIN and the retry field.
+                rendering = true;
+                try
+                {
+                    foreach (Control input in inputs.Values)
+                        if (input is TextBox box && box.UseSystemPasswordChar) box.Clear();
+                }
+                finally { rendering = false; }
                 ApplyInteractionState();
             });
         }
@@ -1045,6 +1055,7 @@ namespace FidoRun
             {
                 if (generation != fieldGeneration) return;
                 rendering = true;
+                fields.SuspendLayout();
                 try
                 {
                     ClearFieldControls(); inputs.Clear(); containers.Clear(); fieldData.Clear();
@@ -1109,7 +1120,7 @@ namespace FidoRun
                         fields.Controls.Add(container);
                     }
                 }
-                finally { rendering = false; }
+                finally { fields.ResumeLayout(false); rendering = false; }
                 preparingFields = false;
                 foreach (Action update in pendingFieldUpdates) update();
                 pendingFieldUpdates.Clear();
