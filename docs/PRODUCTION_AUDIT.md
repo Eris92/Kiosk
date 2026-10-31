@@ -278,13 +278,13 @@ Broker starszego logowania kartą oznacza teraz odmowę `SetUsageScenario` jako 
 
 Aktualny wynik przygotowania stanowiska i lista otwartych prób: [SELFSERVICE_TEST_2026-10-30.md](SELFSERVICE_TEST_2026-10-30.md).
 
-1. Na urządzeniu Entra lub hybrydowym sprawdzić logowanie dwóch osób kartą lub Hello, ich SID, profil przeglądarki i SSO na docelowych witrynach. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, wylogowanie, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby karty A/B, wymiany/wyjęcia i odpięcia czytnika.
+1. Na urządzeniu Entra lub hybrydowym sprawdzić wewnętrzne logowanie kartą dwóch zwykłych osób w SelfService (`CardAuthentication=Sso`), ich SID procesów, profil przeglądarki i SSO na docelowych witrynach. Osobno sprawdzić Local z przypisanym kontem Windows. Sprawdzić błędny/anulowany PIN, blokadę/odblokowanie, zakończenie wyłącznie sesji Kiosku, limit bezczynności i konto odzyskiwania. Starszy `CardBroker`, jeśli pozostanie używany, wymaga osobnej próby na dokładnym obrazie Windows.
 2. Sprawdzić Windows Shell Launcher, natywny kafelek, aktualizację i rollback na dedykowanym obrazie Windows. Lokalne i CI kompilacje DLL już przeszły; wymagany jest jeszcze podpis organizacji. Nie zastępować działającej instalacji w Program Files podczas testu.
 3. Podpisać finalną paczkę certyfikatem organizacji i sprawdzić `Verify-Package.ps1 -RequireSigned -TrustedSignerThumbprint ...`; dobrać politykę dystrybucji oraz retencję logów.
 4. Przejść ręcznie obsługę wielu monitorów/DPI, dozwolone domeny przeglądarki/SSO i treść ekranów bez aktywnego użytkownika.
 
-## Bramka trybu stanowiskowego — odłożona
+## Bramka Stanowiska
 
-Po podpięciu osobnego projektu logowania sprawdzić konto lokalne, domenowe i Entra, SID procesów aplikacji oraz każdej sesji RDP, przypisanie karty, PIN, zmianę użytkownika i okna pomocnicze zewnętrznych EXE. Dla docelowych serwerów RDS zweryfikować certyfikat TLS, NLA, mapowanie certyfikatu, PKI/CRL, Remote Credential Guard lub Entra ID, politykę poświadczeń oraz zachowanie odłączonych sesji. Test TCP nie wystarcza.
+Na stanowisku sprawdzić trzy rzeczywiste karty i trzy zwykłe konta: A otwiera aplikacje, po zdjęciu karty okna znikają, B i C otwierają własne aplikacje, a powrót A przywraca jej okna po ponownym PIN-ie bez Windows Hello. Przy `ChangeUserAfterSeconds=0` każda sesja ma trwać do ręcznego zakończenia; Windows stanowiska pozostaje zalogowany. Sprawdzić także błędny/anulowany PIN, szybkie zamiany kart, pomocnicze okna Edge/Office oraz brak dostępu do aplikacji poprzedniej osoby. Powtórzyć z Sso i Local, w tym SID procesów na przypisanych kontach. Dla docelowych serwerów RDS zweryfikować certyfikat TLS, NLA, mapowanie certyfikatu, PKI/CRL, Remote Credential Guard lub Entra ID, politykę poświadczeń oraz zachowanie odłączonych sesji. Test TCP nie wystarcza.
 
 Polecenia: `scripts/Test.ps1`, `scripts/New-Package.ps1`, `scripts/Verify-Package.ps1 -PackagePath out/package` oraz `scripts/Test-Prerequisites.ps1 -ConfigPath <lokalna-konfiguracja> -CheckNetwork`. Kandydat bez podpisu nie powinien być wdrażany jako finalne wydanie.
