@@ -35,11 +35,14 @@ internal sealed class SettingsView : UserControl
     private readonly NumericUpDown lockAfter = new() { Minimum = 10, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown changeUserAfter = new() { Minimum = 0, Maximum = 86400, Width = 140 };
     private readonly NumericUpDown connectTimeout = new() { Minimum = 10, Maximum = 300, Width = 140 };
-    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Stanowisko: karta i aplikacje w Kiosku", "Powłoka Windows: aplikacje na koncie zalogowanym do Windows", "Punkt samoobsługowy: Szybka pomoc i komunikaty, bez menu aplikacji" } };
-    private readonly ComboBox selfServiceAuthentication = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Karta w oknie Kiosku (starsza metoda, zależna od wersji Windows)", "Windows / Entra przed Kioskiem (SSO, zalecane)" } };
+    private readonly ComboBox sessionMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "Stanowisko: karta i aplikacje w Kiosku", "Powłoka Windows: aplikacje na koncie zalogowanym do Windows", "Punkt samoobsługowy: Szybka pomoc i komunikaty, bez menu aplikacji", "Komunikaty: tylko komunikaty, bez logowania" } };
+    private readonly ComboBox cardAuthentication = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620, Items = { "SSO — konto uwierzytelnione kartą przez Windows", "Local — PIN karty i przypisany login oraz hasło" } };
+    private sealed record NavigationOption(NavigationPlacement Value, string Label) { public override string ToString() => Label; }
+    private readonly ComboBox navigationPlacement = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 620 };
     private readonly CheckBox showHelp = new() { Text = "Pokazuj Szybką pomoc na pulpicie i na ekranie blokady", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, 8) };
     private readonly NumericUpDown cardRemovedSeconds = new() { Minimum = 1, Maximum = 300, Width = 100, Margin = new Padding(8, 0, 0, 0) };
     private readonly NumericUpDown helpCloseSeconds = new() { Minimum = 5, Maximum = 3600, Width = 100, Margin = new Padding(8, 0, 0, 0) };
+    private readonly TextBox selfServiceSignedInMessage = new() { Multiline = true, Height = 64, Dock = DockStyle.Top, MaxLength = 2048, ScrollBars = ScrollBars.Vertical };
     private readonly CheckBox adminHotkey = new() { Text = "Ctrl+Alt+K otwiera Konfigurację (jako administrator Windows)", AutoSize = true };
     private readonly TextBox configSource = new() { Width = 620, PlaceholderText = @"\\serwer\kiosk  albo  C:\KioskCentral", Margin = new Padding(4, 0, 4, 4) };
     private readonly Button sourceTest;
@@ -114,7 +117,7 @@ internal sealed class SettingsView : UserControl
         ForeColor = KioskTheme.Text;
         Font = new Font("Segoe UI", 10);
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 72, BackColor = Back };
+        var header = new Panel { Name = "settings-header", Dock = DockStyle.Top, Height = 72, BackColor = Back };
         header.Controls.Add(new Label
         {
             Text = "Konfiguracja Kiosku", ForeColor = KioskTheme.Text, Font = new Font("Segoe UI Semibold", 20),
@@ -174,8 +177,8 @@ internal sealed class SettingsView : UserControl
         AddField(fields, "Blokada po bezczynności (s, karta w czytniku)", lockAfter);
         AddField(fields, "Przechowywanie sesji po wyjęciu karty (s, 0 = do wylogowania)", changeUserAfter);
         AddField(fields, "Tryb sesji", sessionMode);
-        AddField(fields, "Logowanie w punkcie samoobsługowym", selfServiceAuthentication);
-        AddField(fields, "Logowanie i odblokowanie", unlock);
+        AddField(fields, "Logowanie kartą", cardAuthentication);
+        AddField(fields, "Nawigacja (wspólna dla trybów)", navigationPlacement);
         AddField(fields, "Skrót do Konfiguracji", adminHotkey);
         adminHotkey.Checked = config.AdminHotkey;
         adminHotkey.CheckedChanged += (_, _) =>
@@ -213,12 +216,6 @@ internal sealed class SettingsView : UserControl
         logoPicker.MinimumSize = Size.Empty;
         AddField(fields, "Połącz automatycznie po włożeniu karty", autoConnect);
         AddField(fields, "Limit czasu łączenia RDP (sekundy)", connectTimeout);
-        var pinRow = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
-        fields.Controls.Add(requirePin, 1, pinRow);
-        var signInRow = fields.RowCount++;
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
-        fields.Controls.Add(signInAsUser, 1, signInRow);
         var removalRow = fields.RowCount++;
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         fields.Controls.Add(disconnectOnRemoval, 1, removalRow);
@@ -227,10 +224,9 @@ internal sealed class SettingsView : UserControl
         sessionScroll.Controls.Add(new Label
         {
             Dock = DockStyle.Top, Height = 110, Padding = new Padding(4, 12, 4, 4), ForeColor = HelpText,
-            Text = "Każda karta ma własną sesję (to nie jest blokada Windows). Wyjęcie karty chowa sesję, inna karta od razu otwiera swoją, " +
-                   "a powrót karty przywraca jej okna. Po czasie przechowywania nieużywana sesja jest zamykana. " +
-                   "Na komputerze dla wielu osób wybierz „Karta + PIN karty”: Windows Hello potwierdza konto Windows, nie osobę z karty.\n" +
-                   "Bez wymagania PIN-u Kiosk łączy od razu tożsamością z karty / Windows Hello / Entra, jeśli Windows ją udostępnia; w przeciwnym razie i tak zapyta."
+            Text = "Stanowisko i Punkt samoobsługowy: SSO loguje kartą do konta użytkownika; Local odblokowuje PIN-em konto przypisane do karty. " +
+                   "Zakończenie zamyka sesję Kiosku. Powłoka Windows korzysta z bieżącego konta i wylogowuje Windows. " +
+                   "Komunikaty wyświetlają wyłącznie treści, bez logowania."
         });
         sessionScroll.Controls.Add(fields);   // added last = docked first: the fields on top, the note under them
         session.Controls.Add(sessionScroll);
@@ -250,9 +246,34 @@ internal sealed class SettingsView : UserControl
         signInAsUser.Checked = config.SignInAsUser;
         unlock.SelectedIndex = (int)config.UnlockMethod;
         sessionMode.SelectedIndex = (int)config.SessionMode;
-        selfServiceAuthentication.SelectedIndex = (int)config.SelfServiceAuthentication;
-        selfServiceAuthentication.Enabled = config.SessionMode == SessionMode.SelfService;
-        sessionMode.SelectedIndexChanged += (_, _) => selfServiceAuthentication.Enabled = sessionMode.SelectedIndex == (int)SessionMode.SelfService;
+        cardAuthentication.SelectedIndex = (int)(config.CardAuthentication ?? (config.SessionMode == SessionMode.Kiosk && !config.SignInAsUser ? CardAuthentication.Local : CardAuthentication.Sso));
+        void UpdateAuthenticationOptions()
+        {
+            void ShowField(Control control, bool show)
+            {
+                var row = fields.GetRow(control);
+                control.Visible = show;
+                if (fields.GetControlFromPosition(0, row) is { } label) label.Visible = show;
+                fields.RowStyles[row].Height = show ? RowHeight : 0;
+            }
+            var cardMode = sessionMode.SelectedIndex is (int)SessionMode.Kiosk or (int)SessionMode.SelfService;
+            ShowField(cardAuthentication, cardMode);
+            var shellMode = sessionMode.SelectedIndex == (int)SessionMode.WindowsShell;
+            disconnectOnRemoval.Visible = shellMode;
+            fields.RowStyles[removalRow].Height = shellMode ? RowHeight : 0;
+            ShowField(navigationPlacement, sessionMode.SelectedIndex != (int)SessionMode.Announcements);
+            var selected = (navigationPlacement.SelectedItem as NavigationOption)?.Value ?? config.NavigationPlacement;
+            navigationPlacement.Items.Clear();
+            navigationPlacement.Items.Add(new NavigationOption(NavigationPlacement.Sidebar, "Panel boczny z kategoriami i kafelkami"));
+            navigationPlacement.Items.Add(new NavigationOption(NavigationPlacement.ClassicSidebar, "Panel Szybkiej pomocy — wcześniejszy układ stanowiska"));
+            navigationPlacement.Items.Add(new NavigationOption(NavigationPlacement.Hidden, "Panel boczny wyłączony"));
+            if (sessionMode.SelectedIndex is (int)SessionMode.Kiosk or (int)SessionMode.WindowsShell)
+                navigationPlacement.Items.Add(new NavigationOption(NavigationPlacement.StartMenu, "Nawigacja w menu Start"));
+            navigationPlacement.SelectedItem = navigationPlacement.Items.Cast<NavigationOption>().FirstOrDefault(o => o.Value == selected)
+                ?? navigationPlacement.Items[0];
+        }
+        sessionMode.SelectedIndexChanged += (_, _) => UpdateAuthenticationOptions();
+        UpdateAuthenticationOptions();
         disconnectOnRemoval.Checked = config.DisconnectOnCardRemoval;
         SetupAccent(config.AccentColor);
         taskbarAlign.SelectedIndex = (int)config.TaskbarAlignment;
@@ -432,8 +453,7 @@ internal sealed class SettingsView : UserControl
         SetupGridTab(helpTab, helpActions, "Przyciski „Menu” na pulpicie działają też na ekranie blokady i bez logowania. Akcja: adres https://… " +
             "(bez logowania otwiera się okno gościa, tylko strony logowania Microsoft), " + HelpAction.ChangePin + " (zmiana PIN-u karty), " +
             HelpAction.ResetCard +
-            " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN), " + HelpAction.FirstSignIn +
-            " (jedno logowanie do Windows: profil i SSO, potem automatyczny powrót do Kiosku). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
+            " (reset FIDO2: usuwa PIN i wszystkie klucze z karty, potem nowy PIN). Odznacz „Włączony”, aby ukryć jeden przycisk. " +
             "Kategorię wybierasz z listy (tworzysz je w zakładce „Kategorie”). Kolejność w Kiosku: jak na tej liście, zmieniasz ją przyciskami „Wyżej” / „Niżej”. " +
             "W punkcie samoobsługowym każdy przycisk jest kafelkiem: kategorie są w lewym menu, opis, ikona i kolor zmieniają kafelek.", helpHeight: 110, order: true);
         var helpDefaults = new Button { Text = "Przywróć domyślne przyciski", AutoSize = true, Dock = DockStyle.Bottom };
@@ -561,18 +581,19 @@ internal sealed class SettingsView : UserControl
         cardRemoved.Controls.Add(cardRemovedSeconds);
         cardRemovedSeconds.Value = Math.Clamp(config.CardRemovedSeconds, 1, 300);
         helpTab.Controls.Add(cardRemoved);
+        selfServiceSignedInMessage.Text = config.SelfServiceSignedInMessage;
+        helpTab.Controls.Add(selfServiceSignedInMessage);
+        helpTab.Controls.Add(new Label { Text = "Komunikat po zalogowaniu (pod imieniem i nazwiskiem)", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 4) });
         helpTab.Controls.Add(showHelp);
 
-        var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16) };
+        var newsTab = new TabPage("Komunikaty") { Padding = new Padding(16), AutoScroll = true };
         tabs.TabPages.Add(newsTab);
         var newsFields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(0, 0, 12, 0) };
         newsFields.Paint += (_, e) => PaintCards(newsFields, e.Graphics);
         newsFields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
         newsFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        var folderPicker = new TableLayoutPanel { ColumnCount = 3, RowCount = 1, Height = 34, Margin = new Padding(0), BackColor = Color.Transparent };
+        var folderPicker = new TableLayoutPanel { ColumnCount = 1, RowCount = 3, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 34), Margin = new Padding(0), BackColor = Color.Transparent };
         folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        folderPicker.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         // The example installed with the program (Aktualizacja A, Zgłoś problem…), for a quick test without a share.
         var useExample = new Button { Text = "Użyj przykładu", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
         useExample.Click += (_, _) => newsFolder.Text = Path.Combine(AppContext.BaseDirectory, "news-example");
@@ -585,8 +606,8 @@ internal sealed class SettingsView : UserControl
         };
         newsFolder.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         folderPicker.Controls.Add(newsFolder, 0, 0);
-        folderPicker.Controls.Add(chooseFolder, 1, 0);
-        folderPicker.Controls.Add(useExample, 2, 0);
+        folderPicker.Controls.Add(chooseFolder, 0, 1);
+        folderPicker.Controls.Add(useExample, 0, 2);
         AddField(newsFields, "Pokazuj komunikaty", newsShow);
         newsShow.SelectedIndex = (int)config.NewsShow;
         AddField(newsFields, "Folder lub udział z komunikatami (puste = brak)", folderPicker);
@@ -680,8 +701,8 @@ internal sealed class SettingsView : UserControl
         var statsTab = AddStatsTab(tabs);
 
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 60, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(12, 10, 12, 10) };
-        var save = new Button { Text = "Zapisz konfigurację", Size = new Size(200, 38) };
-        var cancel = new Button { Text = "Anuluj", Size = new Size(120, 38) };
+        var save = new Button { Name = "settings-save", Text = "Zapisz konfigurację", Size = new Size(230, 40) };
+        var cancel = new Button { Name = "settings-cancel", Text = "Anuluj", Size = new Size(120, 40) };
         KioskTheme.StyleButton(save, primary: true);
         KioskTheme.StyleButton(cancel);
         actions.Controls.Add(save); actions.Controls.Add(cancel);
@@ -697,10 +718,10 @@ internal sealed class SettingsView : UserControl
         tabs.Dock = DockStyle.None;
         pageHost.Controls.Add(tabs);
         pageHost.Resize += (_, _) => tabs.Bounds = new Rectangle(-4, -6, Math.Max(0, pageHost.ClientSize.Width - pageHost.Padding.Right + 8), pageHost.ClientSize.Height + 10);
-        var nav = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(0, 4, 0, 4), BackColor = Back };
+        var nav = new FlowLayoutPanel { Name = "settings-nav", FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(0, 4, 0, 4), BackColor = Back };
         foreach (TabPage page in tabs.TabPages)
         {
-            var item = new NavItem(page.Text) { Width = 236, Height = 40, Margin = new Padding(0, 0, 0, 4) };
+            var item = new NavItem(page.Text) { Width = 270, Height = 40, Margin = new Padding(0, 0, 0, 4) };
             var target = page;
             item.Click += (_, _) => tabs.SelectedTab = target;
             nav.Controls.Add(item);
@@ -708,6 +729,17 @@ internal sealed class SettingsView : UserControl
         void MarkSelected() { foreach (NavItem item in nav.Controls) item.Selected = item.Text == tabs.SelectedTab?.Text; }
         tabs.SelectedIndexChanged += (_, _) => MarkSelected();
         MarkSelected();
+        nav.Resize += (_, _) =>
+        {
+            if (nav.Parent is Panel column)
+            {
+                int required = nav.Controls.OfType<NavItem>().Max(i => TextRenderer.MeasureText(i.Text, i.Font).Width + 24) +
+                    column.Padding.Horizontal + nav.Padding.Horizontal + 4;
+                if (column.Width < required) { column.Width = required; return; }
+            }
+            int width = Math.Max(80, nav.ClientSize.Width - nav.Padding.Horizontal - 4);
+            foreach (NavItem item in nav.Controls) item.Width = width;
+        };
         var banner = new Label
         {
             Dock = DockStyle.Top, Height = 64, Padding = new Padding(24, 6, 24, 6), ForeColor = KioskTheme.Text, BackColor = Card, Visible = Central,
@@ -730,9 +762,20 @@ internal sealed class SettingsView : UserControl
         var switchUser = new Button { Text = "Przełącz użytkownika", Dock = DockStyle.Bottom, Height = 40 };
         KioskTheme.StyleButton(switchUser);
         switchUser.Click += (_, _) => SwitchUserRequested?.Invoke();
-        var navColumn = new Panel { Dock = DockStyle.Left, Width = 260, BackColor = Back, Padding = new Padding(12, 0, 8, 12) };
-        navColumn.Controls.Add(nav);
+        var navColumn = new Panel { Dock = DockStyle.Left, Width = 300, BackColor = Back, Padding = new Padding(12, 0, 8, 12) };
         if (!fileEditor) navColumn.Controls.Add(switchUser);
+        navColumn.Controls.Add(nav);
+        navColumn.Layout += (_, _) =>
+        {
+            var bounds = new Rectangle(navColumn.Padding.Left, 0,
+                Math.Max(0, navColumn.ClientSize.Width - navColumn.Padding.Horizontal),
+                Math.Max(0, (fileEditor ? navColumn.ClientSize.Height - navColumn.Padding.Bottom : switchUser.Top) - 12));
+            if (nav.Bounds != bounds) nav.Bounds = bounds;
+        };
+        switchUser.LocationChanged += (_, _) =>
+        {
+            if (!fileEditor) nav.Height = Math.Max(0, switchUser.Top - nav.Top - 12);
+        };
         Controls.Add(pageHost); Controls.Add(navColumn); Controls.Add(error); Controls.Add(actions); Controls.Add(banner); Controls.Add(header);
         ApplyDark(this);
     }
@@ -994,7 +1037,9 @@ internal sealed class SettingsView : UserControl
         split.Controls.Add(options, 0, 0);
         split.Controls.Add(days, 1, 0);
         // Eksport na dysk: the Kiosk Card service copies this computer's statistics (JSON lines + CSV) to a folder on a schedule.
-        var exportPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
+        var exportPanel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
+        var exportViewport = new Panel { Dock = DockStyle.Bottom, Height = 110, AutoScroll = true, BackColor = Color.Transparent };
+        exportViewport.Controls.Add(exportPanel);
         exportPanel.Controls.Add(new Label { Text = "Eksport na dysk", AutoSize = true, Font = new Font("Segoe UI", 11, FontStyle.Bold), Margin = new Padding(4, 12, 4, 4) });
         exportPanel.Controls.Add(new Label
         {
@@ -1039,7 +1084,7 @@ internal sealed class SettingsView : UserControl
         statsTab.Controls.Add(split);
         statsTab.Controls.Add(summary);
         statsTab.Controls.Add(bar);
-        statsTab.Controls.Add(exportPanel);
+        statsTab.Controls.Add(exportViewport);
         statsTab.Controls.Add(help);
 
         List<Stats.Entry> shown = [];
@@ -1203,8 +1248,60 @@ internal sealed class SettingsView : UserControl
 #else
         float factor = DeviceDpi / 96f;
 #endif
+        if (Math.Abs(factor - 1) >= 0.01) Scale(new SizeF(factor, factor));
+        foreach (var name in new[] { "settings-save", "settings-cancel" })
+            if (Controls.Find(name, true).FirstOrDefault() is Button button)
+                button.Width = Math.Max(button.Width, TextRenderer.MeasureText(button.Text, button.Font).Width + (int)(28 * factor));
+        if (Controls.Find("settings-header", true).FirstOrDefault() is Panel header)
+            header.Height = Math.Max(header.Height, header.Controls.Cast<Control>().Max(c => c.Bottom) + (int)(12 * factor));
+        var navColumn = Controls.OfType<Panel>().FirstOrDefault(p => p.Controls.OfType<FlowLayoutPanel>().Any(n => n.Name == "settings-nav"));
+        if (navColumn != null && Controls.Find("settings-nav", true).FirstOrDefault() is FlowLayoutPanel nav)
+        {
+            int needed = nav.Controls.OfType<NavItem>().Max(i => TextRenderer.MeasureText(i.Text, i.Font).Width) + (int)(100 * factor);
+            navColumn.Width = Math.Max(navColumn.Width, needed);
+        }
+        foreach (var table in Controls.Find("settings-fields", true).OfType<TableLayoutPanel>())
+        {
+            void FitRows()
+            {
+                int columnWidth = table.GetColumnWidths()[0];
+                if (columnWidth < 40) return;
+                for (int row = 0; row < table.RowCount; row++)
+                {
+                    if (table.RowStyles[row].Height == 0) continue; // Hidden options stay collapsed when the form resizes.
+                    var label = table.GetControlFromPosition(0, row) as Label;
+                    if (label == null) continue;
+                    int textWidth = Math.Max(40, columnWidth - label.Padding.Horizontal - 8);
+                    int textHeight = TextRenderer.MeasureText(label.Text, label.Font,
+                        new Size(textWidth, int.MaxValue), TextFormatFlags.WordBreak).Height;
+                    var field = table.GetControlFromPosition(1, row);
+                    float required = Math.Max(RowHeight * factor,
+                        Math.Max(textHeight + label.Padding.Vertical + 12, (field?.GetPreferredSize(Size.Empty).Height ?? 0) + 12));
+                    if (Math.Abs(table.RowStyles[row].Height - required) > 0.5f) table.RowStyles[row].Height = required;
+                }
+            }
+            table.SizeChanged += (_, _) => FitRows();
+            FitRows();
+        }
+        static IEnumerable<Control> Descendants(Control parent)
+        {
+            foreach (Control child in parent.Controls)
+            {
+                yield return child;
+                foreach (var nested in Descendants(child)) yield return nested;
+            }
+        }
+        foreach (var grid in Descendants(this).OfType<DataGridView>())
+        {
+            foreach (DataGridViewColumn column in grid.Columns)
+            {
+                if (column.AutoSizeMode == DataGridViewAutoSizeColumnMode.None) continue;
+                var font = grid.ColumnHeadersDefaultCellStyle.Font ?? grid.Font;
+                int required = TextRenderer.MeasureText(column.HeaderText, font).Width + (int)(20 * factor);
+                column.MinimumWidth = Math.Max(column.MinimumWidth, Math.Min(required, (int)(320 * factor)));
+            }
+        }
         if (Math.Abs(factor - 1) < 0.01) return;
-        Scale(new SizeF(factor, factor));
         accent.ItemHeight = (int)(26 * factor);   // owner-drawn: Scale leaves the item height (the colour bar was cut off)
         // A check box that does not fit its row is not drawn at all (Szybka pomoc was missing here: empty "Wł." column).
         foreach (var grid in new[] { connections, apps, bookmarks, adminCards, idleScreens, commands, helpActions })
@@ -1233,6 +1330,7 @@ internal sealed class SettingsView : UserControl
         var row = panel.RowCount++;
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, RowHeight));
         // The label wraps inside its column; fixed-width controls keep their width (Dock = Left in a cell collapsed them).
+        panel.Name = "settings-fields";
         panel.Controls.Add(new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(16, 0, 4, 0), BackColor = Color.Transparent }, 0, row);
         // A table cell shrinks a too-wide control to fit before the table has its real width (at 250 % it stayed 0 px wide):
         // the minimum width keeps number fields visible; drop-downs take the column's width, so long choices are not cut off.
@@ -1408,7 +1506,9 @@ internal sealed class SettingsView : UserControl
             SignInAsUser = signInAsUser.Checked,
             UnlockMethod = (UnlockMethod)Math.Max(0, unlock.SelectedIndex),
             SessionMode = (SessionMode)Math.Max(0, sessionMode.SelectedIndex),
-            SelfServiceAuthentication = (SelfServiceAuthentication)Math.Max(0, selfServiceAuthentication.SelectedIndex),
+            SelfServiceAuthentication = original.SelfServiceAuthentication,
+            CardAuthentication = sessionMode.SelectedIndex is (int)SessionMode.Kiosk or (int)SessionMode.SelfService ? (CardAuthentication)Math.Max(0, cardAuthentication.SelectedIndex) : null,
+            NavigationPlacement = (navigationPlacement.SelectedItem as NavigationOption)?.Value ?? NavigationPlacement.Sidebar,
             DisconnectOnCardRemoval = disconnectOnRemoval.Checked,
             AccentColor = accentHex,
             TaskbarAlignment = (TaskbarAlignment)Math.Max(0, taskbarAlign.SelectedIndex),
@@ -1420,6 +1520,7 @@ internal sealed class SettingsView : UserControl
             ShowHelp = showHelp.Checked,
             HelpCloseSeconds = (int)helpCloseSeconds.Value,
             CardRemovedSeconds = (int)cardRemovedSeconds.Value,
+            SelfServiceSignedInMessage = selfServiceSignedInMessage.Text,
             BrowserAllowedDomains = allowedDomains.Text.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             AutoConnectRdpName = selected == null || selected == NoAutoConnect ? "" : selected,
             Applications = apps.Rows.Cast<DataGridViewRow>().Where(r => !r.IsNewRow).Select(r => new ApplicationEntry

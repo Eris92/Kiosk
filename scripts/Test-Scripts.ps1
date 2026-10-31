@@ -30,15 +30,17 @@ try {
         }
     }
     foreach ($fixture in @(
-        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService"}'; Auth = 'CardBroker (legacy default)' },
-        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":"WindowsSession"}'; Auth = 'WindowsSession' },
-        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":"CardBroker"}'; Auth = 'CardBroker' },
-        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","SelfServiceAuthentication":null}'; Auth = 'Invalid or missing' }
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService"}'; Auth = 'Sso (legacy default)' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","CardAuthentication":"Sso"}'; Auth = 'Sso' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"SelfService","CardAuthentication":"Local"}'; Auth = 'Local' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"Kiosk","CardAuthentication":"Local"}'; Auth = 'Local' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"WindowsShell"}'; Auth = 'Windows session' },
+        [pscustomobject]@{ Json = '{"ConfigVersion":5,"SessionMode":"Announcements"}'; Auth = 'None' }
     )) {
         [IO.File]::WriteAllText($rdpConfig, $fixture.Json)
         $diagnostic = (& (Join-Path $PSScriptRoot 'Test-Prerequisites.ps1') -ConfigPath $rdpConfig | Out-String)
-        if ($diagnostic -notmatch "(?m)^\s*SelfServiceAuthentication\s*:\s*$([regex]::Escape($fixture.Auth))\s*$") {
-            throw "SelfService prerequisite diagnostic did not report $($fixture.Auth) for $($fixture.Json)."
+        if ($diagnostic -notmatch "(?m)^\s*CardAuthentication\s*:\s*$([regex]::Escape($fixture.Auth))\s*$") {
+            throw "Card authentication prerequisite diagnostic did not report $($fixture.Auth) for $($fixture.Json)."
         }
     }
 } finally {

@@ -123,7 +123,7 @@ namespace FidoRun
                 // Programs of the same person left from an earlier sign-in (a crash) have lost their desktop access; a new
                 // Edge would hand its page to them and show nothing.
                 CloseLeftovers();
-                result = "OK " + outcome.Sid + "\t" + Clean(outcome.Name) + "\t" + Clean(account) + "\t" + (admin ? "1" : "0");
+                result = "OK " + outcome.Sid + "\t" + Clean(outcome.Name) + "\t" + Clean(account) + "\t" + (admin ? "1" : "0") + "\t" + Clean(PersonName(outcome));
             }
             logger("KioskBroker=SignedIn; SID=" + outcome.Sid);
             BrokerPolicy.SignedIn();
@@ -139,6 +139,25 @@ namespace FidoRun
 
         // The native tile asked for the card or its PIN, or is ready for input.
         internal static void ProviderListening() { listening.Set(); }
+
+        private static string PersonName(LogonOutcome outcome)
+        {
+            try
+            {
+                using (WindowsIdentity identity = new WindowsIdentity(outcome.Token.DangerousGetHandle()))
+                using (WindowsImpersonationContext context = identity.Impersonate())
+                {
+                    uint length = 512;
+                    StringBuilder value = new StringBuilder((int)length);
+                    if (GetUserNameEx(3, value, ref length)) return value.ToString(); // NameDisplay
+                }
+            }
+            catch (Exception) { }
+            return "";
+        }
+
+        [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool GetUserNameEx(int format, StringBuilder name, ref uint size);
 
         // "wait" answers "ERROR UNKNOWN_KEY <Windows' text>": the Kiosk then sets up the card (PIN, registration)
         // instead of leaving Windows' "this security key is probably unknown" on the screen.

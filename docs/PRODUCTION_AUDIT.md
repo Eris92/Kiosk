@@ -1,5 +1,9 @@
 # Audyt wydania Kiosk — 2026-10-23–28
 
+## Aktualizacja przebiegu po próbach na stanowisku
+
+Początkowe akapity tego audytu opisują plan `SelfServiceAuthentication=WindowsSession`, w którym użytkownik logował się do Windows przed Kioskiem. Po próbach użytkownik zmienił wymaganie: konto stanowiska pozostaje zalogowane, a osoba loguje się kartą i PIN-em wewnątrz `Kiosk` lub `SelfService`; zakończenie zamyka tylko jej sesję. Aktualne ustawienie to `CardAuthentication=Sso` albo `Local`, przy czterech trybach `Announcements`, `Kiosk`, `WindowsShell` i `SelfService`. Pole `SelfServiceAuthentication` służy do odczytu starszych plików i nie wybiera obecnej metody. Aktualny stan pilota i otwarte bramki są zapisane w [UNIFIED_MODES_WORK.md](UNIFIED_MODES_WORK.md). Bramka poniżej nadal wymaga dwóch osób, docelowych witryn SSO, obrazu Shell Launcher i podpisanej paczki; wcześniejsze próby WindowsSession nie zaliczają tych punktów.
+
 ## Zakres i wynik
 
 Repozytorium buduje klienta Windows x64 (.NET 10, WinForms/WebView2), opcjonalny natywny kafelek logowania oraz skrypty instalacji i wycofania. Przejrzano przepływ tożsamości i sesji, połączenia RDP, czytnik/CTAP, osadzanie okien, konfigurację, pakowanie i instalację. Usunięto stary mechanizm uruchamiania sesji, nieobsługiwany aktualizator w miejscu oraz prywatne przykłady konfiguracji. Publiczna konfiguracja wdrożeniowa ma `SelfService`, `SelfServiceAuthentication=WindowsSession`, `TestMode=false` i pustą listę serwerów RDP.

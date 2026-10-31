@@ -28,6 +28,7 @@ internal sealed class FidoSignIn : IDisposable
 
     internal string Sid { get; private set; } = "";
     internal string WindowsName { get; private set; } = "";
+    internal string PersonName { get; private set; } = "";
     /// <summary>The account as the card names it (e.g. jan@firma.pl).</summary>
     internal string Account { get; private set; } = "";
     internal bool IsAdministrator { get; private set; }
@@ -119,6 +120,7 @@ internal sealed class FidoSignIn : IDisposable
         WindowsName = parts.Length > 1 ? parts[1] : "";
         Account = parts.Length > 2 && parts[2].Length > 0 ? parts[2] : WindowsName;
         IsAdministrator = parts.Length > 3 && parts[3] == "1";
+        PersonName = parts.Length > 4 ? parts[4] : "";
         return new(this, "");
     }
 

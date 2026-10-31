@@ -421,7 +421,10 @@ internal sealed class HelpBrowserForm : Form
         if (started || browser is not { } page) return;
         started = true;
         countdown.Start(idleSeconds);
-        try { await page.InitializeAsync(url); }
+        try
+        {
+            await page.InitializeAsync(url);
+        }
         catch (Exception ex)
         {
             Audit.Write("help_browser_error", ex.Message);

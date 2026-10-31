@@ -379,6 +379,14 @@ namespace FidoRun
         internal void NativeStatusMessage(int generation, string message)
         {
             if (generation != 0 && !IsCurrentCredential(generation)) return;
+            string normalized = (message ?? "").ToLowerInvariant();
+            if (HostForm.IsRejectedPin(message))
+            {
+                submissionConsent.Clear();
+                serializationRequested = false;
+                view.Busy(false);
+                message = "Błędny PIN. Spróbuj ponownie.";
+            }
             log.Write("NativeStatusMessage: " + TraceLog.DisplayText(message));
             if (options.Broker) { KioskBroker.ProviderListening(); KioskBroker.ProviderMessage(message); }
             view.StatusText(message);
@@ -398,6 +406,13 @@ namespace FidoRun
                 return Status.Ok;
             }
             string display = TraceLog.DisplayText(String.IsNullOrEmpty(label) ? accessibility : label);
+            if (HostForm.IsRejectedPin(display))
+            {
+                submissionConsent.Clear();
+                serializationRequested = false;
+                view.Busy(false);
+                display = "Błędny PIN. Spróbuj ponownie.";
+            }
             log.Write("NativeBioFeedback: VisualState=" + visualState + "; Priority=" + priority + "; Text=" + display);
             if (options.Broker) KioskBroker.ProviderListening();
             if (!String.IsNullOrEmpty(accessibility) && !String.Equals(label, accessibility, StringComparison.Ordinal))
@@ -629,7 +644,7 @@ namespace FidoRun
                 lsaAttempted = true;
                 view.AllowSubmit(false);
                 view.ProviderFeedback("");
-                view.StatusText("Logowanie do Windows...");
+                view.StatusText("Logowanie profilu…");
                 using (LogonOutcome outcome = WindowsLogon.Authenticate(serialization, log.Write))
                 {
                     if (options.Scenario == "logon") ReportResult(outcome.Status, outcome.SubStatus);
@@ -688,7 +703,7 @@ namespace FidoRun
                     try { log.Write("Disconnect: " + Status.Hex(connectable.Disconnect())); }
                     catch (Exception error) { log.Write("Disconnect failed: " + error.GetType().Name); }
                 }
-                busy = false; view.Busy(false);
+                busy = false; view.Busy(nativePending);
                 ApplyDisplayState(false);
                 if (deferredRefresh && !lsaAttempted) { deferredRefresh = false; Refresh(); }
                 QueueNativeCompletion();

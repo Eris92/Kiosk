@@ -249,9 +249,9 @@ internal static class CentralConfig
                     ":" + new FileInfo(csvTemporary).Length.ToString(CultureInfo.InvariantCulture), Encoding.ASCII);
             // Remove the old completion marker before replacing either output. A crash must force a retry.
             File.Delete(stampDestination);
-            File.Move(jsonTemporary, jsonDestination, true);
-            File.Move(csvTemporary, csvDestination, true);
-            File.Move(stampTemporary, stampDestination);
+            MoveWithRetry(jsonTemporary, jsonDestination);
+            MoveWithRetry(csvTemporary, csvDestination);
+            MoveWithRetry(stampTemporary, stampDestination);
         }
         finally
         {
@@ -753,7 +753,9 @@ internal static class CentralConfig
                 file.Write(blob);
                 file.Flush(flushToDisk: true);
             }
-            File.Move(temporary, fullPath, overwrite: true);
+            // Windows may briefly retain a handle while Defender scans the newly created protected file.
+            // A bounded retry preserves the original until the replacement actually succeeds.
+            MoveWithRetry(temporary, fullPath);
         }
         finally
         {
@@ -835,6 +837,16 @@ internal static class CentralConfig
         finally { Directory.Delete(folder, recursive: true); }
     }
 #endif
+
+    private static void MoveWithRetry(string source, string target)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try { File.Move(source, target, overwrite: true); return; }
+            catch (Exception ex) when (attempt < 4 && ex is IOException or UnauthorizedAccessException)
+            { Thread.Sleep(50 * (attempt + 1)); }
+        }
+    }
 
     internal static byte[] ReadSecret(string path, byte[] entropyBytes) => Unprotect(File.ReadAllBytes(path), entropyBytes);
 

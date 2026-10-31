@@ -24,10 +24,14 @@ internal enum NewsDisplay { All, BarsOnly, Off }
 internal enum NewsBanner { Standard, Large, ExtraLarge }
 
 [JsonConverter(typeof(JsonStringEnumConverter<SessionMode>))]
-internal enum SessionMode { Kiosk, WindowsShell, SelfService }
+internal enum SessionMode { Kiosk, WindowsShell, SelfService, Announcements }
+[JsonConverter(typeof(JsonStringEnumConverter<CardAuthentication>))]
+internal enum CardAuthentication { Sso, Local }
+[JsonConverter(typeof(JsonStringEnumConverter<NavigationPlacement>))]
+internal enum NavigationPlacement { Sidebar, Hidden, StartMenu, ClassicSidebar }
 
-/// <summary>SelfService account source. WindowsSession uses the user's supported Windows sign-in and OS SSO;
-/// CardBroker retains the older in-app FIDO broker for existing deployments.</summary>
+/// <summary>Legacy SelfService account source, retained for reading older configuration files.
+/// Current card authentication is selected by CardAuthentication in Kiosk and SelfService.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<SelfServiceAuthentication>))]
 internal enum SelfServiceAuthentication { CardBroker, WindowsSession }
 
@@ -137,10 +141,10 @@ internal sealed record Config
     /// <summary>"Zaloguj" authenticates the person's FIDO2 card and PIN through Windows; their apps,
     /// Edge and remote desktops then run in that Windows account. Kiosk mode only.</summary>
     public bool SignInAsUser { get; init; }
-    /// <summary>Kiosk: one Windows account, the Kiosk switches people by card. WindowsShell: every person signs in to
-    /// Windows with their card / Windows Hello and the Kiosk is their shell; lock = disconnect, Wyloguj = sign out.
-    /// SelfService (Punkt samoobsługowy): Szybka pomoc and Komunikaty without the application Menu;
-    /// WindowsSession uses the Windows account, while the legacy CardBroker signs in inside Kiosk.</summary>
+    public CardAuthentication? CardAuthentication { get; init; }
+    public NavigationPlacement NavigationPlacement { get; init; } = NavigationPlacement.Sidebar;
+    /// <summary>Kiosk and SelfService switch people by card inside Kiosk without signing the workstation out.
+    /// WindowsShell runs as the Windows user and signs that OS session out. Announcements cannot unlock a user session.</summary>
     public SessionMode SessionMode { get; init; } = SessionMode.Kiosk;
     public SelfServiceAuthentication SelfServiceAuthentication { get; init; } = SelfServiceAuthentication.WindowsSession;
     // Retained only to read old files. Neither URL is used by the current sign-in or help flow.
@@ -187,6 +191,7 @@ internal sealed record Config
     public int HelpCloseSeconds { get; init; } = 60;
     /// <summary>Punkt samoobsługowy: the person is signed out this many seconds after the card leaves the reader.</summary>
     public int CardRemovedSeconds { get; init; } = 3;
+    public string SelfServiceSignedInMessage { get; init; } = "Wybierz zadanie z Szybkiej pomocy. Strony otworzą się na Twoim koncie. Po pracy zakończ sesję.";
     /// <summary>Cards that may open Konfiguracja. Members of this PC's local Administrators group also may, when AllowWindowsAdministrators is on.</summary>
     public AdminCard[] AdminCards { get; init; } = [];
     public bool AllowWindowsAdministrators { get; init; } = true;
@@ -225,9 +230,7 @@ internal sealed record Config
             AdminCards = AdminCards.Where(a => a.Enabled).ToArray(),
             HelpActions = ShowHelp ? MenuCategory.Sort(
                 HelpActions.Where(h => h.Enabled).Concat(MenuCategories.Select(c => c.Link).OfType<HelpAction>())
-                    .Where(h => !(SessionMode == SessionMode.SelfService &&
-                        SelfServiceAuthentication == SelfServiceAuthentication.WindowsSession &&
-                        string.Equals(h.Action, HelpAction.FirstSignIn, StringComparison.OrdinalIgnoreCase))),
+                    .Where(h => !string.Equals(h.Action, HelpAction.FirstSignIn, StringComparison.OrdinalIgnoreCase)),
                 MenuCategories) : [],
         };
     }
@@ -268,6 +271,10 @@ internal sealed record Config
 
     public void Validate()
     {
+        if (CardAuthentication.HasValue && !Enum.IsDefined(CardAuthentication.Value)) throw new InvalidDataException("Nieznana metoda logowania kartą.");
+        if (!Enum.IsDefined(NavigationPlacement)) throw new InvalidDataException("Nieznany układ nawigacji.");
+        if (SelfServiceSignedInMessage == null || SelfServiceSignedInMessage.Length > 2048)
+            throw new InvalidDataException("Komunikat po zalogowaniu: maksymalnie 2048 znaków.");
         if (ReaderName == null || AutoConnectRdpName == null || RdpConnections == null || Bookmarks == null || Applications == null ||
             Applications.Any(a => a == null))
             throw new InvalidDataException("Konfiguracja zawiera pustą listę lub wartość null.");

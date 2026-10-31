@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$BrokerPath)
 $ErrorActionPreference = 'Stop'
@@ -6,6 +6,13 @@ $ErrorActionPreference = 'Stop'
 $assembly = [Reflection.Assembly]::LoadFrom([IO.Path]::GetFullPath($BrokerPath))
 $type = $assembly.GetType('FidoRun.BrokerPolicy', $true)
 $flags = [Reflection.BindingFlags]::Static -bor [Reflection.BindingFlags]::NonPublic
+$pinClassifier = $assembly.GetType('FidoRun.HostForm', $true).GetMethod('IsRejectedPin', $flags)
+foreach ($message in @('Kod PIN jest niepoprawny. Spróbuj ponownie.', 'Nieprawidłowy PIN', 'Błędny PIN', 'The PIN is incorrect.', 'Wrong PIN')) {
+    if (-not $pinClassifier.Invoke($null, @($message))) { throw 'A rejected PIN notification was not recognized.' }
+}
+foreach ($message in @('Wpisz PIN karty.', 'Sprawdzanie PIN-u…', 'Przyłóż kartę do czytnika.')) {
+    if ($pinClassifier.Invoke($null, @($message))) { throw 'A normal authentication instruction was classified as a rejected PIN.' }
+}
 $configure = $type.GetMethod('Configure', $flags)
 $check = $type.GetMethod('Check', $flags)
 if ($null -eq $configure -or $null -eq $check) { throw 'Broker policy methods are missing.' }

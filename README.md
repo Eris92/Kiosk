@@ -6,13 +6,14 @@ A Windows shell for shared PCs. Konfiguracja is visible only to Kiosk administra
 
 | Mode | Use |
 | --- | --- |
-| `SelfService` (default) | Walk-up help station with announcements and Szybka pomoc pages. With `SelfServiceAuthentication=WindowsSession`, the person signs in to Windows with an Entra security key or Windows Hello; the pages run in that Windows account and can use its SSO. There is no RDP/application menu. |
-| `Kiosk` | Longer work sessions with an embedded browser, notes, files, configured applications and RDP profiles in one window. Each card has a separate session. |
-| `WindowsShell` | The same workstation UI as `Kiosk`, started as the signed-in Windows user in place of Explorer. Windows and Entra SSO depend on that user's Windows sign-in. |
+| `Announcements` | Only announcements and the screensaver; no person can unlock applications or the Windows shell from this mode. |
+| `Kiosk` | Workstation with the application menu and taskbar. A person signs in inside Kiosk with a card; ending their session keeps the workstation's Windows account signed in. |
+| `WindowsShell` | Kiosk replaces Explorer for the person already signed in to Windows. Ending the session signs that Windows account out. There is no in-app authentication choice. |
+| `SelfService` | Walk-up help station with announcements and Szybka pomoc. A person signs in inside Kiosk with a card; ending their session keeps the workstation's Windows account signed in. |
 
-The initial deployment target is `SelfService`. The supported SSO path is `SelfServiceAuthentication=WindowsSession`: deploy Kiosk as the shell for standard-user Windows accounts and let Windows/Entra authenticate the person before Kiosk starts. The signed-in person's WebView2 profile enables OS account SSO; the site and tenant must also permit it. `CardBroker` is retained for older installations and depends on a pinned Windows DLL version, so validate it on the exact Windows image before use. It also requires a monitored PC/SC card: if the reader cannot identify a card insertion after sign-in, Kiosk ends that sign-in. Removing the card closes its pages immediately; `CardRemovedSeconds` limits the remaining sign-in time and the session cannot resume without a new sign-in. On an unjoined local PC, help pages can be tested but Entra SSO cannot be verified. Password-based domain sign-in paired to a card for the workstation mode remains a separate deployment path.
+`Kiosk` and `SelfService` offer `CardAuthentication=Sso` or `CardAuthentication=Local`. SSO uses the card and PIN to obtain the person's Windows token for their pages and applications; the target site and tenant must also permit SSO. Local uses the card PIN and an assigned Windows login/password, protected with the card's FIDO2 hmac-secret, and runs the person's programs in that assigned account. The Local and SSO paths are still pilot features pending acceptance on the target image. An actual PC/SC insertion/removal is required; removing the card closes the person's pages and then their Kiosk session after `CardRemovedSeconds`. The separate workstation Windows session remains signed in. The legacy `SelfServiceAuthentication` field is read for old configurations but does not select the current sign-in flow. The older CardBroker adapter must not be considered verified without a test on the exact Windows image.
 
-For an Entra rollout, join or hybrid join the test PC, enable the organization's Windows security key or Hello sign-in policy, install a signed Kiosk build, and deploy `config/client.json` with `SelfServiceAuthentication=WindowsSession`. After the person signs in at the Windows screen, Kiosk shows Szybka pomoc. **Zakończ sesję** signs out of Windows. The inactivity settings disconnect the session and then sign it out. Test two real accounts and the target SSO websites before using it with the public. A local Windows account does not acquire an Entra SSO token merely by opening Kiosk.
+For an Entra rollout, join or hybrid join the test PC, enable the organization's security key sign-in policy, install a signed Kiosk build, and deploy an explicit `-SourceConfig` with `SessionMode=SelfService` and `CardAuthentication=Sso`. **Zakończ sesję** closes only the person's Kiosk session. Test two ordinary accounts, their process SID and browser profiles, and the target SSO websites before using it with the public. A local Windows account does not acquire an Entra SSO token merely by opening Kiosk.
 
 ## Download
 
@@ -25,7 +26,7 @@ For a production package, run `New-Package.ps1 -RequireSigned -SigningCertificat
 - Windows 10/11 x64, with a 64-bit PowerShell for the scripts. The scripts refuse a 32-bit PowerShell.
 - The client package carries its own .NET 10 runtime. The separate configuration and news editor tools need .NET 10 Desktop Runtime x64.
 - Microsoft Edge WebView2 Runtime (part of current Windows).
-- For `SelfService` with Windows sign-in: an Entra joined or hybrid joined PC, an enabled security key or Windows Hello method, and a standard-user account. For the legacy in-app `CardBroker`, a PC/SC reader and FIDO2 card are also required.
+- For card sign-in inside `SelfService` or `Kiosk`: a PC/SC reader and FIDO2 card. Entra SSO additionally needs an Entra joined or hybrid joined PC, an enabled security key sign-in method, and ordinary test accounts.
 - `.\scripts\Test-Prerequisites.ps1` checks the PC and changes nothing.
 
 ## Installation (as administrator)
@@ -44,7 +45,7 @@ All scripts support `-WhatIf`.
 
 Keyboard Filter needs a restart after the Windows feature is first enabled; run `Set-KioskKeyboardLock.ps1` again to configure its rules. The script fails if a required predefined key or the service is unavailable. On Windows Pro, Ctrl+Alt+Del still opens the Windows security screen with its configured options hidden.
 
-`Install-KioskShell.ps1` keeps an existing `%ProgramData%\Kiosk\client.json` during an ordinary upgrade. To replace it deliberately, pass `-SourceConfig` with the prepared JSON file; this takes precedence even when the installed configuration exists. For a SelfService migration to Windows sign-in, check that the selected file sets `SessionMode=SelfService` and `SelfServiceAuthentication=WindowsSession`, then run the installer with that explicit source. The installer reports its selected source and validates the resulting configuration before changing the shell. Use `-WhatIf` to check source selection without applying the installation.
+`Install-KioskShell.ps1` keeps an existing `%ProgramData%\Kiosk\client.json` during an ordinary upgrade. To replace it deliberately, pass `-SourceConfig` with the prepared JSON file; this takes precedence even when the installed configuration exists. For a SelfService SSO pilot, check that the selected file sets `SessionMode=SelfService` and `CardAuthentication=Sso`, then run the installer with that explicit source. The installer reports its selected source and validates the resulting configuration before changing the shell. Use `-WhatIf` to check source selection without applying the installation.
 
 `Install-KioskConfig.ps1` preserves an existing configuration on an ordinary editor upgrade. Pass `-SourceConfig <client.json>` to replace it deliberately. The installer validates one captured copy using the destination configuration directory for relative logo and news paths, then writes that same copy atomically; it stops if the existing file changes during staging.
 

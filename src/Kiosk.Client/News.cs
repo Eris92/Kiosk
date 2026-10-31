@@ -253,12 +253,13 @@ internal sealed class NewsCarousel : Control
     private readonly List<Rectangle> dots = [];
     // A film slide: played in a small browser over the slide; the slide moves on when the film ends.
     private NewsVideo? player;
+    private int outgoingVideo = -1;
     private bool videoFailed;
     private const long LongestVideoMilliseconds = 30 * 60_000L;
 
     internal int Seconds { get; set; } = 8;
     /// <summary>The screensaver (Ekrany → kiosk:komunikaty): each slide fills the whole control, the dots lie on it.</summary>
-    internal bool FullScreen { get; init; }
+    internal bool FullScreen { get; set; }
     /// <summary>Screensaver screens show the same slide at the same time (one clock for all of them).</summary>
     internal bool Synced { get; init; }
     /// <summary>A film's sound only on one screen (the main one), not as an echo from every monitor.</summary>
@@ -292,7 +293,13 @@ internal sealed class NewsCarousel : Control
         animation.Tick += (_, _) =>
         {
             progress = Math.Min(1, progress + 0.07);
-            if (progress >= 1) { animation.Stop(); previous = -1; UpdateVideo(); }
+            if (progress >= 1)
+            {
+                animation.Stop();
+                if (outgoingVideo >= 0) { player?.Stop(); outgoingVideo = -1; }
+                previous = -1; UpdateVideo();
+            }
+            else PositionOutgoingVideo();
             Invalidate();
         };
         rotation.Tick += (_, _) =>
@@ -329,6 +336,7 @@ internal sealed class NewsCarousel : Control
         if (Together.Index >= items.Count) { Together.Index = 0; Together.ShownAtMilliseconds = Environment.TickCount64; }
         if (index == Together.Index) return;
         player?.Stop();
+        outgoingVideo = -1;
         index = Together.Index; previous = -1; progress = 1; videoFailed = false;
         Invalidate();
     }
@@ -346,6 +354,7 @@ internal sealed class NewsCarousel : Control
     private void UpdateVideo()
     {
         if (IsDisposed) return;
+        if (Visible && progress < 1 && outgoingVideo >= 0) { PositionOutgoingVideo(); return; }
         var item = items.Count > 0 && index < items.Count ? items[index] : null;
         if (item is not { IsVideo: true } || videoFailed || !Visible || progress < 1 || Width < 20 || Height < 20 || !IsHandleCreated)
         {
@@ -364,9 +373,11 @@ internal sealed class NewsCarousel : Control
                 Audit.Write("news_video_failed", message);
             };
             Controls.Add(player.View);
+            Controls.Add(player.Cover);
         }
         player.View.Bounds = VideoBounds(item);
-        player.Play(item.VideoSource, item.Sound && !Muted, loop: items.Count < 2);
+        player.Cover.Bounds = player.View.Bounds;
+        player.Play(item.VideoSource, item.Sound && !Muted, loop: items.Count < 2, poster: item.Picture);
     }
 
     /// <summary>Where the film plays: the whole screensaver, or the picture's place on the banner (16:9).</summary>
@@ -392,6 +403,7 @@ internal sealed class NewsCarousel : Control
 
     internal void SetItems(List<NewsItem> news)
     {
+        if (outgoingVideo >= 0) { player?.Stop(); outgoingVideo = -1; }
         // The pictures are shared (the desktop, the screensaver on every screen), so no carousel disposes them:
         // disposing here broke the others' drawing (red X) after a reload, e.g. saving Konfiguracja.
         items = news;
@@ -412,11 +424,49 @@ internal sealed class NewsCarousel : Control
     private void GoTo(int target, int step)
     {
         if (target == index || items.Count == 0) return;
+        bool preserveFrame = outgoingVideo < 0 && items[index].IsVideo && player?.ShowingFrame(items[index].VideoSource) == true;
+        if (outgoingVideo >= 0) { player?.Stop(); outgoingVideo = -1; }
+        if (preserveFrame) { outgoingVideo = index; player!.Pause(); }
         previous = index; index = target; direction = Math.Sign(step) == 0 ? 1 : Math.Sign(step);
         progress = 0; shownAtMilliseconds = Environment.TickCount64; videoFailed = false;
-        player?.Stop();
+        if (!preserveFrame) player?.Stop();
         animation.Start();
         Invalidate();
+    }
+
+    private void PositionOutgoingVideo()
+    {
+        if (player == null || outgoingVideo < 0 || outgoingVideo >= items.Count) return;
+        var bounds = VideoBounds(items[outgoingVideo]);
+        bounds.Offset(-(int)Math.Round(Width * (1 - Math.Pow(1 - progress, 3))) * direction, 0);
+        player.View.Bounds = bounds;
+    }
+
+    internal static async Task VideoTransitionSmokeTestAsync()
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "news-example", "pierwsza-pomoc.mp4");
+        using var poster = await VideoPosters.FirstFrameAsync(source)
+            ?? throw new InvalidOperationException("Missing transition test poster.");
+        using var window = new Form { ClientSize = new Size(900, 420), ShowInTaskbar = false };
+        using var carousel = new NewsCarousel { Dock = DockStyle.Fill };
+        window.Controls.Add(carousel);
+        window.Show();
+        carousel.SetItems([new NewsItem { Title = "Film", VideoSource = source, Picture = poster }, new NewsItem { Title = "Następny slajd" }]);
+        var timeout = Environment.TickCount64 + 20000;
+        while (carousel.player?.ShowingFrame(source) != true && Environment.TickCount64 < timeout) await Task.Delay(25);
+        if (carousel.player?.ShowingFrame(source) != true) throw new InvalidOperationException("Transition film did not start.");
+        await carousel.player.View.CoreWebView2.ExecuteScriptAsync("(()=>{const m=document.querySelector('video');m.currentTime=m.duration-0.05;})()");
+        timeout = Environment.TickCount64 + 5000;
+        while (carousel.index == 0 && Environment.TickCount64 < timeout) await Task.Delay(10);
+        if (carousel.index != 1 || carousel.outgoingVideo != 0 || !carousel.player.View.Visible || carousel.player.Cover.Visible)
+            throw new InvalidOperationException("Ending the film replaced its final frame with the opening poster.");
+        var finalFrame = await carousel.player.View.CoreWebView2.ExecuteScriptAsync("(()=>{const m=document.querySelector('video');return m.currentTime>m.duration-0.2;})()");
+        if (finalFrame != "true") throw new InvalidOperationException("Outgoing film rewound during its transition.");
+        timeout = Environment.TickCount64 + 3000;
+        while (carousel.progress < 1 && Environment.TickCount64 < timeout) await Task.Delay(25);
+        if (carousel.progress < 1 || carousel.player.View.Visible || carousel.outgoingVideo != -1)
+            throw new InvalidOperationException("Outgoing video survived the completed slide transition.");
+        window.Close();
     }
 
     private int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
@@ -498,9 +548,9 @@ internal sealed class NewsCarousel : Control
     {
         if (FullScreen && item.IsVideo)
         {
-            // Black under the film (also while the slide comes in, before the film starts).
-            using var black = new SolidBrush(Color.Black);
+            using var black = new SolidBrush(KioskTheme.Background);
             g.FillRectangle(black, new Rectangle(offset, 0, Width, Height));
+            if (item.Picture is { } preview) g.DrawImage(preview, new Rectangle(offset, 0, Width, Height));
             return;
         }
         if (FullScreen && item.Picture != null) { DrawFullSlide(g, item, offset); return; }
@@ -511,7 +561,7 @@ internal sealed class NewsCarousel : Control
         {
             var videoBounds = new Rectangle(area.Left, area.Top, MediaWidth(item, area), area.Height);
             using var clip = KioskTheme.RoundedRectangle(videoBounds, S(10));
-            using var black = new SolidBrush(Color.Black);
+            using var black = new SolidBrush(KioskTheme.Surface);
             g.FillPath(black, clip);   // Until the film starts: black (or the "Image" as its first picture), no play sign.
             if (item.Picture is { } poster)
             {

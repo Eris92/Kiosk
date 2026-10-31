@@ -95,6 +95,8 @@ internal sealed partial class DesktopView : UserControl
     private readonly Label clock = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly StatusCard card = new();
+    private readonly StatusProgress statusProgress = new() { Visible = false };
+    internal bool StatusBusy { get => statusProgress.Visible; set { statusProgress.Visible = value; statusProgress.BringToFront(); } }
     /// <summary>Company messages at the bottom (Konfiguracja → Komunikaty).</summary>
     internal NewsCarousel News { get; } = new();
     /// <summary>Szybka pomoc (Konfiguracja → Szybka pomoc), shown locked and unlocked.</summary>
@@ -170,6 +172,12 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
+    private bool announcementsOnly;
+    internal bool AnnouncementsOnly
+    {
+        get => announcementsOnly;
+        set { if (announcementsOnly == value) return; announcementsOnly = value; ArrangeControls(); }
+    }
     /// <summary>The window the card sign-in screen becomes part of (created on first use, on the UI thread).</summary>
     internal IntPtr SignInPlace => signInPlace.Handle;
 
@@ -185,6 +193,7 @@ internal sealed partial class DesktopView : UserControl
 
     internal DesktopView()
     {
+        card.Controls.Add(statusProgress);
         Dock = DockStyle.Fill;
         AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = KioskTheme.Background;
@@ -269,6 +278,7 @@ internal sealed partial class DesktopView : UserControl
     }
 
     private string? person;
+    internal void EmphasizeStatus(bool emphasize) => detail.ForeColor = emphasize ? KioskTheme.AccentLine : KioskTheme.Muted;
 
     /// <summary><paramref name="person"/>: a signed-in person's name, shown with their initials in a circle instead of a greeting.</summary>
     internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję", string? person = null)
@@ -316,7 +326,7 @@ internal sealed partial class DesktopView : UserControl
         if (pageContent != null) pageContent.Visible = page;
         if (sideContent != null) sideContent.Visible = page;
         signInPlace.Visible = signIn;
-        card.SignIn = !status || AskingPin;
+        card.SignIn = !status || AskingPin || portal && person == null;
         heading.Visible = status;
         detail.Visible = status && !AskingPin;   // The PIN's own text takes its place.
         resume.Visible = status && locked && !AskingPin && !signingIn;
@@ -493,6 +503,14 @@ internal sealed partial class DesktopView : UserControl
     private void ArrangeControls()
     {
         if (card == null) return;
+        if (AnnouncementsOnly)
+        {
+            foreach (Control child in Controls) child.Visible = child == News;
+            News.FullScreen = true;
+            News.Bounds = ClientRectangle;
+            News.BringToFront();
+            return;
+        }
         int margin = Scale(36);
         // Bars across the top (Komunikaty, "Kind": "Pasek"); everything else moves down under them.
         int bar = 0;
@@ -522,6 +540,7 @@ internal sealed partial class DesktopView : UserControl
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin && !Asking;
         int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
+        if (portal && !Asking && !AskingPin && !locked) cardHeight = Scale(360);
         bool page = pageContent != null && !AskingPin && !Asking;
         if (portal)
         {
@@ -530,7 +549,7 @@ internal sealed partial class DesktopView : UserControl
             cardHeight = place.Height;
             card.Bounds = place;
             if (page) PlacePage(new Rectangle(0, 0, cardWidth, cardHeight));
-            if (Help.Visible) Help.Visible = false;
+            Help.Visible = ShowSidebar && UseClassicSidebar;
         }
         else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
         ArrangeCardInside(cardWidth, cardHeight, personRow);
@@ -586,10 +605,11 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>What is inside the card: the sign-in, the greeting, the PIN field or a question.</summary>
     private void ArrangeCardInside(int cardWidth, int cardHeight, bool personRow)
     {
+        statusProgress.SetBounds((cardWidth - Scale(48)) / 2, Scale(215), Scale(48), Scale(48));
         int innerMargin = Scale(30);
         signInPlace.SetBounds(innerMargin, Scale(24), Math.Max(0, cardWidth - innerMargin * 2), Math.Max(0, cardHeight - Scale(48)));
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
-        if (personRow)
+        if (personRow && !portal)
         {
             // The person: initials in a circle and the name beside it, the rest under them.
             int diameter = Scale(62), gap = Scale(18);
@@ -608,6 +628,14 @@ internal sealed partial class DesktopView : UserControl
             heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
             detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
             hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
+        }
+        if (portal && !Asking && !AskingPin && !locked)
+        {
+            card.Avatar = Rectangle.Empty;
+            card.SignIn = true;
+            heading.TextAlign = ContentAlignment.MiddleCenter;
+            heading.SetBounds(innerMargin, Scale(60), textWidth, Scale(70));
+            detail.SetBounds(innerMargin, Scale(140), textWidth, Scale(64));
         }
         int buttonWidth = Math.Min(Scale(220), textWidth);
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
@@ -720,6 +748,26 @@ internal sealed partial class DesktopView : UserControl
         base.Dispose(disposing);
     }
 
+    private sealed class StatusProgress : Control
+    {
+        private readonly System.Windows.Forms.Timer animation = new() { Interval = 16 };
+        private readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        internal StatusProgress()
+        {
+            DoubleBuffered = true; BackColor = KioskTheme.Surface;
+            animation.Tick += (_, _) => Invalidate();
+            VisibleChanged += (_, _) => animation.Enabled = Visible;
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var pen = new Pen(KioskTheme.AccentLine, Math.Max(2, DeviceDpi / 32f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            e.Graphics.DrawArc(pen, Width / 6f, Height / 6f, Width * 2 / 3f, Height * 2 / 3f, (float)(clock.Elapsed.TotalMilliseconds * .24 % 360), 270);
+        }
+        protected override void Dispose(bool disposing) { if (disposing) animation.Dispose(); base.Dispose(disposing); }
+    }
+
     private sealed class StatusCard : Panel
     {
         internal bool Locked { get; set; }
@@ -740,6 +788,7 @@ internal sealed partial class DesktopView : UserControl
             base.OnPaint(e);
             if (Width <= 1 || Height <= 1) return;
             var g = e.Graphics;
+            g.Clear(BackColor);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
             using var cardPath = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(20));

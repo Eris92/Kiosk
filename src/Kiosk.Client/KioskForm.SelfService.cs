@@ -1,15 +1,17 @@
 namespace Kiosk.Client;
 
 /// <summary>
-/// Punkt samoobsługowy (SessionMode.SelfService): the start screen with Szybka pomoc and Komunikaty, without Menu
-/// or taskbar. WindowsSession uses the person's existing Windows sign-in for SSO. The optional CardBroker path shows
-/// the card + PIN sign-in (<see cref="FidoSignIn"/>) inside the start screen and runs help pages as that person until
-/// the card is removed. Ctrl+Alt+K (Konfiguracja) works in both paths.
+/// Punkt samoobsługowy (SessionMode.SelfService): Szybka pomoc and Komunikaty without the application Menu
+/// or taskbar. A card and PIN sign the person in inside Kiosk, and help pages run in that person's account.
+/// Removing the card ends only the person's Kiosk session. Ctrl+Alt+K opens Konfiguracja for administrators.
 /// </summary>
 internal sealed partial class KioskForm
 {
     private bool SelfService => config.SessionMode == SessionMode.SelfService;
-    private bool SelfServiceWindowsSession => SelfService && config.SelfServiceAuthentication == SelfServiceAuthentication.WindowsSession;
+    // Retained for the old configuration schema. OS session ownership now belongs only to WindowsShell.
+    private bool SelfServiceWindowsSession => false;
+    private bool localCardAttempted;
+    private Task? cardSessionClosing;
 
     /// <summary>The person signed in to Windows with the card and its PIN; null = nobody (pages open as a guest).</summary>
     private UserLogon? cardLogon;
@@ -35,6 +37,11 @@ internal sealed partial class KioskForm
     /// <summary>Nobody signed in: the card sign-in screen is (re)started in the start screen and waits for a tap.</summary>
     private void PrepareCardSignIn()
     {
+        if (cardSessionClosing != null)
+        {
+            if (!cardSessionClosing.IsCompleted) return;
+            cardSessionClosing = null; notice = null;
+        }
         // A page is open (e.g. Skonfiguruj MFA): no card sign-in screen meanwhile. It is a window of another program
         // inside the Kiosk's, and such a window shares the Kiosk's keyboard: typing in the page went nowhere while it
         // was starting, failing or waiting. It starts again on Strona główna.
@@ -116,7 +123,9 @@ internal sealed partial class KioskForm
             // A fresh sign-in screen follows after the usual pause (not at once: a screen per tick piled up).
             signInFailedAtMilliseconds = Environment.TickCount64;
             Audit.Write("selfservice_card_signin_failed", outcome.Message);
-            notice = "Nie udało się zalogować kartą: " + outcome.Message;
+            notice = outcome.Message.IndexOf("Anulowano", StringComparison.OrdinalIgnoreCase) >= 0
+                ? "Przyłóż kartę do czytnika, aby zalogować się ponownie."
+                : "Nie udało się zalogować kartą: " + outcome.Message;
             RefreshChrome();
             return;
         }
@@ -126,8 +135,15 @@ internal sealed partial class KioskForm
             return;
         }
         var logon = UserLogon.FromCard(signIn);
+        await CompleteCardSignInAsync(logon);
+    }
+
+    private async Task CompleteCardSignInAsync(UserLogon logon)
+    {
         string? cardSnapshot = null;
         cardSignInFinalizing = true;
+        notice = null;
+        RefreshChrome();
         try
         {
             // Windows can reset the card while finishing sign-in. Capture two matching observations.
@@ -212,6 +228,12 @@ internal sealed partial class KioskForm
 
     private void SelfServiceTick()
     {
+        if (verifying) return;
+        if (cardSessionClosing != null)
+        {
+            if (!cardSessionClosing.IsCompleted) return;
+            cardSessionClosing = null; notice = null; RefreshChrome();
+        }
         if (SelfServiceWindowsSession)
         {
             if (!config.TestMode) ShellTick();
@@ -221,7 +243,16 @@ internal sealed partial class KioskForm
         if (key != cardKey) nextPeriodicChromeRefreshMilliseconds = 0;
         if (key != null && key != cardKey) cardPlacedAtMilliseconds = Environment.TickCount64;
         cardKey = key;
-        PrepareCardSignIn();
+        if (config.CardAuthentication == CardAuthentication.Local)
+        {
+            if (key == null) localCardAttempted = false;
+            else if (cardLogon == null && !localCardAttempted)
+            {
+                localCardAttempted = true;
+                _ = StartLocalSelfServiceAsync();
+            }
+        }
+        else PrepareCardSignIn();
         ObserveSignedInCard(key);
         if (cardLogon == null && notice != null && noticeUntilMilliseconds is { } noticeDeadline && Environment.TickCount64 >= noticeDeadline)
         { noticeUntilMilliseconds = null; notice = null; RefreshChrome(); }
@@ -286,9 +317,9 @@ internal sealed partial class KioskForm
         helpBrowser?.Close();
         CloseCardPage();
         DropReusablePage();
-        cardLogon.Dispose(); // Signs the person out of Windows here: their Edge closes with it.
+        cardSessionClosing = cardLogon.CloseAsync();
         cardLogon = null;
-        notice = null;
+        notice = "Zamykam sesję…";
         if (reason != null) Audit.Write(reason);
         RefreshChrome();
     }
@@ -438,27 +469,30 @@ internal sealed partial class KioskForm
 
     private void SelfServiceStatus()
     {
+        desktop.StatusBusy = cardSessionClosing is { IsCompleted: false } || cardSignInFinalizing;
+        desktop.EmphasizeStatus(false);
         if (SelfServiceWindowsSession)
         {
             var signingOut = shellSignOut.Reason != null;
             var name = signingOut ? "Wylogowywanie" : current?.Name ?? Environment.UserName;
             desktop.ShowSignIn(false);
             desktop.UpdateStatus(name, notice ?? (signingOut ? "Trwa kończenie sesji Windows." :
-                "Wybierz zadanie z Szybkiej pomocy. Strony użyją Twojego konta Windows. Po pracy zakończ sesję."),
+                config.SelfServiceSignedInMessage),
                 person: signingOut ? null : name);
         }
         else if (cardLogon != null)
         {
             var name = cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
             desktop.ShowSignIn(false);
-            desktop.UpdateStatus(name, notice ?? "Wybierz zadanie z Szybkiej pomocy – strony otworzą się na Twoim koncie. " +
-                "Zabierz kartę z czytnika, aby się wylogować.", person: name);
+            desktop.UpdateStatus(name, notice ?? config.SelfServiceSignedInMessage, person: name);
         }
         else if (signInScreen != null && !(notice != null && noticeUntilMilliseconds is { } deadline && Environment.TickCount64 < deadline)) desktop.ShowSignIn(true);
         else
         {
             desktop.ShowSignIn(false);
-            desktop.UpdateStatus("Logowanie kartą", notice ?? "Przygotowuję logowanie kartą…");
+            desktop.UpdateStatus("Logowanie", notice ??
+                (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." : "Dotknij czytnika kluczem zabezpieczeń lub włóż ten klucz do portu USB."));
+            desktop.EmphasizeStatus(!cardSignInFinalizing);
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         // The name in large letters (without the domain when there is no friendly name), the account under it.
@@ -469,16 +503,10 @@ internal sealed partial class KioskForm
             login: SelfServiceWindowsSession ? current?.Identity.Upn : cardLogon?.DisplayName);
     }
 
-    /// <summary>"Zaloguj kartą" shows the card sign-in (again: back to the tiles); "Zakończ sesję" signs the person out.</summary>
+    /// <summary>Ends only the person's card session. The workstation's Windows session stays signed in.</summary>
     private void PortalAccount()
     {
-        if (SelfServiceWindowsSession)
-        {
-            if (config.TestMode) { notice = "Tryb testowy: wylogowanie Windows jest wyłączone."; RefreshChrome(); }
-            else SignOutWindows("selfservice_signed_out");
-            return;
-        }
-        // The card sign-in waits on Strona główna all the time (as in build-176); the button only signs out.
+        if (AnnouncementsOnly) return;
         if (cardLogon != null) EndCardSession("selfservice_signed_out");
         RefreshChrome();
     }
