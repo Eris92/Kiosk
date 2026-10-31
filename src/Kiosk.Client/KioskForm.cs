@@ -89,6 +89,9 @@ internal sealed partial class KioskForm : Form
     private Func<UserSession, Task<bool>>? verifyPersonForTest;
 #endif
     private CancellationTokenSource? pinCheck;
+    private Task<FidoSignIn?>? stationSignInStarting;
+    private FidoSignIn? stationSignInReady;
+    private long stationSignInRetryAfter;
     private readonly WindowsCardMonitor shellCardMonitor = new();
     private long? disconnectedSinceMilliseconds;
     private long? shellLockRequestedAtMilliseconds;
@@ -157,7 +160,13 @@ internal sealed partial class KioskForm : Form
         FormClosing += (_, e) =>
         {
             if (!closeConfirmed && !ConfirmEnd(sessions.Values)) { e.Cancel = true; return; }
-            timer.Stop(); CloseAllSessions("client_exit"); reader.Dispose();
+            timer.Stop();
+            stationSignInReady?.Dispose();
+            stationSignInReady = null;
+            if (stationSignInStarting is { } starting)
+                _ = starting.ContinueWith(t => { if (t.Status == TaskStatus.RanToCompletion) t.Result?.Dispose(); });
+            stationSignInStarting = null;
+            CloseAllSessions("client_exit"); reader.Dispose();
         };
         FormClosed += (_, _) =>
         {
@@ -196,6 +205,7 @@ internal sealed partial class KioskForm : Form
                 UpdateMainIdle();
                 return;
             }
+            PrepareStationSignIn();
             // While a PIN check runs the card is reset on purpose; presence changes are evaluated afterwards.
             if (!verifying)
             {
@@ -487,7 +497,14 @@ internal sealed partial class KioskForm : Form
         {
             // Keep the instruction visible while the native provider starts. Its embedded
             // surface is empty until the broker has created and attached its window.
-            var signIn = await FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi);
+            var signIn = stationSignInReady;
+            stationSignInReady = null;
+            if (signIn == null && stationSignInStarting is { } starting)
+            {
+                stationSignInStarting = null;
+                signIn = await starting;
+            }
+            signIn ??= await FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi);
             if (signIn == null) return new(null, FidoSignIn.LastError);
             desktop.StatusBusy = false;
             desktop.ShowSignIn(true);
@@ -501,6 +518,29 @@ internal sealed partial class KioskForm : Form
             if (current != null) current.Notice = null;
             cardKey = reader.Snapshot(config.ReaderName);
         }
+    }
+
+    /// <summary>Keep a hidden Windows card provider listening before the next person's key arrives.</summary>
+    private void PrepareStationSignIn()
+    {
+        if (config.SessionMode != SessionMode.Kiosk || config.CardAuthentication != CardAuthentication.Sso ||
+            verifying || stationSignInReady != null || Environment.TickCount64 < stationSignInRetryAfter) return;
+        if (stationSignInStarting is { } pending)
+        {
+            if (!pending.IsCompleted) return;
+            stationSignInStarting = null;
+            if (pending.Status == TaskStatus.RanToCompletion && pending.Result != null)
+            {
+                stationSignInReady = pending.Result;
+                Audit.Write("station_fido_ready");
+                return;
+            }
+            stationSignInRetryAfter = Environment.TickCount64 + 10_000;
+            Audit.Write("station_fido_prepare_failed", FidoSignIn.LastError);
+            return;
+        }
+        Audit.Write("station_fido_prepare_start");
+        stationSignInStarting = FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi);
     }
 
     private async Task<CardPin.Result> VerifyFidoPinAsync()

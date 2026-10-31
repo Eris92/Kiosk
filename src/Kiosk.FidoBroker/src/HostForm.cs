@@ -805,7 +805,7 @@ namespace FidoRun
         // itself (no "OK" link to press). Windows reports it when the key still lies on the reader instead of being tapped.
         private bool problemShown;
         private bool awaitingCardRemoval;
-        private const string WaitingForCard = "Dotknij czytnika kluczem zabezpieczeń lub włóż ten klucz do portu USB.";
+        private const string WaitingForCard = "Przyłóż klucz do czytnika lub włóż go do USB, a następnie dotknij klucza. Jeśli był już włożony, wyjmij go i włóż ponownie.";
         internal static bool IsRejectedPin(string message)
         {
             string value = (message ?? "").ToLowerInvariant();
@@ -836,7 +836,7 @@ namespace FidoRun
             }
             if (failed)
             {
-                message = "Zabierz klucz z czytnika i dotknij nim czytnika ponownie, aby się zalogować.";
+                message = "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować.";
                 awaitingCardRemoval = true;
                 ScheduleRetry();
             }
@@ -902,7 +902,7 @@ namespace FidoRun
                 buttons.Visible = hasInput && !working;
                 fields.Visible = !working;
                 if (signInTitle != null) signInTitle.Text = "Logowanie";
-                providerStatus.Text = awaitingCardRemoval ? "Zabierz klucz z czytnika i dotknij nim czytnika ponownie, aby się zalogować." : working ? "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, aby kontynuować." : WaitingForCard;
+                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : working ? "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, aby kontynuować." : WaitingForCard;
                 providerStatus.Visible = true;
                 providerStatus.ForeColor = awaitingCardRemoval ? ProblemColor() : kioskAccent;
                 state.Visible = false;
