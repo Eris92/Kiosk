@@ -805,6 +805,7 @@ namespace FidoRun
         // itself (no "OK" link to press). Windows reports it when the key still lies on the reader instead of being tapped.
         private bool problemShown;
         private bool awaitingCardRemoval;
+        private bool touchRequested;
         private const string WaitingForCard = "Przyłóż klucz do czytnika lub włóż go do USB, a następnie dotknij klucza. Jeśli był już włożony, wyjmij go i włóż ponownie.";
         internal static bool IsRejectedPin(string message)
         {
@@ -821,15 +822,17 @@ namespace FidoRun
             if (String.IsNullOrWhiteSpace(message)) message = working ? "Sprawdzanie PIN-u…" : "Przyłóż kartę do czytnika.";
             string lower = message.ToLowerInvariant();
             bool rejectedPin = IsRejectedPin(message);
-            if (rejectedPin) { working = false; ApplyInteractionState(); }
+            if (rejectedPin) { working = false; touchRequested = false; ApplyInteractionState(); }
             bool failed = lower.Contains("nie można zakończyć logowania") || lower.Contains("couldn't complete") || lower.Contains("can't complete");
             bool unknown = lower.Contains("nieznany") || lower.Contains("unknown");
             bool tapAgain = lower.StartsWith("dotknij") || lower.StartsWith("włóż") || lower.StartsWith("touch") || lower.StartsWith("insert");
+            if (working && !tapAgain && !lower.StartsWith("przyłóż")) touchRequested = false;
             if (awaitingCardRemoval && !rejectedPin && !unknown) return;
             if (!working && (tapAgain || lower.StartsWith("przyłóż"))) message = WaitingForCard;
             if (working && !failed && !unknown && (tapAgain || lower.StartsWith("przyłóż") || lower.StartsWith("zalogowano")))
             {
-                label.Text = "Trwa logowanie…";
+                touchRequested = tapAgain || lower.StartsWith("przyłóż");
+                label.Text = touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Trwa logowanie…";
                 label.Visible = true;
                 label.ForeColor = kioskAccent;
                 return;
@@ -902,7 +905,7 @@ namespace FidoRun
                 buttons.Visible = hasInput && !working;
                 fields.Visible = !working;
                 if (signInTitle != null) signInTitle.Text = "Logowanie";
-                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : working ? "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, aby kontynuować." : WaitingForCard;
+                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : working ? touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, potem dotknij klucza." : WaitingForCard;
                 providerStatus.Visible = true;
                 providerStatus.ForeColor = awaitingCardRemoval ? ProblemColor() : kioskAccent;
                 state.Visible = false;
@@ -912,7 +915,7 @@ namespace FidoRun
             submit.Enabled = !working && canSubmit && !preparingFields && !fieldUpdatesFailed && (hasInput || serializationAvailable);
             fields.Enabled = !working && canSubmit && !fieldUpdatesFailed;
         }
-        public void Busy(bool value) { Post(delegate { if (signedInAccount != null) return; working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
+        public void Busy(bool value) { Post(delegate { if (signedInAccount != null) return; if (value && !working) touchRequested = false; working = value; ApplyInteractionState(); if (!value) FocusPin(); }); }
 
         // Diagnostics for "the PIN box takes no keys": focus changes and how many characters arrived, never the PIN.
         // A click on the box takes the keyboard explicitly, also when the Kiosk around this window holds it.

@@ -88,6 +88,7 @@ internal static class KioskTheme
 /// <summary>The desktop shown between apps and while the card session is locked.</summary>
 internal sealed partial class DesktopView : UserControl
 {
+    internal enum CardLoginStage { Waiting, Preparing, Provider, Verifying, Closing, Error }
     private readonly Label brand = new() { Text = "Kiosk", AutoSize = false };
     private readonly Label subtitle = new() { Text = "Twój pulpit pracy", AutoSize = false };
     private readonly PictureBox logo = new() { SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.Transparent, Visible = false };
@@ -172,6 +173,8 @@ internal sealed partial class DesktopView : UserControl
     /// <summary>The card sign-in (Windows' card + PIN, see <see cref="FidoSignIn"/>) is drawn inside this place of the card.</summary>
     private readonly Panel signInPlace = new() { Visible = false };
     private bool signingIn;
+    private bool cardLoginActive;
+    internal CardLoginStage? CurrentCardLoginStage { get; private set; }
     private bool announcementsOnly;
     internal bool AnnouncementsOnly
     {
@@ -280,6 +283,30 @@ internal sealed partial class DesktopView : UserControl
     private string? person;
     internal void EmphasizeStatus(bool emphasize) => detail.ForeColor = emphasize ? KioskTheme.AccentLine : KioskTheme.Muted;
 
+    /// <summary>The same login card and geometry for Station and SelfService; only its state changes.</summary>
+    internal void SetCardLogin(CardLoginStage stage, string message)
+    {
+        bool wasActive = cardLoginActive;
+        cardLoginActive = true;
+        CurrentCardLoginStage = stage;
+        StatusBusy = stage is CardLoginStage.Preparing or CardLoginStage.Verifying or CardLoginStage.Closing;
+        ShowSignIn(stage == CardLoginStage.Provider);
+        UpdateStatus("Logowanie", message);
+        EmphasizeStatus(stage == CardLoginStage.Waiting);
+        if (!wasActive) ArrangeControls();
+    }
+
+    internal void ClearCardLogin()
+    {
+        if (!cardLoginActive) return;
+        cardLoginActive = false;
+        CurrentCardLoginStage = null;
+        StatusBusy = false;
+        ShowSignIn(false);
+        EmphasizeStatus(false);
+        ArrangeControls();
+    }
+
     /// <summary><paramref name="person"/>: a signed-in person's name, shown with their initials in a circle instead of a greeting.</summary>
     internal void UpdateStatus(string title, string description, bool locked = false, string buttonText = "Wznów sesję", string? person = null)
     {
@@ -321,7 +348,7 @@ internal sealed partial class DesktopView : UserControl
         bool home = portal && nav.Selected.Length == 0;
         // The card sign-in as in build-176: shown whenever it is ready and nothing else (page, question, PIN) is in the card.
         bool signIn = signingIn && !AskingPin && !Asking && !page;
-        bool status = !signIn && !page && !Asking && (!portal || home);
+        bool status = !signIn && !page && !Asking && (!portal || home || cardLoginActive);
         card.SuspendLayout();
         if (pageContent != null) pageContent.Visible = page;
         if (sideContent != null) sideContent.Visible = page;
@@ -539,8 +566,8 @@ internal sealed partial class DesktopView : UserControl
 
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
         bool personRow = person != null && !locked && !AskingPin && !Asking;
-        int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
-        if (portal && !Asking && !AskingPin && !locked) cardHeight = Scale(360);
+        int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : cardLoginActive || signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
+        if (portal && !Asking && !AskingPin && !locked && !cardLoginActive) cardHeight = Scale(360);
         bool page = pageContent != null && !AskingPin && !Asking;
         if (portal)
         {

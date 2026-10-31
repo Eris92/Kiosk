@@ -709,7 +709,7 @@ internal sealed partial class DesktopView
     internal void SetPageTitle(string? title) { pageTitleText = title; UpdatePortalHeader(); }
 
     /// <summary>In the portal the card is on screen only for the sign-in someone asked for, a question or the PIN.</summary>
-    private bool PortalCard => signingIn && signInWanted || AskingPin || Asking || PortalHome;
+    private bool PortalCard => cardLoginActive || signingIn && signInWanted || AskingPin || Asking || PortalHome;
     /// <summary>"Strona główna": the start screen as before, the card (sign-in, PIN, greeting) in the middle and the messages under it.</summary>
     private bool PortalHome => portal && nav.Selected.Length == 0;
     private bool showSidebar = true;
@@ -751,6 +751,17 @@ internal sealed partial class DesktopView
                 throw new InvalidOperationException("Sidebar navigation variants overlap.");
         }
         view.ShowPage(null);
+        Rectangle? loginFrame = null;
+        foreach (DesktopView.CardLoginStage stage in Enum.GetValues<DesktopView.CardLoginStage>())
+        {
+            view.SetCardLogin(stage, "Test logowania");
+            loginFrame ??= view.card.Bounds;
+            if (view.card.Bounds != loginFrame || view.resume.Visible ||
+                (view.signInPlace.Visible && view.heading.Visible) ||
+                (stage == DesktopView.CardLoginStage.Provider && !view.signInPlace.Visible))
+                throw new InvalidOperationException("Login stages changed the frame or showed two login screens.");
+        }
+        view.ClearCardLogin();
         window.Close();
     }
     internal bool ShowSidebar

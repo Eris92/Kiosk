@@ -500,13 +500,11 @@ internal sealed partial class KioskForm
 
     private void SelfServiceStatus()
     {
-        desktop.StatusBusy = cardSessionClosing is { IsCompleted: false } || cardSignInFinalizing;
-        desktop.EmphasizeStatus(false);
         if (SelfServiceWindowsSession)
         {
             var signingOut = shellSignOut.Reason != null;
             var name = signingOut ? "Wylogowywanie" : current?.Name ?? Environment.UserName;
-            desktop.ShowSignIn(false);
+            desktop.ClearCardLogin();
             desktop.UpdateStatus(name, notice ?? (signingOut ? "Trwa kończenie sesji Windows." :
                 config.SelfServiceSignedInMessage),
                 person: signingOut ? null : name);
@@ -514,16 +512,19 @@ internal sealed partial class KioskForm
         else if (cardLogon != null)
         {
             var name = cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
-            desktop.ShowSignIn(false);
+            desktop.ClearCardLogin();
             desktop.UpdateStatus(name, notice ?? config.SelfServiceSignedInMessage, person: name);
         }
-        else if (signInScreen != null && !(notice != null && noticeUntilMilliseconds is { } deadline && Environment.TickCount64 < deadline)) desktop.ShowSignIn(true);
+        else if (signInScreen != null && !(notice != null && noticeUntilMilliseconds is { } deadline && Environment.TickCount64 < deadline))
+            desktop.SetCardLogin(DesktopView.CardLoginStage.Provider, "Przyłóż klucz lub włóż go do USB, potem dotknij klucza.");
         else
         {
-            desktop.ShowSignIn(false);
-            desktop.UpdateStatus("Logowanie", notice ??
-                (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." : "Dotknij czytnika kluczem zabezpieczeń lub włóż ten klucz do portu USB."));
-            desktop.EmphasizeStatus(!cardSignInFinalizing);
+            var stage = cardSessionClosing is { IsCompleted: false } ? DesktopView.CardLoginStage.Closing :
+                cardSignInFinalizing ? DesktopView.CardLoginStage.Verifying :
+                notice != null ? DesktopView.CardLoginStage.Error :
+                signInStarting != null ? DesktopView.CardLoginStage.Preparing : DesktopView.CardLoginStage.Waiting;
+            desktop.SetCardLogin(stage, notice ??
+                (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." : "Przyłóż klucz lub włóż go do USB, potem dotknij klucza."));
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         // The name in large letters (without the domain when there is no friendly name), the account under it.

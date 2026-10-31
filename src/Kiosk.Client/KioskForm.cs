@@ -491,7 +491,7 @@ internal sealed partial class KioskForm : Form
         // The PIN screen is drawn in the card, where a Szybka pomoc page would hide it.
         helpBrowser?.Close();
         if (current != null) current.Notice = "Przygotowuję logowanie kartą…";
-        desktop.StatusBusy = true;
+        desktop.SetCardLogin(DesktopView.CardLoginStage.Preparing, "Przygotowuję logowanie kartą…");
         RefreshChrome();
         try
         {
@@ -506,15 +506,13 @@ internal sealed partial class KioskForm : Form
             }
             signIn ??= await FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi);
             if (signIn == null) return new(null, FidoSignIn.LastError);
-            desktop.StatusBusy = false;
-            desktop.ShowSignIn(true);
+            desktop.SetCardLogin(DesktopView.CardLoginStage.Provider, "Wpisz PIN karty, potem dotknij klucza.");
             return await signIn.WaitAsync();
         }
         finally
         {
             verifying = false;
-            desktop.StatusBusy = false;
-            desktop.ShowSignIn(false);
+            desktop.SetCardLogin(DesktopView.CardLoginStage.Verifying, "Kończę logowanie…");
             if (current != null) current.Notice = null;
             cardKey = reader.Snapshot(config.ReaderName);
         }
@@ -1184,19 +1182,37 @@ internal sealed partial class KioskForm : Form
             ? "Wyjęta karta: sesja czeka " + FormatDuration(config.ChangeUserAfterSeconds) + ", potem zostanie zamknięta."
             : "Sesja czeka na powrót karty aż do wylogowania.";
         if (shellSignOut.Reason != null)
+        {
+            desktop.ClearCardLogin();
             desktop.UpdateStatus("Wylogowywanie", notice ?? "Trwa kończenie sesji Windows.");
+        }
         else if (current is { Locked: true } locked)
         {
-            var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
-            var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
-            desktop.UpdateStatus(title, detail, locked: true, locked.Verified ? "Wznów sesję" : "Zaloguj");
+            if (config.CardAuthentication.HasValue)
+            {
+                var stage = verifying && desktop.CurrentCardLoginStage is DesktopView.CardLoginStage.Provider or DesktopView.CardLoginStage.Preparing
+                    ? desktop.CurrentCardLoginStage.Value
+                    : verifying ? DesktopView.CardLoginStage.Verifying
+                    : locked.Notice != null ? DesktopView.CardLoginStage.Error : DesktopView.CardLoginStage.Waiting;
+                desktop.SetCardLogin(stage, locked.Notice ?? (verifying ? "Sprawdzam kartę…" : "Wpisz PIN karty, aby wrócić do swojej sesji."));
+            }
+            else
+            {
+                desktop.ClearCardLogin();
+                var title = locked.Verified ? "Sesja zablokowana" : "Logowanie";
+                var detail = locked.Name + "\n" + (locked.Notice ?? (verifying ? "Czekam na potwierdzenie…" : UnlockInstruction));
+                desktop.UpdateStatus(title, detail, locked: true, locked.Verified ? "Wznów sesję" : "Zaloguj");
+            }
         }
         else if (current != null)
+        {
+            desktop.ClearCardLogin();
             desktop.UpdateStatus(current.Name, notice ?? current.Notice ?? config.SelfServiceSignedInMessage, person: current.Name);
+        }
         else if (requireRemoval)
-            desktop.UpdateStatus("Wyjmij kartę", "Sesja została zamknięta. Wyjmij kartę i włóż ją ponownie, aby zacząć od nowa.");
+            desktop.SetCardLogin(DesktopView.CardLoginStage.Waiting, "Sesja została zamknięta. Wyjmij kartę i włóż ją ponownie, aby zacząć od nowa.");
         else
-            desktop.UpdateStatus("Przyłóż kartę", notice ?? (others > 0
+            desktop.SetCardLogin(notice == null ? DesktopView.CardLoginStage.Waiting : DesktopView.CardLoginStage.Error, notice ?? (others > 0
                 ? "Zachowane sesje: " + others + ". Każdy wraca do swojej sesji, przykładając swoją kartę.\n" + retention
                 : "Włóż kartę, aby rozpocząć pracę.\n" + reader.Status.Split('\n')[0]));
     }
