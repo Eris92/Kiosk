@@ -117,9 +117,7 @@ internal sealed partial class KioskForm
             // A fresh sign-in screen follows after the usual pause (not at once: a screen per tick piled up).
             signInFailedAtMilliseconds = Environment.TickCount64;
             Audit.Write("selfservice_card_signin_failed", outcome.Message);
-            notice = outcome.Message.IndexOf("Anulowano", StringComparison.OrdinalIgnoreCase) >= 0
-                ? "Przyłóż kartę do czytnika, aby zalogować się ponownie."
-                : "Nie udało się zalogować kartą: " + outcome.Message;
+            notice = CardLoginModule.FailureMessage(outcome.Message);
             RefreshChrome();
             return;
         }

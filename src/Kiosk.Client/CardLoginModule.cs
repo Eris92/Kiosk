@@ -15,6 +15,17 @@ internal sealed class CardLoginModule : IDisposable
     internal bool HasPrepared => ready != null;
     internal bool HasPending => starting != null;
 
+    internal static string FailureMessage(string message)
+    {
+        if (message.Contains("Anulowano", StringComparison.OrdinalIgnoreCase))
+            return "Logowanie anulowane. Wyjmij klucz i włóż go ponownie, aby spróbować jeszcze raz.";
+        if (message.Contains("PIN", StringComparison.OrdinalIgnoreCase) &&
+            (message.Contains("błęd", StringComparison.OrdinalIgnoreCase) ||
+             message.Contains("nieprawid", StringComparison.OrdinalIgnoreCase)))
+            return "Błędny PIN. Spróbuj ponownie.";
+        return "Nie udało się zalogować kartą: " + message;
+    }
+
     internal void Prepare(IntPtr place, int dpi)
     {
         if (disposed || starting != null || ready != null) return;

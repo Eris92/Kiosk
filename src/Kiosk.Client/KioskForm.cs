@@ -413,7 +413,7 @@ internal sealed partial class KioskForm : Form
             if (signedIn == null) { session.Notice ??= "Logowanie anulowane."; RefreshChrome(); return; }
             if (signedIn.SignIn == null)
             {
-                session.Notice = "Nie udało się zalogować kartą: " + signedIn.Message;
+                session.Notice = CardLoginModule.FailureMessage(signedIn.Message);
                 Audit.Write("card_signin_failed", signedIn.Message);
                 RefreshChrome();
                 return;
@@ -2621,6 +2621,14 @@ internal sealed partial class KioskForm : Form
             !FidoSignIn.IsUnsupported("Native CTAP assertion entry is unavailable") ||
             FidoSignIn.IsUnsupported("The card sign-in process ended unexpectedly"))
             throw new InvalidOperationException("Card sign-in provider refusal classification failed.");
+        var cancellationText = CardLoginModule.FailureMessage("Anulowano logowanie kartą.");
+        var wrongPinText = CardLoginModule.FailureMessage("Nieprawidłowy PIN");
+        var otherFailureText = CardLoginModule.FailureMessage("Błąd dostawcy");
+        if (!cancellationText.StartsWith("Logowanie anulowane.", StringComparison.Ordinal) ||
+            !wrongPinText.StartsWith("Błędny PIN.", StringComparison.Ordinal) ||
+            !otherFailureText.StartsWith("Nie udało się zalogować kartą:", StringComparison.Ordinal))
+            throw new InvalidOperationException("Card login failure wording differs between kiosk modes: " +
+                cancellationText + " | " + wrongPinText + " | " + otherFailureText);
 
         var categorized = new HelpAction { Category = " Pomoc / Konto // " };
         if (categorized.CategoryPath != "Pomoc/Konto" ||
