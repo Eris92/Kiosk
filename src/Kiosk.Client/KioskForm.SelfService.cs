@@ -18,7 +18,6 @@ internal sealed partial class KioskForm
     private UserLogon? cardLogon;
     /// <summary>The card sign-in screen inside the Kiosk, listening for a tap; null while it starts or after it ended.</summary>
     private FidoSignIn? signInScreen;
-    private Task<FidoSignIn?>? signInStarting;
     private bool cardSignInFinalizing;
     private long? signInFailedAtMilliseconds;
     /// <summary>Card sign-in screens that did not start in a row: each waits longer (10 s, 20 s… up to 5 minutes).</summary>
@@ -54,15 +53,10 @@ internal sealed partial class KioskForm
             RefreshChrome();
         }
         if (cardLogon != null || signInScreen != null || registeringCard || cardSignInFinalizing) return;
-        if (signInStarting != null)
+        if (cardLogin.HasPending)
         {
-            if (!signInStarting.IsCompleted) return;
-            var ready = signInStarting.Status == TaskStatus.RanToCompletion ? signInStarting.Result : null;
-            // An exception outside PrepareAsync's own handling was lost before: written down and shown.
-            var reason = signInStarting.Exception?.GetBaseException() is { } fault
-                ? fault.GetType().Name + ": " + fault.Message : FidoSignIn.LastError;
-            if (signInStarting.Exception != null) Audit.Write("fido_prepare_failed", signInStarting.Exception.GetBaseException().ToString());
-            signInStarting = null;
+            if (!cardLogin.TryCollect(out var reason)) return;
+            var ready = cardLogin.TakeReady();
             if (ready != null && desktop.Page != null) { _ = Task.Run(ready.Dispose); return; }   // A page opened meanwhile.
             if (ready == null)
             {
@@ -93,8 +87,7 @@ internal sealed partial class KioskForm
         var pause = TimeSpan.FromSeconds(Math.Min(300, 10 << Math.Min(5, Math.Max(0, signInStartFailures - 1))));
         if (signInFailedAtMilliseconds is { } failedAt && Environment.TickCount64 - failedAt < pause.TotalMilliseconds) return;
         Audit.Write("fido_prepare_start");
-        try { signInStarting = FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi); }
-        catch (Exception ex) { signInStarting = Task.FromException<FidoSignIn?>(ex); }
+        cardLogin.Prepare(desktop.SignInPlace, desktop.DeviceDpi);
     }
 
     /// <summary>The person taps the card and types the PIN in the sign-in screen; then their Windows session is ready.</summary>
@@ -522,7 +515,7 @@ internal sealed partial class KioskForm
             var stage = cardSessionClosing is { IsCompleted: false } ? DesktopView.CardLoginStage.Closing :
                 cardSignInFinalizing ? DesktopView.CardLoginStage.Verifying :
                 notice != null ? DesktopView.CardLoginStage.Error :
-                signInStarting != null ? DesktopView.CardLoginStage.Preparing : DesktopView.CardLoginStage.Waiting;
+                cardLogin.HasPending ? DesktopView.CardLoginStage.Preparing : DesktopView.CardLoginStage.Waiting;
             desktop.SetCardLogin(stage, notice ??
                 (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." : "Przyłóż klucz lub włóż go do USB, potem dotknij klucza."));
         }
