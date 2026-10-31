@@ -384,7 +384,8 @@ namespace FidoRun
             {
                 submissionConsent.Clear();
                 serializationRequested = false;
-                view.Busy(false);
+                // HostForm applies the error and re-enables the PIN field together.
+                // A separate Busy(false) first painted a normal waiting frame.
                 message = "Błędny PIN. Spróbuj ponownie.";
             }
             log.Write("NativeStatusMessage: " + TraceLog.DisplayText(message));
@@ -410,7 +411,6 @@ namespace FidoRun
             {
                 submissionConsent.Clear();
                 serializationRequested = false;
-                view.Busy(false);
                 display = "Błędny PIN. Spróbuj ponownie.";
             }
             log.Write("NativeBioFeedback: VisualState=" + visualState + "; Priority=" + priority + "; Text=" + display);
