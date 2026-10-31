@@ -480,9 +480,27 @@ internal sealed partial class KioskForm : Form
         verifying = true;
         // The PIN screen is drawn in the card, where a Szybka pomoc page would hide it.
         helpBrowser?.Close();
-        desktop.ShowSignIn(true);
-        try { return await FidoSignIn.SignInAsync(desktop.SignInPlace, desktop.DeviceDpi); }
-        finally { verifying = false; desktop.ShowSignIn(false); cardKey = reader.Snapshot(config.ReaderName); }
+        if (current != null) current.Notice = "Przygotowuję logowanie kartą…";
+        desktop.StatusBusy = true;
+        RefreshChrome();
+        try
+        {
+            // Keep the instruction visible while the native provider starts. Its embedded
+            // surface is empty until the broker has created and attached its window.
+            var signIn = await FidoSignIn.PrepareAsync(desktop.SignInPlace, desktop.DeviceDpi);
+            if (signIn == null) return new(null, FidoSignIn.LastError);
+            desktop.StatusBusy = false;
+            desktop.ShowSignIn(true);
+            return await signIn.WaitAsync();
+        }
+        finally
+        {
+            verifying = false;
+            desktop.StatusBusy = false;
+            desktop.ShowSignIn(false);
+            if (current != null) current.Notice = null;
+            cardKey = reader.Snapshot(config.ReaderName);
+        }
     }
 
     private async Task<CardPin.Result> VerifyFidoPinAsync()
