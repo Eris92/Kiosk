@@ -2696,6 +2696,8 @@ internal sealed partial class KioskForm : Form
             sites.Allows("https://evilportal.example.pl/") || sites.Allows("https://portal.example.pl.evil.test/") ||
             sites.Allows("file:///C:/") || !new SitePolicy(false, [], []).Allows("https://any.example/"))
             throw new InvalidOperationException("Browser site policy failed.");
+        if (People.FriendlyName("", "AzureAD\\k.lechmyc") != "K Lechmyc" || People.FriendlyName("Jan Kowalski", "AzureAD\\k.lechmyc") != "Jan Kowalski")
+            throw new InvalidOperationException("A login was shown instead of the person's name.");
         using (var restricted = new BrowserView([new Bookmark { Name = "Portal", Url = "https://portal.example.pl/" }], sites))
             if (restricted.Controls.OfType<FlowLayoutPanel>().Any() || restricted.Controls.OfType<Panel>().SelectMany(p => p.Controls.OfType<TextBox>()).Any())
                 throw new InvalidOperationException("Address bar visible in bookmarks-only mode.");

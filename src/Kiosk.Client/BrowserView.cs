@@ -336,7 +336,8 @@ internal sealed class BrowserView : UserControl
         {
             e.Handled = true;
             var extension = Path.GetExtension(e.ResultFilePath).ToLowerInvariant();
-            if (singlePage || BlockedDownloads.Contains(extension))
+            var source = e.DownloadOperation.Uri;
+            if (singlePage || BlockedDownloads.Contains(extension) || (IsWebAddress(source) && !policy.Allows(source)))
             {
                 e.Cancel = true;
                 Audit.Write("download_blocked", extension);
@@ -365,6 +366,13 @@ internal sealed class BrowserView : UserControl
         {
             // Links "in a new window" become a tab; window.opener keeps working (sign-in pop-ups).
             if (!IsWebAddress(e.Uri) && e.Uri != "about:blank") { e.Handled = true; return; }
+            // A blocked site gets no empty tab; a later redirect in an allowed tab still stops at NavigationStarting.
+            if (IsWebAddress(e.Uri) && !policy.Allows(e.Uri))
+            {
+                e.Handled = true;
+                Audit.Write("browser_blocked", new Uri(e.Uri).Host);
+                return;
+            }
             if (singlePage) { e.Handled = true; if (IsWebAddress(e.Uri)) core.Navigate(e.Uri); return; }
             var deferral = e.GetDeferral();
             Tab? opened = null;

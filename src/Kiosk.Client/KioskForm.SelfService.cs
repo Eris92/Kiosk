@@ -502,7 +502,7 @@ internal sealed partial class KioskForm
         }
         else if (cardLogon != null)
         {
-            var name = cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName;
+            var name = People.FriendlyName(cardLogon.FriendlyName, cardLogon.DisplayName);
             desktop.ClearCardLogin();
             desktop.UpdateStatus(name, notice ?? config.SelfServiceSignedInMessage, person: name);
         }
@@ -520,7 +520,7 @@ internal sealed partial class KioskForm
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         // The name in large letters (without the domain when there is no friendly name), the account under it.
         var person = SelfServiceWindowsSession ? shellSignOut.Reason == null ? current?.Name : null :
-            cardLogon == null ? null : cardLogon.FriendlyName.Length > 0 ? cardLogon.FriendlyName : cardLogon.DisplayName.Split('\\')[^1];
+            cardLogon == null ? null : People.FriendlyName(cardLogon.FriendlyName, cardLogon.DisplayName);
         desktop.SetPortalState(person, notice,
             warning: cardAwaySinceMilliseconds != null || notice?.StartsWith("Nie ", StringComparison.Ordinal) == true,
             login: SelfServiceWindowsSession ? current?.Identity.Upn : cardLogon?.DisplayName);
