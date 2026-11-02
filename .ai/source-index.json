@@ -1,0 +1,799 @@
+{
+  "version": 1,
+  "modules": {
+    "runtime-ui": 16,
+    "identity": 31,
+    "configuration": 13,
+    "browser-workloads": 12,
+    "content": 25,
+    "delivery": 34
+  },
+  "files": [
+    {
+      "path": ".github/workflows/build.yml",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "5eb62968485eec042dd0e05e09a07899d3f9d585"
+    },
+    {
+      "path": ".github/workflows/project-brain.yml",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "d44040e53a3bcfc1356c1612aac88074e0532ce5"
+    },
+    {
+      "path": ".gitignore",
+      "module": "delivery",
+      "kind": "other",
+      "blob": "f3c9ee65a65661d6c4a09f34d2fb437340683ab1"
+    },
+    {
+      "path": "Directory.Build.props",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "f8602219c93af079d58339a99949a33a61e43b93"
+    },
+    {
+      "path": "README.md",
+      "module": "delivery",
+      "kind": "documentation",
+      "blob": "4a4bbd4886351a2d961c4ec24f4ecfc94b7ae2cf"
+    },
+    {
+      "path": "config/client.development.json",
+      "module": "configuration",
+      "kind": "configuration",
+      "blob": "eae57718f11df5381b4f1620035f79e54e494d8f"
+    },
+    {
+      "path": "config/client.example.json",
+      "module": "configuration",
+      "kind": "configuration",
+      "blob": "0ec08ed39f3d59ea9c67b0e3c955c561795c7d61"
+    },
+    {
+      "path": "config/client.json",
+      "module": "configuration",
+      "kind": "configuration",
+      "blob": "6d53814ab0ed555d5c2f2263fd72899d9a488714"
+    },
+    {
+      "path": "config/intune/ShellLauncher.xml",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "88ab7385de8c0ffaff59dc33dc1d1f74cb7e198e"
+    },
+    {
+      "path": "config/news/aktualizacja.html",
+      "module": "content",
+      "kind": "other",
+      "blob": "bb33a78e340c5d855b432c5beb77703cd3351dfd"
+    },
+    {
+      "path": "config/news/aktualizacja.png",
+      "module": "content",
+      "kind": "asset",
+      "blob": "ef612e56b0dd2b4907a619a72351578e0d29fc22"
+    },
+    {
+      "path": "config/news/bhp-ochrona.mp4",
+      "module": "content",
+      "kind": "asset",
+      "blob": "d28ecb0e801ee4ed2c24d1ac73e3657647055e47"
+    },
+    {
+      "path": "config/news/kiosk-news.json",
+      "module": "content",
+      "kind": "configuration",
+      "blob": "213d3b6fa9162d9574b0638b05d4d2df874c9145"
+    },
+    {
+      "path": "config/news/pierwsza-pomoc.mp4",
+      "module": "content",
+      "kind": "asset",
+      "blob": "1dd3c1fa588155dc578985cebccb330c1ccdfd41"
+    },
+    {
+      "path": "config/news/witamy.png",
+      "module": "content",
+      "kind": "asset",
+      "blob": "9ed9a3c313a8be47b1b26050795382224284de7a"
+    },
+    {
+      "path": "config/news/zglos-problem.html",
+      "module": "content",
+      "kind": "other",
+      "blob": "8f27e4607b071de6901cb5742fc609486da249a9"
+    },
+    {
+      "path": "config/news/zglos-problem.png",
+      "module": "content",
+      "kind": "asset",
+      "blob": "35022941719f815d1c936112785e72adf988bc78"
+    },
+    {
+      "path": "docs/PRODUCTION_AUDIT.md",
+      "module": "delivery",
+      "kind": "documentation",
+      "blob": "df0a232d1dc8f57d662aab1a9e233002e626075e"
+    },
+    {
+      "path": "docs/SELFSERVICE_TEST_2026-10-30.md",
+      "module": "delivery",
+      "kind": "documentation",
+      "blob": "e1119eead9da4cca8085d8341ff09d4123c7c6da"
+    },
+    {
+      "path": "docs/STATUS.md",
+      "module": "delivery",
+      "kind": "documentation",
+      "blob": "0194f72b9ae83da7162e4add9f634b516d7f1e60"
+    },
+    {
+      "path": "global.json",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "e8a91cbf7506d4f30d2f278f1efdd6fce4156686"
+    },
+    {
+      "path": "scripts/Build-CredentialProvider.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "b3a6d32b803058f3f331eab5f208625feaa4e829"
+    },
+    {
+      "path": "scripts/Build.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "f4b3d311e7df332521d5ed043d2fbfe94cd4337c"
+    },
+    {
+      "path": "scripts/Deployment.Common.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "21c7949154ac4e5cd542e4d6b37808ee5f54af13"
+    },
+    {
+      "path": "scripts/Install-KioskCardService.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "42be2744478e2b4929debdb2c714ee75fab2b1b4"
+    },
+    {
+      "path": "scripts/Install-KioskConfig.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "e3e93f42873a0740d02ef3e4cbce333c01c56697"
+    },
+    {
+      "path": "scripts/Install-KioskCredentialProvider.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "a3326dabf440b81b24aad56f2e026044f6ce2ef5"
+    },
+    {
+      "path": "scripts/Install-KioskShell.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "5019551681aaad79976c7ef689b096aa3f7dff8c"
+    },
+    {
+      "path": "scripts/Invoke-CompactTest.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "0a06f196d30127d453f04d007944f811aed5f940"
+    },
+    {
+      "path": "scripts/New-Package.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "43a9a8e127909c0c8eb08cb0dc222297fcaa376d"
+    },
+    {
+      "path": "scripts/Set-KioskConfigSource.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "d38527fb324f6a451e97d5152496e66d1d6d11e6"
+    },
+    {
+      "path": "scripts/Set-KioskKeyboardLock.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "67ed37dcb598bf83f6ae8a267e6f178f651dff85"
+    },
+    {
+      "path": "scripts/Set-KioskSharedAccount.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "4c367ec97145aefeeffc3b36bf451096da7a4963"
+    },
+    {
+      "path": "scripts/Set-KioskSignInScreen.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "764efabe6b4361a08e4b6f038d1ef096dac7706c"
+    },
+    {
+      "path": "scripts/Test-BrokerPolicy.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "ae002619238c2d55f9bd0ad9dc649192a046477b"
+    },
+    {
+      "path": "scripts/Test-Prerequisites.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "39a6258023c536319cde3ca7932ad3f2e9316bca"
+    },
+    {
+      "path": "scripts/Test-Scripts.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "44c032861dd08aa977cf6f4a3e17c6ced0f66cd2"
+    },
+    {
+      "path": "scripts/Test-SharePointNewsScript.mjs",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "1d855ff95343d6af4c536c33d5160e94ec48826c"
+    },
+    {
+      "path": "scripts/Test.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "10fd85a951f217a20b91fc0acfcbf4c6a6d82476"
+    },
+    {
+      "path": "scripts/Verify-Package.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "dd3ae50f2aed036c8014408158bc7e3bd7e02fa1"
+    },
+    {
+      "path": "scripts/project_brain.py",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "8908b66187466fd184d6095df9a0a7fbe54aa09f"
+    },
+    {
+      "path": "scripts/tools/first-aid-video.py",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "3f057a31b916a91a795bfa082cfe3568ad948c0c"
+    },
+    {
+      "path": "scripts/tools/safety-gear-video.py",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "f079efb4b534793868e9ede59c4b05fc49d8ae60"
+    },
+    {
+      "path": "src/Common/BoundedLineReader.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "8e5f543141d0a4894e6c634fe3af8815b7d77d65"
+    },
+    {
+      "path": "src/Kiosk.Client/AdminSettings.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "2b84a12477ad70b2ad25b284f1c452211b65a751"
+    },
+    {
+      "path": "src/Kiosk.Client/ApplicationView.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "c4f0caf0115be26e3c212230687e768079cb7408"
+    },
+    {
+      "path": "src/Kiosk.Client/BoundedPipeLine.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "9e30297e35be6511ce7057df222a9d5a32b4a01c"
+    },
+    {
+      "path": "src/Kiosk.Client/BrowserProfileCleanup.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "078b07b9b7afe63dba65cd2424a31bdaa4fc73fc"
+    },
+    {
+      "path": "src/Kiosk.Client/BrowserView.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "5eb45619e920f90d1e4d4caaf5cb814c74d0cdb5"
+    },
+    {
+      "path": "src/Kiosk.Client/BuildVersion.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "8bb17a90fa2fa21715c47e4863525faf079c5064"
+    },
+    {
+      "path": "src/Kiosk.Client/CardPageHost.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "fc473f9584fd422290ac2161c58a3176f803f9e0"
+    },
+    {
+      "path": "src/Kiosk.Client/CardPin.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "370acd65a44e8bc259cea70fbd153e012093dccc"
+    },
+    {
+      "path": "src/Kiosk.Client/CardService.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "8bfc9be1f64f2faf55be283751522c58028e71f3"
+    },
+    {
+      "path": "src/Kiosk.Client/CardVault.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "3713481cbb279bf44ae917bdc94f69827c7d300f"
+    },
+    {
+      "path": "src/Kiosk.Client/CentralConfig.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "11e532538d84448501d051850907f2e14700853d"
+    },
+    {
+      "path": "src/Kiosk.Client/ColorPicker.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "c4c35e2effb5155cd94a565ca7efe41d1f910f74"
+    },
+    {
+      "path": "src/Kiosk.Client/Config.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "66d7e78ef2e36f0943ffae273bfbd8eadbd92fed"
+    },
+    {
+      "path": "src/Kiosk.Client/ConfigManager.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "cdf0b8fc891116ee19e43c0b70c1904d2ab845e1"
+    },
+    {
+      "path": "src/Kiosk.Client/Configuration.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "aa7b80176ac7160bd834125b8c20ca2e1016c65d"
+    },
+    {
+      "path": "src/Kiosk.Client/Ctap.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "c3da81569d4a32c6e3ad8a6c0b46b3e1c3e95c2f"
+    },
+    {
+      "path": "src/Kiosk.Client/DesktopView.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "9024ff9d2808475b07e6e5b1d5621c353b35123e"
+    },
+    {
+      "path": "src/Kiosk.Client/DisplayRotation.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "e9233f2131e281b2dcca614ebe6dd1f234fbb410"
+    },
+    {
+      "path": "src/Kiosk.Client/FidoSignIn.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "f5087853f68046cc3307ca5cf1ed6287f5c7f102"
+    },
+    {
+      "path": "src/Kiosk.Client/FilesHost.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "439ca169a7e38418f788e14cfb3518d5a5fff11a"
+    },
+    {
+      "path": "src/Kiosk.Client/FilesView.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "7a5b33c133e1ca89f9e3581aceaa502d3047ec0e"
+    },
+    {
+      "path": "src/Kiosk.Client/FirstRunSetup.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "4dff737ff51e22fc4215729c3ebb396f95cb4f40"
+    },
+    {
+      "path": "src/Kiosk.Client/FirstSignIn.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "11e187acbdef13c072479ea3f798611e965fd51e"
+    },
+    {
+      "path": "src/Kiosk.Client/Help.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "576643943038004b7e821d1f52d79d31647e3a51"
+    },
+    {
+      "path": "src/Kiosk.Client/IdleScreen.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "9fa678c4e6bbaccbf9916fe84b81e7fea9193df2"
+    },
+    {
+      "path": "src/Kiosk.Client/InputWatch.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "72d7c09cd55b220fd8de0d507ec439003bec2c75"
+    },
+    {
+      "path": "src/Kiosk.Client/Kiosk.Client.csproj",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "f55792bf7f7b69d1beef8f75dd6994cfc48713e2"
+    },
+    {
+      "path": "src/Kiosk.Client/KioskForm.SelfService.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "96d5b001754d3a19a17f5968795773ff6a4582eb"
+    },
+    {
+      "path": "src/Kiosk.Client/KioskForm.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "f95ac130fc03a176cb62d8db18cb9f172238f7eb"
+    },
+    {
+      "path": "src/Kiosk.Client/KioskIcons.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "0be1131b1f325f1745e66126e9f4c589a0d5e091"
+    },
+    {
+      "path": "src/Kiosk.Client/LocalAdministrators.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "856c12cba33e652d1f4d2951dc6d380fc48c014b"
+    },
+    {
+      "path": "src/Kiosk.Client/News.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "023dfe5e5ee83b5a90e72584a57fd79764907f6e"
+    },
+    {
+      "path": "src/Kiosk.Client/NewsAccount.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "9280413335e15876b6cad2b2d5620c0eb6bf0c2c"
+    },
+    {
+      "path": "src/Kiosk.Client/NewsSlides.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "7497be3a5f2c3b5edf9267d963ca02db9de2e345"
+    },
+    {
+      "path": "src/Kiosk.Client/NewsVideo.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "32fa18745fdf81affe547d7821ce621a865f847c"
+    },
+    {
+      "path": "src/Kiosk.Client/NotesView.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "d0cc5d1f3405b0e676752df80b300cf6fe9e4e22"
+    },
+    {
+      "path": "src/Kiosk.Client/PageScripts.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "954a5ff61ef948f48e175167342948819f9a0814"
+    },
+    {
+      "path": "src/Kiosk.Client/People.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "53268f4a6e350ad9cee074777648c32fb11631b2"
+    },
+    {
+      "path": "src/Kiosk.Client/Portal.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "943eadc40e994123c2e54eb26e151ac445fd697d"
+    },
+    {
+      "path": "src/Kiosk.Client/Program.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "a5afa1253137a178031331d7d929ba7f884351c6"
+    },
+    {
+      "path": "src/Kiosk.Client/RdpConfiguration.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "194aaac35f8addf56c39e42d83bf8214ddb2c2d2"
+    },
+    {
+      "path": "src/Kiosk.Client/RdpCredentials.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "09f814bb198001333febf4cde24a2a867aed4e63"
+    },
+    {
+      "path": "src/Kiosk.Client/RdpUserHost.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "f23f27bd93d7fb85f0dc596608a4b34a4f6f2dc2"
+    },
+    {
+      "path": "src/Kiosk.Client/Retention.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "7c9c4fcabf090ee446252af02270280673846068"
+    },
+    {
+      "path": "src/Kiosk.Client/ScreenHost.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "77914c68392ad7e7f06435583f3059df758b99c6"
+    },
+    {
+      "path": "src/Kiosk.Client/SessionCommand.cs",
+      "module": "browser-workloads",
+      "kind": "source",
+      "blob": "918d6cdbc1a9378cff47270e3e5a02fd09f82892"
+    },
+    {
+      "path": "src/Kiosk.Client/SettingsView.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "885b15412b2d22ddae7c3f9c1bfff9d5a941aa9a"
+    },
+    {
+      "path": "src/Kiosk.Client/SharePointNews.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "5cd88a7873ff16fe545ae50dda1e9266de4f4c46"
+    },
+    {
+      "path": "src/Kiosk.Client/SharedAccounts.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "9d1c84fefb8d846df0b1cf10c9c46f7b22e8853a"
+    },
+    {
+      "path": "src/Kiosk.Client/Shell.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "e0c45d98416a13350989059fa884f4102a442808"
+    },
+    {
+      "path": "src/Kiosk.Client/Stats.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "2ac8239cdf080c26f029d4fe94675fc67a3b1a24"
+    },
+    {
+      "path": "src/Kiosk.Client/UserLogon.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "5c93896cb935db6b596eae71d518b2cbb20d40a5"
+    },
+    {
+      "path": "src/Kiosk.Client/Watchdog.cs",
+      "module": "runtime-ui",
+      "kind": "source",
+      "blob": "eaf9ce522490b374f8dd2b34cd5672bf640e751f"
+    },
+    {
+      "path": "src/Kiosk.Client/WindowsHello.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "74eafdd131e0415b3d55385854005393f12846c0"
+    },
+    {
+      "path": "src/Kiosk.Client/WindowsKey.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "3fe2384030b0230f132242fdaccd53238a6f2e9b"
+    },
+    {
+      "path": "src/Kiosk.Client/WindowsSession.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "60de3ce03370abb0328076fa4b5da6bbcdabf86a"
+    },
+    {
+      "path": "src/Kiosk.Client/packages.lock.json",
+      "module": "delivery",
+      "kind": "configuration",
+      "blob": "438f2d720efed9108d06e67956ebd8bd5c9511b0"
+    },
+    {
+      "path": "src/Kiosk.ConfigTool/KioskKonfiguracje.csproj",
+      "module": "configuration",
+      "kind": "configuration",
+      "blob": "06ecd0a4d6bbacdb9b7c165587c126b2aac0a12a"
+    },
+    {
+      "path": "src/Kiosk.ConfigTool/Program.cs",
+      "module": "configuration",
+      "kind": "source",
+      "blob": "a3b4289c8bd97a995576d3abbfdcaf1c4bf84849"
+    },
+    {
+      "path": "src/Kiosk.ConfigTool/packages.lock.json",
+      "module": "configuration",
+      "kind": "configuration",
+      "blob": "b50bdef244a8dc21af662b742e9efce10cede353"
+    },
+    {
+      "path": "src/Kiosk.CredentialProvider/KioskCredentialProvider.cpp",
+      "module": "identity",
+      "kind": "source",
+      "blob": "809c5f40e6603311839d0f42a1eb5c3de23fe2fc"
+    },
+    {
+      "path": "src/Kiosk.CredentialProvider/KioskCredentialProvider.def",
+      "module": "identity",
+      "kind": "configuration",
+      "blob": "91fe888f1243c71e9e3613094492c3b6e45a14d5"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/FidoRun.csproj",
+      "module": "identity",
+      "kind": "configuration",
+      "blob": "b19b527a2ccd68e3965a3357966b47c07eda7486"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/app.manifest",
+      "module": "identity",
+      "kind": "other",
+      "blob": "aa6c17e93f0e9c69870e477c8f9bef9dacb5b1b3"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/packages.lock.json",
+      "module": "identity",
+      "kind": "configuration",
+      "blob": "2dc333e474cab51ad9060b92c3c64361dc6a25f6"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/AccountCredentialFilter.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "8bcac7722f128b81db2b7304694f2de52f90be94"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/BrokerPolicy.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "f15a62c39e4a6220cd05c380bb85dfa0cfd1ac5a"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/GuiAccessLease.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "86a0288d95e070dfe299f4c1f0a2aad4343e53e5"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/HostForm.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "5c4d85cd3e9614bbfc96fe525810eec261116a83"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/Interop.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "4e00706f883d5fc902fdf2091522f5ee1f753aec"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/KioskBroker.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "ce0f7e776a1943bafd79ec658dc95b10e8bb441b"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/NativeAccountSelector.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "a906a8a42d2be5b3e868290ec89d0e2e7bc137ef"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/NativeCtapProbe.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "d16675671a7623a5e8b3770e352038b33dccfddf"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/NativeDiscoveryRequest.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "238487b3c3a83ad815d14c73fb073fee3a68255a"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/ProcessIdentity.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "07655baeca73f0882fa4e4497a6d56c02c19c002"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/Program.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "c9047699941a9717a69f45c055b6c5593fee3685"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/ProviderHost.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "3905f387553d957f243d6e4c36729560fbb6d507"
+    },
+    {
+      "path": "src/Kiosk.FidoBroker/src/WindowsLogon.cs",
+      "module": "identity",
+      "kind": "source",
+      "blob": "cb4794a8d3e7b0b0c5eeb8e12774db89c77159f8"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/EditorSettings.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "6a6de812ce3a067c42bba522e50dceac78f7b582"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/KioskKomunikaty.csproj",
+      "module": "content",
+      "kind": "configuration",
+      "blob": "dbde3ce047eb7cf01feba8f90ab6de5b3a02df11"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/KioskKomunikaty.json",
+      "module": "content",
+      "kind": "configuration",
+      "blob": "4f643a8214eee76d7b83e39d3d5cb98704759c99"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/MainForm.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "45af263b5d691d4c33bbc9d68dfc4a2d3ff04826"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/MediaCopy.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "e1e2dd59908f5a32d2234bd35b2b0db65d41e499"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/NewsFile.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "0632c9f7388af14f6225f422bd3bcce3db6c7539"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/Program.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "521549665541fabd5e6cabf84c12f9a3c1f335ee"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/StatsView.cs",
+      "module": "content",
+      "kind": "source",
+      "blob": "10607bc30a175ad87419c3ffca01a46080d27502"
+    },
+    {
+      "path": "src/Kiosk.NewsEditor/packages.lock.json",
+      "module": "content",
+      "kind": "configuration",
+      "blob": "77d53a00eeff299d53c0d7af67c058406544fc9e"
+    }
+  ]
+}

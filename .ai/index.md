@@ -24,6 +24,14 @@ Windows x64 shared-PC shell: .NET 10 WinForms client with WebView2; modes SelfSe
 - Content -> configuration: News.cs and SharePointNews.cs depend on configured data sources and permissions.
 - Delivery -> all: build, package, signing, install and tests cover multiple projects.
 
+## Complete tracked-file index and automation
+
+- .ai/source-index.json: machine-readable list of all 131 non-AI tracked files at initialization (path, module, kind, Git blob). It is intended for narrow path lookup, NOT wholesale loading into model context.
+- scripts/project_brain.py route "query": deterministic module hints; update/check/changes: staged Git file-index refresh/validation.
+- .github/workflows/project-brain.yml: validation on pushes and pull requests, including stale blob references and skills scaffolding.
+- CLAUDE.md + .claude/agents/Explore.md + .claude/skills/*: Claude Code specialization with Haiku on Explore and forked search skill.
+- .claude/hooks/ContextHook.ps1 + .claude/settings.json: prompt scope, bounded file reads and compact repetitive tool output.
+
 ## Search / execution budget
 
 Normalize vague requests before tools. For multi-file discovery, ask the code_locator subagent (gpt-6-luna) for exact path:line-line and symbol references, then inspect only those ranges in the primary context. A single known symbol can be searched directly. Avoid full-file output. Tests: scripts/Test.ps1 -ErrorsOnly. Hook configuration: .codex/hooks.json.

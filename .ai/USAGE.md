@@ -92,3 +92,26 @@ For installation as a Windows shell, signed production packages, verification an
 - Current code remains authoritative; never rely on memory instead of reading affected implementation.
 - No automatic token quota or guaranteed read limit: agents can expand context for correctness.
 - When a module is renamed, added or removed, update its entry in .ai/index.md and the affected module document in the same change.
+
+## Claude Code (Windows local project)
+
+```powershell
+git fetch origin
+git switch codex/project-brain
+git pull --ff-only
+claude
+```
+
+Claude Code reads CLAUDE.md automatically when opened from the repository root. The project overrides the built-in Explore subagent with .claude/agents/Explore.md using model: haiku; do not assume other subagents are cheap by default. Do not paste the whole index into the chat. If available, review hooks with /hooks and local permission settings.
+
+A normal prompt is enough: "Find where SelfService closes a card session and fix the cleanup." For explicit read-only location use /kiosk-locate, which runs in an Explore fork. Other project skills: /kiosk-test, /kiosk-identity, /kiosk-config, /kiosk-webview, /kiosk-shell, /kiosk-release, /kiosk-brain-refresh. Skills with side effects remain user-invoked.
+
+```powershell
+python scripts/project_brain.py route "FIDO2 sign in"
+python scripts/project_brain.py check
+.\scripts\Test.ps1 -ErrorsOnly
+```
+
+Source index maintenance: the index is based on the **Git staging index**, not arbitrary unstaged work. After reviewing a change, stage only the relevant files, run `python scripts/project_brain.py changes`, then `python scripts/project_brain.py update`; stage .ai/source-index.json and run `python scripts/project_brain.py check`. CI rejects an index that does not match the staged/committed source. Generated AI files and .ai/source-index.json are excluded from the inventory to avoid recursive churn. Python 3 and Git are required for the index script. The index is updated on demand, and its correctness is automatically checked by GitHub Actions; no background process runs on your PC.
+
+Windows project build/test tools are not run by index validation. Follow scripts/Test.ps1 and README.md on an isolated Windows test device.

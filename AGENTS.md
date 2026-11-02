@@ -25,4 +25,8 @@ Before source-code exploration, the primary agent must delegate targeted read-on
 
 Codex command hooks in .codex/hooks.json inject prompt routing, guard wide source dumps and group redundant long output. Trust/review them via /hooks before relying on them.
 
+Claude Code uses CLAUDE.md, .claude/agents/Explore.md (Haiku), scoped .claude/skills and .claude/settings.json hooks. In Claude, delegate read-only multi-file discovery to Explore and return path:line ranges only. Keep feature implementation and verification in the primary agent. Never paste the full file catalog into model context: .ai/source-index.json is for deterministic local lookup.
+
+After source/config/script changes, inspect tracked changes and run python scripts/project_brain.py update with intended changes staged, then python scripts/project_brain.py check. CI validates this automatically. Do not stage unrelated local work or weaken the test to hide stale entries.
+
 Development commands and the AI usage workflow: .ai/USAGE.md. Source build and release details: README.md.

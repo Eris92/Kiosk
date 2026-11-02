@@ -26,3 +26,9 @@ scripts/Test.ps1 -ErrorsOnly delegates to scripts/Invoke-CompactTest.ps1, saves 
 - Production: create signed package using New-Package -RequireSigned -SigningCertificateThumbprint; verify the signer and manifest; use installer signing checks and explicit SourceConfig.
 - Rollback includes Install-KioskShell.ps1 -Uninstall, Install-KioskCardService.ps1 -Uninstall and Set-KioskSignInScreen.ps1 -Uninstall (review affected state first).
 - CI and offline tests do not demonstrate production readiness. See docs/STATUS.md and docs/PRODUCTION_AUDIT.md for current outstanding acceptance steps.
+
+## Claude and project index CI
+
+- `.github/workflows/project-brain.yml`: checks the staged/committed tracked-file inventory against `.ai/source-index.json`, validates Claude skills/settings and deterministic module routes using Python 3.
+- `scripts/project_brain.py`: `route` suggests module notes, `changes` reports modified Git blob entries, `update` writes the reference inventory, and `check` detects staleness.
+- `.claude/skills/` contains scoped workflows; `.claude/agents/Explore.md` specifies Haiku for read-only discovery. Production build and sign-in readiness remain under separate testing.

@@ -1,0 +1,25 @@
+name: Validate Project Brain
+on:
+  push:
+    branches: [main, 'codex/**', 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  brain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check Project Brain source map and Claude skills
+        run: python3 scripts/project_brain.py check
+      - name: Verify deterministic routing
+        shell: bash
+        run: |
+          python3 scripts/project_brain.py route "FIDO2 token login" | grep -F ".ai/modules/identity.md"
+          python3 scripts/project_brain.py route "WebView2 RDP profile" | grep -F ".ai/modules/browser-workloads.md"
