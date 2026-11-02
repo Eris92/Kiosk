@@ -151,7 +151,7 @@
       "path": "scripts/Deployment.Common.ps1",
       "module": "delivery",
       "kind": "source",
-      "blob": "21c7949154ac4e5cd542e4d6b37808ee5f54af13"
+      "blob": "789ac3a064c7836534fbe4e52a6caa025b37f957"
     },
     {
       "path": "scripts/Install-KioskCardService.ps1",
@@ -241,7 +241,7 @@
       "path": "scripts/Test-Scripts.ps1",
       "module": "delivery",
       "kind": "source",
-      "blob": "44c032861dd08aa977cf6f4a3e17c6ced0f66cd2"
+      "blob": "992aaf3f599f223298f170acdceac9771b1524ce"
     },
     {
       "path": "scripts/Test-SharePointNewsScript.mjs",
