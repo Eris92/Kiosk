@@ -3,13 +3,13 @@
 param([int]$TimeoutSeconds = 120, [switch]$ErrorsOnly)
 if ($ErrorsOnly) {
     & (Join-Path $PSScriptRoot 'Invoke-CompactTest.ps1') -ScriptPath $PSCommandPath -TimeoutSeconds $TimeoutSeconds
-    if ($LASTEXITCODE -ne 0) { throw "Test suite failed; exit code: $LASTEXITCODE. See out/test-logs." }
-    return
+    exit $LASTEXITCODE
 }
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 & (Join-Path $PSScriptRoot 'Test-Scripts.ps1')
+& (Join-Path $PSScriptRoot 'Test-ProjectBrain.ps1')
 if (Get-Command node -ErrorAction SilentlyContinue) {
     & node (Join-Path $PSScriptRoot 'Test-SharePointNewsScript.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'SharePoint news script tests failed.' }

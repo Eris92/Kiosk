@@ -2,7 +2,9 @@
 # Claude Code hook: narrow search, safe test wrapper and compact repeated output.
 $ErrorActionPreference = 'Stop'
 try {
-    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [Console]::InputEncoding = $utf8
+    [Console]::OutputEncoding = $utf8
     $inputJson = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($inputJson)) { exit 0 }
     $event = $inputJson | ConvertFrom-Json
@@ -52,7 +54,7 @@ try {
             exit 0
         }
         # Avoid unbounded stdout of very large source files.
-        if ($command -match '(?i)\b(Get-Content|gc|cat|type)\b' -and
+        if ($command -match '(?i)(?:^|[;|&]\s*)(Get-Content|gc|cat|type)\s' -and
             $command -match '(?i)(KioskForm\.cs|SettingsView\.cs|CentralConfig\.cs)' -and
             ($command -match '(?i)\-Raw\b' -or $command -notmatch '(?i)(Select-Object\s+.*(-Skip|-First)|-TotalCount\b|-Tail\b|head\s+-n)')) {
             @{hookSpecificOutput = @{
@@ -89,8 +91,14 @@ try {
     # Only reduce clearly repetitive output, never obscure many distinct failures.
     if ($groups.Count -gt 60 -or $groups.Count -gt [int]($lines.Count * 0.4)) { exit 0 }
 
+    # Keep the untouched output on disk; the summary is never the only evidence.
+    $logDir = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))) 'out\hook-logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $logPath = Join-Path $logDir ([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.log')
+    [IO.File]::WriteAllText($logPath, $stdout + [Environment]::NewLine + $stderr, $utf8)
+
     $parts = New-Object 'System.Collections.Generic.List[string]'
-    $parts.Add('Repeated output summarized: ' + $lines.Count + ' lines, ' + $groups.Count + ' unique signatures.')
+    $parts.Add('Repeated output summarized: ' + $lines.Count + ' lines, ' + $groups.Count + ' unique signatures. Full output: ' + $logPath)
     $parts.Add('Only timestamp/time-of-day differences are normalized. Original command exit status is unchanged.')
     foreach ($key in @($groups.Keys | Sort-Object)) {
         $parts.Add('[' + $groups[$key] + 'x] ' + $key)

@@ -6,7 +6,7 @@
     "configuration": 13,
     "browser-workloads": 12,
     "content": 25,
-    "delivery": 34
+    "delivery": 35
   },
   "files": [
     {
@@ -226,6 +226,12 @@
       "blob": "39a6258023c536319cde3ca7932ad3f2e9316bca"
     },
     {
+      "path": "scripts/Test-ProjectBrain.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "7fec42c64ec4a505a8ac7a58755fca45c3e29b1e"
+    },
+    {
       "path": "scripts/Test-Scripts.ps1",
       "module": "delivery",
       "kind": "source",
@@ -241,7 +247,7 @@
       "path": "scripts/Test.ps1",
       "module": "delivery",
       "kind": "source",
-      "blob": "10fd85a951f217a20b91fc0acfcbf4c6a6d82476"
+      "blob": "e4ee4c6445ad07aece408941853c324147107cd8"
     },
     {
       "path": "scripts/Verify-Package.ps1",

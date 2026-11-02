@@ -6,9 +6,10 @@
 - src/Kiosk.Client/KioskForm.SelfService.cs: SelfService home/help screen, WindowsSession vs legacy CardBroker flow, sign-out and card removal behavior.
 - src/Kiosk.Client/DesktopView.cs, Shell.cs, ScreenHost.cs, IdleScreen.cs, InputWatch.cs, DisplayRotation.cs: desktop, taskbar/menu, windows/screens, idle and input behavior.
 - src/Kiosk.Client/FirstRunSetup.cs, FirstSignIn.cs: first-run/sign-in UI; KioskIcons.cs / ColorPicker.cs: visual helpers.
+- src/Kiosk.Client/People.cs, WindowsKey.cs, BuildVersion.cs: small UI and runtime helpers; locate symbols before assuming behavior.
 
 ## Modes and flow
-- SessionMode.SelfService (default): help station, no workstation menu/RDP; WindowsSession uses existing Windows logon for WebView2/SSO.
+- SessionMode.SelfService (set in config/client.json; the Config default is Kiosk): help station, no workstation menu/RDP; WindowsSession uses existing Windows logon for WebView2/SSO.
 - SessionMode.Kiosk: per-card workstation sessions, browser, notes, files, apps and RDP.
 - SessionMode.WindowsShell: workstation UI as the user's Windows shell; Windows controls the sign-in/lock boundary.
 - Typical flow: Program.Main -> KioskForm -> active Config -> mode-specific UI -> user session / windows / external actions.

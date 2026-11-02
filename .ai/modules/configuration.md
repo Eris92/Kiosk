@@ -7,6 +7,7 @@
 - src/Kiosk.Client/ConfigManager.cs and src/Kiosk.ConfigTool/Program.cs: folder-based configurations manager; launcher uses Kiosk.Client.exe --configs.
 - src/Kiosk.Client/SettingsView.cs, AdminSettings.cs, FirstRunSetup.cs: settings UI, privileged actions and first-run.
 - src/Kiosk.Client/SharedAccounts.cs: accounts.kiosk and machine-protected key; scripts/Set-KioskSharedAccount.ps1 provisions it.
+- A SelfService configuration without a SelfServiceAuthentication key maps to CardBroker (Configuration.cs); the Config default is WindowsSession.
 - config/client.json, config/client.example.json, config/client.development.json: public/default and example configurations; config/intune/ShellLauncher.xml: example CSP.
 
 ## Runtime/config rules
@@ -18,4 +19,4 @@
 
 ## Checks
 - Validate JSON plus client semantic rules via built-in --validate-config (called by build/deployment checks).
-- Run scripts/Test.ps1 for config/edit conflict checks. Verify permissions and UNC access as machine identity on the target PC.
+- Run scripts/Test.ps1 for configuration edit conflict checks. Verify permissions and UNC access as machine identity on the target PC.

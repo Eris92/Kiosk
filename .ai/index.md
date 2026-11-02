@@ -1,6 +1,6 @@
 # Kiosk Project Brain: routing index
 
-Read this small file first, then only the relevant module documents. Avoid reading the large source files wholesale. This index reflects the main branch when introduced; verify against current code.
+Read this small file first, then only the relevant module documents. Avoid reading the large source files wholesale. Verify against current code; .scriptsTest-ProjectBrain.ps1 checks paths and coverage.
 
 ## Project in one paragraph
 Windows x64 shared-PC shell: .NET 10 WinForms client with WebView2; modes SelfService, Kiosk, WindowsShell. SelfService/WindowsSession uses the Windows-signed-in user's identity for SSO. A legacy card broker, a LocalSystem card service, a .NET Framework 4.8 FIDO broker and a native Credential Provider also exist. Dedicated configuration/news tools and PowerShell build, test and deployment scripts complete the repository.
@@ -34,7 +34,7 @@ Windows x64 shared-PC shell: .NET 10 WinForms client with WebView2; modes SelfSe
 
 ## Search / execution budget
 
-Normalize vague requests before tools. For multi-file discovery, ask the code_locator subagent (gpt-6-luna) for exact path:line-line and symbol references, then inspect only those ranges in the primary context. A single known symbol can be searched directly. Avoid full-file output. Tests: scripts/Test.ps1 -ErrorsOnly. Hook configuration: .codex/hooks.json.
+Normalize vague requests before tools. For multi-file discovery, ask the cheap locator (Claude Code: Explore on Haiku, .claude/agents/Explore.md; Codex: code_locator on gpt-6-luna) for exact path:line-line and symbol references, then inspect only those ranges in the primary context. A single known symbol can be searched directly. Avoid full-file output. Tests: scripts/Test.ps1 -ErrorsOnly. Hook configuration: .claude/settings.json, .codex/hooks.json.
 
 ## Discovery and memory maintenance
 - Prefer targeted symbol search (`rg -n "Symbol" src scripts`) and short source ranges over full-file reads.

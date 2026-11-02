@@ -6,7 +6,9 @@
 - src/Kiosk.Client/FidoSignIn.cs and KioskForm.SelfService.cs: legacy embedded card-broker sign-in.
 - src/Kiosk.Client/WindowsSession.cs, WindowsHello.cs, UserLogon.cs, FirstSignIn.cs: Windows sign-in, session state and identity helpers.
 - src/Kiosk.Client/SharedAccounts.cs, NewsAccount.cs: protected shared-account use; inspect secret access paths before touching.
+- src/Kiosk.Client/CardPageHost.cs (hidden Program.cs argument), LocalAdministrators.cs, BoundedPipeLine.cs, src/Common/BoundedLineReader.cs: card page host, administrator checks and bounded IPC reads.
 - src/Kiosk.FidoBroker/src/Program.cs, KioskBroker.cs, BrokerPolicy.cs, WindowsLogon.cs, ProviderHost.cs, NativeCtapProbe.cs: .NET Framework 4.8 broker, native provider interop, process/policy checks.
+- src/Kiosk.FidoBroker/src/: remaining broker support files (HostForm.cs is large; locate symbols first).
 - src/Kiosk.CredentialProvider/KioskCredentialProvider.cpp: Windows native sign-in tile wrapper of the OS FIDO provider.
 
 ## Authentication paths

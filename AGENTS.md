@@ -23,7 +23,7 @@ Before source-code exploration, the primary agent must delegate targeted read-on
 - The primary agent receives ONLY this evidence, opens narrow source ranges for verification, makes changes, verifies security implications and runs tests. Escalate exploration to the primary model when evidence conflicts, security-critical trust boundaries are unclear or cheap model access is unavailable.
 - If the chosen cheap model is unavailable to the installed Codex/account, use the cheapest available read-only subagent or a single bounded local search. Never claim the model was switched if no subagent ran.
 
-Codex command hooks in .codex/hooks.json inject prompt routing, guard wide source dumps and group redundant long output. Trust/review them via /hooks before relying on them.
+Codex and Claude Code command hooks (.codex/hooks.json, .claude/settings.json) inject prompt routing, guard wide source dumps and group redundant long output. Review them via /hooks before relying on them. Claude Code mapping: CLAUDE.md.
 
 Claude Code uses CLAUDE.md, .claude/agents/Explore.md (Haiku), scoped .claude/skills and .claude/settings.json hooks. In Claude, delegate read-only multi-file discovery to Explore and return path:line ranges only. Keep feature implementation and verification in the primary agent. Never paste the full file catalog into model context: .ai/source-index.json is for deterministic local lookup.
 
