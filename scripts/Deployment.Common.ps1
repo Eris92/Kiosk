@@ -235,9 +235,25 @@ function Set-KioskFileAcl([string]$Path, [switch]$UsersRead) {
     if ($LASTEXITCODE -ne 0) { throw "Cannot protect file: $file" }
 }
 
+# Windows PowerShell 5.1 does not escape quotes in native arguments, so a quoted binPath reached sc.exe split (exit 1639).
+function Format-KioskNativeArgument([string]$Value) {
+    if ($Value -notmatch '[\s"]') { return $Value }
+    return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+}
+
 function Invoke-KioskSc {
-    & sc.exe @args
-    if ($LASTEXITCODE -ne 0) { throw "Service command failed (exit $LASTEXITCODE)." }
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = Join-Path $env:SystemRoot 'System32\sc.exe'
+    $info.Arguments = (@($args) | ForEach-Object { Format-KioskNativeArgument ([string]$_) }) -join ' '
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $process = [System.Diagnostics.Process]::Start($info)
+    try {
+        $output = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "Service command failed (exit $($process.ExitCode)): $($output.Trim())" }
+        return $output
+    } finally { $process.Dispose() }
 }
 
 function Get-KioskRegistryValue([string]$Path, [string]$Name) {
