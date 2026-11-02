@@ -6,7 +6,7 @@
     "configuration": 13,
     "browser-workloads": 12,
     "content": 25,
-    "delivery": 35
+    "delivery": 36
   },
   "files": [
     {
@@ -188,6 +188,12 @@
       "module": "delivery",
       "kind": "source",
       "blob": "43a9a8e127909c0c8eb08cb0dc222297fcaa376d"
+    },
+    {
+      "path": "scripts/Publish-Kiosk.ps1",
+      "module": "delivery",
+      "kind": "source",
+      "blob": "82ec368d01ea49ed9a1ae3a56db770f205ea501c"
     },
     {
       "path": "scripts/Set-KioskConfigSource.ps1",

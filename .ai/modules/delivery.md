@@ -6,6 +6,7 @@
 - src/Kiosk.FidoBroker/FidoRun.csproj: net48 x64 broker; ConfigTool and NewsEditor are separate .NET 10 tools.
 - scripts/Build.ps1: clean staged self-contained client output under out/client; explicit ConfigPath supported.
 - scripts/Test.ps1: scripts/Test-Scripts.ps1 checks, scripts/Test-ProjectBrain.ps1 (memory paths, coverage, hooks, compact mode), locked build/self-tests, broker policy, editor and config checks.
+- scripts/Publish-Kiosk.ps1: quiet test, package, verify and unsigned pre-release; skill /kiosk-publish.
 - scripts/New-Package.ps1, Verify-Package.ps1, Build-CredentialProvider.ps1: package creation, native provider and inventory/signature verification.
 - .github/workflows/build.yml: Windows CI tests and unsigned candidate validation.
 - scripts/Deployment.Common.ps1 and scripts/Install-*.ps1, Set-Kiosk*.ps1: common deployment helpers and mutation/rollback.
