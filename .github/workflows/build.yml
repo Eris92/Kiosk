@@ -5,7 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
+env:
+  # The client shows this in Konfiguracja → Aktualizacja and updates only to a newer build-N.
+  KIOSK_VERSION: ${{ format('build-{0}', github.run_number) }}
 concurrency:
   group: kiosk-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,6 +41,9 @@ jobs:
         run: ./scripts/Test.ps1
       - name: Build client, native credential provider and clean deployment candidate
         shell: pwsh
+        env:
+          InformationalVersion: ${{ env.KIOSK_VERSION }}
+          IncludeSourceRevisionInInformationalVersion: false
         run: ./scripts/New-Package.ps1
       - name: Verify deployment candidate inventory, safe configuration and hashes
         shell: pwsh
@@ -57,3 +63,32 @@ jobs:
           path: out/self-test/self-test*.txt
           if-no-files-found: ignore
           retention-days: 14
+      - name: Sign update package
+        if: github.event_name != 'pull_request' && github.actor == github.repository_owner
+        shell: pwsh
+        env:
+          KIOSK_SIGNING_KEY: ${{ secrets.KIOSK_SIGNING_KEY }}
+        run: |
+          # A package installed Kiosks would refuse is never published.
+          if (-not $env:KIOSK_SIGNING_KEY) { throw 'KIOSK_SIGNING_KEY is not set: installed Kiosks would refuse an unsigned package.' }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive -Path out/package/* -DestinationPath release/Kiosk-win-x64.zip
+          $der = [Convert]::FromBase64String(($env:KIOSK_SIGNING_KEY -replace '-----[^-]+-----', '' -replace '\s', ''))
+          $key = [System.Security.Cryptography.ECDsaCng]::new([System.Security.Cryptography.CngKey]::Import($der, [System.Security.Cryptography.CngKeyBlobFormat]::Pkcs8PrivateBlob))
+          $hash = (Get-FileHash release/Kiosk-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $data = [Text.Encoding]::UTF8.GetBytes("$env:KIOSK_VERSION`n$hash")
+          $signature = $key.SignData($data, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+          $pem = [regex]::Match((Get-Content src/Kiosk.Client/Updater.cs -Raw), '-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----').Value -replace '(?m)^[ \t]+', ''
+          $public = [System.Security.Cryptography.ECDsa]::Create()
+          $public.ImportFromPem($pem)
+          if (-not $public.VerifyData($data, $signature, [System.Security.Cryptography.HashAlgorithmName]::SHA256)) { throw 'KIOSK_SIGNING_KEY does not match the public key in Updater.cs.' }
+          [Convert]::ToBase64String($signature) | Set-Content release/Kiosk-win-x64.zip.sig -NoNewline -Encoding ascii
+      - name: Publish update release
+        if: github.event_name != 'pull_request' && github.actor == github.repository_owner
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only main is "latest" (kanał main); other branches are pre-releases, which only kanał dev installs.
+          $prerelease = @(if ('${{ github.ref_name }}' -ne 'main') { '--prerelease' })
+          gh release create $env:KIOSK_VERSION release/Kiosk-win-x64.zip release/Kiosk-win-x64.zip.sig @prerelease --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "Kiosk $env:KIOSK_VERSION (${{ github.ref_name }})" --notes "Commit ${{ github.sha }}."
