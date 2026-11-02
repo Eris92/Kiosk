@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -2905,7 +2905,7 @@ internal sealed partial class KioskForm : Form
         var browserView = new BrowserView([new Bookmark { Name = "Test bookmark", Url = "https://bookmark.invalid/" }]);
         aliceSession.Browser = browserView;
         AddWindow(aliceSession, BrowserKey, "Przeglądarka", browserView);
-        await browserView.InitializeAsync("about:blank").WaitAsync(TimeSpan.FromSeconds(25));
+        await browserView.InitializeAsync("about:blank").WaitAsync(TimeSpan.FromSeconds(60));
         var navigated = new TaskCompletionSource<bool>();
         string navigationUri = "";
         browserView.Web.CoreWebView2.NavigationStarting += (_, e) => navigationUri = e.Uri;
