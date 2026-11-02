@@ -70,6 +70,12 @@ internal sealed partial class KioskForm : Form
     // The messages' folder is read again every minute, so a change on the share shows up without restarting.
     private readonly System.Windows.Forms.Timer newsTimer = new() { Interval = 60_000 };
     private readonly System.Windows.Forms.Timer statsTimer = new() { Interval = 60 * 60_000 };
+    // Automatic update: at start and then every 24 hours; a downloaded update waits (checked hourly) until nobody has work open.
+    private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 60 * 60_000 };
+    private static readonly TimeSpan UpdateEvery = TimeSpan.FromHours(24);
+    private DateTime updateCheckedAt = DateTime.MinValue;
+    private (string Tag, string Folder)? updateWaiting;
+    private bool autoUpdating;
     /// <summary>Each load's number: a load that is overtaken (Konfiguracja saved meanwhile) does not show its older result.</summary>
     private int newsLoad;
     private bool newsShown;
@@ -117,6 +123,7 @@ internal sealed partial class KioskForm : Form
         if (SelfServiceWindowsSession) timer.Interval = 1000;
         this.configPath = configPath;
         localConfig = loaded?.Local;
+        Updater.Channel = config.UpdateChannel;
         notice = loaded?.Problem;
         identifyCard = IdentifyPresentCard;
         cardPresent = () => PresentReader() != null;
@@ -147,10 +154,11 @@ internal sealed partial class KioskForm : Form
             timer.Start();
             // Preview and self-test runs must not be resurrected by the production service.
             if (!config.TestMode && SharedAccounts.IsInstalledKiosk(Environment.ProcessPath)) Watchdog.Watch(this);
-            RotateScreens(); StartIdleScreens(); statsTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start();
+            RotateScreens(); StartIdleScreens(); statsTimer.Start(); _ = AutoUpdateAsync(); updateTimer.Start(); _ = LoadNewsAsync(); newsTimer.Start();
         };
         newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
         statsTimer.Tick += (_, _) => ExportStats();
+        updateTimer.Tick += (_, _) => { if (updateWaiting != null || DateTime.UtcNow - updateCheckedAt >= UpdateEvery) _ = AutoUpdateAsync(); };
         desktop.News.ActionRequested += item => { if (!AnnouncementsOnly) _ = RunNewsActionAsync(item); };
         desktop.Help.ActionRequested += item => _ = RunHelpAsync(item);
         desktop.Tiles.ActionRequested += item => _ = RunHelpAsync(item);
@@ -165,7 +173,7 @@ internal sealed partial class KioskForm : Form
         };
         FormClosed += (_, _) =>
         {
-            timer.Dispose(); newsTimer.Dispose(); statsTimer.Dispose(); screenRefresh.Dispose(); menu.Dispose();
+            timer.Dispose(); newsTimer.Dispose(); statsTimer.Dispose(); updateTimer.Dispose(); screenRefresh.Dispose(); menu.Dispose();
             StopIdleScreens();
             NewsSlides.Publish([], config.NewsSeconds);
             desktop.SetNews([], config.NewsSeconds);
@@ -1397,6 +1405,34 @@ internal sealed partial class KioskForm : Form
         Close();
     }
 
+    /// <summary>Konfiguracja → Aktualizacja → "Aktualizuj automatycznie": at start, a newer release is installed and Kiosk restarts.</summary>
+    private async Task AutoUpdateAsync()
+    {
+        if (autoUpdating || !config.AutoUpdate || config.TestMode || Environment.GetCommandLineArgs().Contains("--self-test")) return;
+        autoUpdating = true;
+        try
+        {
+            if (updateWaiting is not { } ready || DateTime.UtcNow - updateCheckedAt >= UpdateEvery)
+            {
+                updateCheckedAt = DateTime.UtcNow;
+                var release = await Updater.LatestAsync();
+                if (!Updater.IsNewer(release.Tag)) { updateWaiting = null; return; }
+                if (updateWaiting?.Tag != release.Tag) updateWaiting = (release.Tag, await Updater.DownloadAsync(release));
+                ready = updateWaiting.Value;
+            }
+            // Only while nobody has work open; otherwise it is tried again every hour.
+            if (IsDisposed || sessions.Values.Any(x => x.HasWork)) return;
+            updateWaiting = null;
+            if (!Updater.FirstAttempt(ready.Tag)) return;
+            Audit.Write("auto_update", ready.Tag);
+            closeConfirmed = true;
+            Updater.Launch(ready.Folder);
+            Close();
+        }
+        catch (Exception ex) { Audit.Write("auto_update_failed", ex.Message); }
+        finally { autoUpdating = false; }
+    }
+
     private HelpBrowserForm? helpBrowser;
 
     /// <summary>
@@ -2249,10 +2285,11 @@ internal sealed partial class KioskForm : Form
         }
         if (AdminSettings.IsHotkey(m))
         {
-            // Konfiguracja → "Skrót Ctrl+Alt+K": turned off, the shortcut does nothing.
+            // Konfiguracja → "Skrót Ctrl+Alt+K": turned off, the shortcut does nothing (Ctrl+Alt+U still updates).
             if (config.AdminHotkey) OpenSettingsAsAdministrator(); else Audit.Write("admin_hotkey_disabled");
             return;
         }
+        if (AdminSettings.IsUpdateHotkey(m)) { _ = UpdateByHotkeyAsync(); return; }
         base.WndProc(ref m);
     }
 
@@ -2266,7 +2303,7 @@ internal sealed partial class KioskForm : Form
             NewsAccount.Forget();
             if (!ReloadConfig()) return;
             ApplySavedSettings();
-        });
+        }, () => _ = UpdateFromSettingsAsync());
     }
 
     /// <summary>Saved Konfiguracja takes effect at once (both ways of opening it): screens, messages, colours.</summary>
@@ -2324,6 +2361,7 @@ internal sealed partial class KioskForm : Form
                 next.SelfServiceAuthentication != config.SelfServiceAuthentication;
             if (!modeRestartPending) config = next;
             localConfig = loaded.Local;
+            Updater.Channel = next.UpdateChannel;
             notice = modeRestartPending ? "Zmiana trybu została zapisana. Kiosk uruchomi się ponownie." : loaded.Problem;
         }
         catch (Exception ex) { Audit.Write("settings_reload_failed", ex.Message); return false; }
@@ -2334,6 +2372,59 @@ internal sealed partial class KioskForm : Form
     /// <summary>From a server's configuration only its address (ConfigSource) is saved into the PC's own file.</summary>
     private Config ToSave(Config edited) => localConfig is { ConfigSource.Length: > 0 } local ? local with { ConfigSource = edited.ConfigSource, ScreenRotations = edited.ScreenRotations } : edited;
 
+    private bool updating;
+
+    /// <summary>Ctrl+Alt+U, for anyone: the latest official release when it is newer (installed by the Kiosk Card service).</summary>
+    private async Task UpdateByHotkeyAsync()
+    {
+        if (updating) return;
+        updating = true;
+        try
+        {
+            Audit.Write("update_hotkey");
+            notice = "Sprawdzam najnowszą wersję…";
+            RefreshChrome();
+            var release = await Updater.LatestAsync();
+            if (release.Tag == Updater.CurrentVersion)
+            {
+                notice = "Masz najnowszą wersję (" + release.Tag + ").";
+                RefreshChrome();
+                return;
+            }
+            await UpdateFromSettingsAsync();
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+        finally { updating = false; }
+    }
+
+    /// <summary>"Sprawdź i zaktualizuj" in the administrator's settings window: this Kiosk downloads the release and installs it.</summary>
+    private async Task UpdateFromSettingsAsync()
+    {
+        try
+        {
+            var release = await Updater.LatestAsync();
+            notice = "Pobieram " + release.Tag + "…";
+            RefreshChrome();
+            var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
+            {
+                notice = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
+                RefreshChrome();
+            }));
+            InstallUpdate(folder);
+        }
+        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+    }
+
+    private void InstallUpdate(string folder)
+    {
+        Audit.Write("update_requested", folder);
+        closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
+        if (!closeConfirmed) return;
+        // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
+        Updater.Launch(folder);
+        Close();
+    }
+
     private void OpenSettings()
     {
         if (settingsView != null) { ActivateExisting(SettingsKey); return; }
@@ -2342,6 +2433,7 @@ internal sealed partial class KioskForm : Form
         var session = current!;
         var view = new SettingsView(fullConfig, session.Identity, updated => IsAdmin(session, updated.Active()));
         view.IdentifyScreensRequested += ShowScreenNumbers;
+        view.UpdateRequested += InstallUpdate;
         // Defer this until the button click has returned: Park closes SettingsView.
         view.SwitchUserRequested += () => BeginInvoke((Action)SwitchUserFromSettings);
         settingsView = view;
@@ -2351,7 +2443,7 @@ internal sealed partial class KioskForm : Form
             Configuration.Save(configPath, ToSave(updated), new CentralConfig.Secrets(view.AccountChange, view.AccountsKey));
             SharedAccounts.Forget();
             NewsAccount.Forget();
-            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); }
+            if (!ReloadConfig()) { config = updated; KioskTheme.SetAccent(updated.AccentColor); Updater.Channel = updated.UpdateChannel; }
             Audit.Write("settings_saved");
             ApplySavedSettings();
             CloseWindow(SettingsKey, "settings_closed", session);
@@ -2660,9 +2752,7 @@ internal sealed partial class KioskForm : Form
             legacy.LockAfterSeconds != 120 || legacy.ChangeUserAfterSeconds != 600 || legacy.Server != null ||
             legacy.Applications.Length != 3 || !legacy.Applications[0].IsBuiltInBrowser || !legacy.Applications[1].IsBuiltInNotes || !legacy.Applications[2].IsBuiltInFiles || !legacy.EnableBrowser ||
             legacy.ConfigVersion != Config.CurrentVersion || legacy.Migrate().Applications.Length != 3 ||
-            legacy.AutoUpdate != null || legacy.UpdateChannel != null || legacy.SelfServiceSignInUrl != null || legacy.SelfServiceLinkUrl != null ||
-            migratedJson.Contains("AutoUpdate", StringComparison.Ordinal) ||
-            migratedJson.Contains("UpdateChannel", StringComparison.Ordinal) ||
+            legacy.SelfServiceSignInUrl != null || legacy.SelfServiceLinkUrl != null ||
             migratedJson.Contains("SelfServiceSignInUrl", StringComparison.Ordinal) ||
             migratedJson.Contains("SelfServiceLinkUrl", StringComparison.Ordinal))
             throw new InvalidOperationException("Legacy configuration migration failed.");

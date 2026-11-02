@@ -48,6 +48,9 @@ internal static class Program
         if (args.Length == 4 && args[0] == CardPin.Argument && long.TryParse(args[2], out var owner))
             return CardPin.Run(args[1], new IntPtr(owner), args[3]);
         if (args.Length == 2 && args[0] == CardPageHost.Argument) return CardPageHost.Run(args[1]);
+        if (args.Length >= 3 && args[0] == Updater.Argument) return Updater.Apply(args);
+        if (Updater.IsCopy(args)) return Updater.CopyElevated(args[1]);
+        if (args.Length == 1 && args[0] == Updater.ServiceRefreshArgument) return Updater.RefreshService();
         if (args.Length == 2 && args[0] == AdminSettings.Argument) return AdminSettings.Run(args[1]);
         if (args.Length is 1 or 2 && args[0] == ConfigManager.Argument) return ConfigManager.Run(args.Length == 2 ? args[1] : null);
         if ((args.Length is >= 3 and <= 5) && args[0] == Configuration.SaveArgument)
@@ -97,9 +100,6 @@ internal static class Program
                 CtapCard.SelfTest();
                 if (CardService.Handle(new CardService.Request { Op = "health" }).Code != -2)
                     throw new InvalidOperationException("Card service health probe touched a reader or returned an unexpected response.");
-                if (CardService.Handle(new CardService.Request { Op = "update" }).Code != -2 ||
-                    CardService.Handle(new CardService.Request { Op = "dotnet" }).Code != -2)
-                    throw new InvalidOperationException("Removed service update commands must be rejected before opening a card reader.");
                 var pipeName = "KioskResponseTimeout-" + Guid.NewGuid().ToString("N");
                 using (var silentServer = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, 1,
                     System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous))

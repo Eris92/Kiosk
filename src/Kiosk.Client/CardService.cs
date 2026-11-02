@@ -32,6 +32,7 @@ internal static class CardService
         public string Pin { get; set; } = "";
         public string? CredentialId { get; set; }
         public string? Salt { get; set; }
+        public string Target { get; set; } = "";      // update: installed version folder to replace, checked by the service
         public string Source { get; set; } = "";      // testconfig: share; sharedaccount: name/site/use JSON; newsaccount: configured SharePoint site
         public string Embed { get; set; } = "";       // fidosignin: the Kiosk window the sign-in screen is drawn in (FidoSignIn.ValidEmbed)
     }
@@ -104,6 +105,8 @@ internal static class CardService
         try
         {
             if (request.Op is "watch" or "unwatch") return new Response { Code = -1, Message = "Watchdog działa w usłudze Kiosk Card." }; // Never the card below.
+            if (request.Op == "update") return Updater.InstallLatest(request.Source, request.Target);   // No card, no path: the latest official release.
+            if (request.Op == "dotnet") return Updater.InstallRuntime();  // Only the .NET 10 Desktop Runtime, from Microsoft.
             if (request.Op == "fidosignin") return FidoSignIn.LaunchHere(request.Embed); // Kiosk itself runs as administrator (no service).
             if (request.Op == "sharedaccount") return SharedAccounts.ForService(request.Source, Environment.ProcessPath); // Administrator, no service.
             if (request.Op == "runas") return SharedAccountPrograms.Start(request.Source, Environment.ProcessPath, null, Environment.ProcessId, -1);
@@ -294,11 +297,12 @@ internal static class CardService
         }
     }
 
-    /// <summary>One request of a kind at a time: the card (two PIN checks at once would confuse it) and the shared files.</summary>
-    private static readonly object cardWork = new(), fileWork = new();
+    /// <summary>One request of a kind at a time: the card (two PIN checks at once would confuse it), the shared files, an update.</summary>
+    private static readonly object cardWork = new(), fileWork = new(), updateWork = new();
 
     private static object Gate(string op) => op switch
     {
+        "update" or "dotnet" => updateWork,
         "syncconfig" or "syncnews" or "stat" or "syncstats" or "testnetwork" => fileWork,
         _ => cardWork,
     };
@@ -330,6 +334,10 @@ internal static class CardService
                         GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var runasPid) ? (int)runasPid : -1,
                         GetNamedPipeClientSessionId(pipe.SafePipeHandle, out var runasSession) ? runasSession : -1)
                     : request.Op == "newsaccount" ? NewsAccount.ForService(clientProgram, request.Source)
+                    // The channel of this PC's own configuration; another one only for an elevated administrator
+                    // (Konfiguracja → Aktualizacja tries the chosen channel before saving it).
+                    : request.Op == "update" ? Locked(updateWork, () => Updater.InstallLatest(
+                        ClientIsAdministrator(pipe) && Updater.ValidChannel(request.Source) ? request.Source : Updater.MachineChannel(), request.Target))
                     // Watchdog: the Kiosk process Windows names reports in or says goodbye.
                     : request.Op is "watch" or "unwatch" ? Watchdog.Request(request.Op, GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var watchedPid) ? (int)watchedPid : -1,
                         clientProgram, request.Source)

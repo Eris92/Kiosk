@@ -3,7 +3,7 @@ namespace Kiosk.Client;
 /// <summary>
 /// Punkt samoobsługowy (SessionMode.SelfService): Szybka pomoc and Komunikaty without the application Menu
 /// or taskbar. A card and PIN sign the person in inside Kiosk, and help pages run in that person's account.
-/// Removing the card ends only the person's Kiosk session. Ctrl+Alt+K opens Konfiguracja for administrators.
+/// Removing the card ends only the person's Kiosk session. Ctrl+Alt+K opens Konfiguracja for administrators, Ctrl+Alt+U updates.
 /// </summary>
 internal sealed partial class KioskForm
 {
