@@ -1,0 +1,28 @@
+# Build, testing, packages and production deployment
+
+## Build entry points
+- global.json: .NET SDK 10.0.402 with rollForward disabled.
+- src/Kiosk.Client/Kiosk.Client.csproj: net10.0-windows x64 WinForms + WebView2, self-contained when published.
+- src/Kiosk.FidoBroker/FidoRun.csproj: net48 x64 broker; ConfigTool and NewsEditor are separate .NET 10 tools.
+- scripts/Build.ps1: clean staged self-contained client output under out/client; explicit ConfigPath supported.
+- scripts/Test.ps1: PowerShell script checks, locked build/self-tests, broker policy, editor and config checks.
+- scripts/New-Package.ps1, Verify-Package.ps1, Build-CredentialProvider.ps1: package creation, native provider and inventory/signature verification.
+- .github/workflows/build.yml: Windows CI tests and unsigned candidate validation.
+- scripts/Deployment.Common.ps1 and scripts/Install-*.ps1, Set-Kiosk*.ps1: common deployment helpers and mutation/rollback.
+
+## Safe commands (Windows x64, from repository root)
+- Read-only machine precheck: `.\scripts\Test-Prerequisites.ps1`
+- Local build: `.\scripts\Build.ps1`
+- Client preview: `.\out\client\Kiosk.Client.exe`
+- Automated tests: `.\scripts\Test.ps1 -ErrorsOnly`
+- Unsigned package candidate: `.\scripts\New-Package.ps1` then `.\scripts\Verify-Package.ps1 -PackagePath .\out\package`
+
+## Compact test output
+
+scripts/Test.ps1 -ErrorsOnly delegates to scripts/Invoke-CompactTest.ps1, saves complete stdout/stderr under out/test-logs, and prints deduplicated failure lines (ignoring timestamps only). It retains a failure exit code. Use the full log for forensic debugging. Codex hooks may additionally shorten repetitive shell output, never as the only evidence source.
+
+## Deployment risk
+- Running a build does not install/replace the Windows shell. Install-KioskShell, CardService, CredentialProvider, sign-in and keyboard policies modify the host and should be trialed on isolated Windows machines with backups and rollback.
+- Production: create signed package using New-Package -RequireSigned -SigningCertificateThumbprint; verify the signer and manifest; use installer signing checks and explicit SourceConfig.
+- Rollback includes Install-KioskShell.ps1 -Uninstall, Install-KioskCardService.ps1 -Uninstall and Set-KioskSignInScreen.ps1 -Uninstall (review affected state first).
+- CI and offline tests do not demonstrate production readiness. See docs/STATUS.md and docs/PRODUCTION_AUDIT.md for current outstanding acceptance steps.

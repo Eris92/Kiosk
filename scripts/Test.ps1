@@ -1,6 +1,11 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([int]$TimeoutSeconds = 120)
+param([int]$TimeoutSeconds = 120, [switch]$ErrorsOnly)
+if ($ErrorsOnly) {
+    & (Join-Path $PSScriptRoot 'Invoke-CompactTest.ps1') -ScriptPath $PSCommandPath -TimeoutSeconds $TimeoutSeconds
+    if ($LASTEXITCODE -ne 0) { throw "Test suite failed; exit code: $LASTEXITCODE. See out/test-logs." }
+    return
+}
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

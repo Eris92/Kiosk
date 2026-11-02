@@ -2,6 +2,8 @@
 
 A Windows shell for shared PCs. Konfiguracja is visible only to Kiosk administrators.
 
+AI contributor workflow: [Project Brain usage](.ai/USAGE.md) and [agent instructions](AGENTS.md).
+
 ## Operating modes
 
 | Mode | Use |
