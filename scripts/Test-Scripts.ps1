@@ -14,6 +14,8 @@ Get-ChildItem -LiteralPath (Join-Path $root 'config') -Filter '*.json' | ForEach
     if ($text -match '(?i)C:\\\\Users\\\\(?!Public\\\\)|X:\\\\|"(?:Password|Pin|Secret|AccessToken)"\s*:') { throw "Private workstation data or a credential field was found in public configuration: $($_.Name)" }
 }
 [xml](Get-Content -LiteralPath (Join-Path $root 'config\intune\ShellLauncher.xml') -Raw) | Out-Null
+. (Join-Path $PSScriptRoot 'Deployment.Common.ps1')
+if ((Format-KioskNativeArgument '"C:\Program Files\K.exe" --card-service') -cne '"\"C:\Program Files\K.exe\" --card-service"' -or (Format-KioskNativeArgument 'auto') -cne 'auto') { throw 'A service command argument would reach sc.exe split.' }
 $rdpFixtureRoot = Join-Path $root ('out\rdp-prerequisites-' + [Guid]::NewGuid().ToString('N'))
 try {
     New-Item -ItemType Directory -Path $rdpFixtureRoot -Force | Out-Null
