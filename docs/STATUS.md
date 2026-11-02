@@ -1,5 +1,7 @@
 # Kiosk — stan i pozostała praca (2026-10-28)
 
+> **Dokument historyczny, stan z 2026-10-28.** Opisuje plan `SelfService` z `WindowsSession`, a nie bieżące cztery tryby. Bieżący stan: [UNIFIED_MODES_WORK.md](UNIFIED_MODES_WORK.md). Bramki odbioru: [ACCEPTANCE_GATES.md](ACCEPTANCE_GATES.md).
+
 ## Gdzie jesteśmy
 
 `main` zawiera połączone tryby `SelfService`, `Kiosk` i `WindowsShell`. Pierwszy planowany do wdrożenia jest `SelfService` z `SelfServiceAuthentication=WindowsSession`: Windows loguje osobę kartą lub Hello, a Kiosk pokazuje Szybką pomoc w jej profilu WebView2. Kod i paczka przechodzą lokalny `scripts/Test.ps1` oraz CI, w tym budowę natywnego kafelka i weryfikację zawartości niepodpisanej paczki. Są to dowody dla kodu i pakowania, nie dla docelowego SSO ani RDP.

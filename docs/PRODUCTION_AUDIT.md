@@ -2,15 +2,15 @@
 
 ## Aktualizacja przebiegu po próbach na stanowisku
 
-Sekcje audytu z 23–28 października opisują historyczny plan `SelfServiceAuthentication=WindowsSession`, w którym użytkownik logował się do Windows przed Kioskiem; nie są opisem aktywnego przebiegu. Po próbach użytkownik zmienił wymaganie: konto stanowiska pozostaje zalogowane, a osoba loguje się kartą i PIN-em wewnątrz `Kiosk` lub `SelfService`; zakończenie zamyka tylko jej sesję. Aktualne ustawienie to `CardAuthentication=Sso` albo `Local`, przy czterech trybach `Announcements`, `Kiosk`, `WindowsShell` i `SelfService`. Pole `SelfServiceAuthentication` służy do odczytu starszych plików i nie wybiera obecnej metody. Aktualny stan pilota i otwarte bramki są zapisane w [UNIFIED_MODES_WORK.md](UNIFIED_MODES_WORK.md). Bramka poniżej nadal wymaga dwóch osób, docelowych witryn SSO, obrazu Shell Launcher i podpisanej paczki; wcześniejsze próby WindowsSession nie zaliczają tych punktów.
+Sekcje audytu z 23–28 października opisują historyczny plan `SelfServiceAuthentication=WindowsSession`, w którym użytkownik logował się do Windows przed Kioskiem; nie są opisem aktywnego przebiegu. Po próbach użytkownik zmienił wymaganie: konto stanowiska pozostaje zalogowane, a osoba loguje się kartą i PIN-em wewnątrz `Kiosk` lub `SelfService`; zakończenie zamyka tylko jej sesję. Aktualne ustawienie to `CardAuthentication=Sso` albo `Local`, przy czterech trybach `Announcements`, `Kiosk`, `WindowsShell` i `SelfService`. Pole `SelfServiceAuthentication` służy do odczytu starszych plików i nie wybiera obecnej metody. Aktualny stan pilota i otwarte bramki są zapisane w [UNIFIED_MODES_WORK.md](UNIFIED_MODES_WORK.md). Bramka poniżej nadal wymaga dwóch osób, docelowych witryn SSO, obrazu Shell Launcher i podpisanej paczki; wcześniejsze próby WindowsSession nie zaliczają tych punktów. Wyniki bramek: [ACCEPTANCE_GATES.md](ACCEPTANCE_GATES.md).
 
-## Zakres i wynik
+## Zakres i wynik (historyczne)
 
 Repozytorium buduje klienta Windows x64 (.NET 10, WinForms/WebView2), opcjonalny natywny kafelek logowania oraz skrypty instalacji i wycofania. Przejrzano przepływ tożsamości i sesji, połączenia RDP, czytnik/CTAP, osadzanie okien, konfigurację, pakowanie i instalację. Usunięto stary mechanizm uruchamiania sesji, nieobsługiwany aktualizator w miejscu oraz prywatne przykłady konfiguracji. Publiczny przykład `config/client.json` ma `SelfService`, `CardAuthentication=Sso`, `TestMode=false` i pustą listę serwerów RDP.
 
 Kod można przekazać do testów akceptacyjnych na urządzeniu. Ten audyt **nie potwierdza gotowości produkcyjnej środowiska**: na tej stacji nie wykonano rzeczywistego logowania dwóch osób do Entra, SSO na docelowych witrynach, połączenia z docelowym RDS, próby na konsoli blokowanej przez Windows ani podpisu certyfikatem organizacji. Kompilacja natywnej DLL MSVC przeszła lokalnie. Paczka CI bez podpisu jest kandydatem testowym.
 
-## Aktualizacja punktu samoobsługowego — 2026-10-24
+## Aktualizacja punktu samoobsługowego — 2026-10-24 (historyczne)
 
 `SelfService` ma dwa sposoby logowania. Nowy `WindowsSession` używa konta już uwierzytelnionego przez Windows i uruchamia strony w profilu WebView2 tego konta z opcją SSO konta systemowego. Windows wykonuje logowanie kartą/Hello przed startem Kiosku; przycisk „Zakończ sesję” wylogowuje z Windows. Brak Entra na lokalnej stacji pozwala sprawdzić układ i proces, ale nie dowodzi wydania tokenu Entra ani logowania do firmowych witryn. Starszy `CardBroker` używa prywatnego adaptera do `aadauthhelper.dll` z hashem konkretnej wersji obrazu Windows. Na Windows 11 Insider build 26220 adapter został prawidłowo odrzucony; ponawianie zostało zatrzymane i strony pomocy nadal są dostępne bez logowania. Nie należy obchodzić tej kontroli hasha.
 
@@ -58,7 +58,7 @@ Weryfikator odrzuca `package.json` większy niż 1 MB i `package.sha256.ps1` wi�
 
 PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym kluczem certyfikatu; uprawnienie administracyjne z `cert:` wymaga takiego dowodu. `RequireCredentialPrompt` steruje oknem poświadczeń kontrolki RDP; Windows lub karta mogą użyć własnej pamięci poświadczeń. Ta opcja nie gwarantuje nowego żądania PIN przy każdym połączeniu. Logowanie Windows Hello i jego zasady PIN należą do Windows/organizacji.
 
-## Zmiany poddane weryfikacji
+## Zmiany poddane weryfikacji (historyczne)
 
 - Host RDP jest sprawdzany jako nazwa DNS albo adres IP; konfiguracja i proces pomocniczy odrzucają URL, ścieżkę i port dopisany do hosta. Profil Entra wymaga FQDN. Limit nawiązania połączenia RDP mierzy zegar monotoniczny, więc korekta czasu systemowego nie wydłuża ani nie skraca go.
 - Konfiguracja odrzuca nieznaną wersję, błędne profile RDP, duplikaty, niepoprawne adresy i ścieżki, a produkcyjna lista administratorów nie przyjmuje UID jako uwierzytelnienia. Zapis jest atomowy.
@@ -96,7 +96,7 @@ PIN karty w trybie aplikacyjnym potwierdza podpis świeżego wyzwania wybranym k
 - Publikacja i instalator powłoki sprawdzają konfigurację przez rzeczywisty kod walidacji klienta. Instalator zachowuje wybrany `SessionMode`, przygotowuje `TestMode=false` i odrzuca konfigurację przed zapisaniem stanu instalacji, jeśli klient nie mógłby jej otworzyć. Zapisuje konfigurację przez atomową podmianę z zachowaniem ACL, więc przerwanie zapisu nie ujawnia niepełnego JSON. Test uruchamia walidator dla celowo błędnego adresu strony oraz sprawdza podmianę i ACL w PowerShell 7 i 5.1.
 - Przy aktualizacji instalator zachowuje istniejący plik konfiguracyjny, chyba że administrator jawnie poda `-SourceConfig`; wtedy nowy plik ma pierwszeństwo, również przy migracji z `CardBroker` do `WindowsSession`. `-WhatIf` wypisuje wybrane źródło bez zmiany powłoki. Test obejmuje nową instalację, zwykłą aktualizację, jawne zastąpienie i brakujący plik.
 
-## Dowody lokalne
+## Dowody lokalne (historyczne)
 
 `scripts/Test.ps1` przeszedł na tej stacji: składnia skryptów, JSON/XML, bezpieczny zakres ścieżki danych, odizolowany rollback HKCU, publikacja Release z ostrzeżeniami traktowanymi jako błędy oraz testy migracji konfiguracji, trybów RDP, PC/SC, PIN, sesji A/B, WebView2, okien Win32, menu, notatek i ustawień. Testy używają atrap i lokalnego interfejsu, więc nie dowodzą logowania do RDS ani obsługi fizycznej karty każdego typu.
 
