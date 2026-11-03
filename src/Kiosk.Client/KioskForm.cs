@@ -1235,6 +1235,8 @@ internal sealed partial class KioskForm : Form
     private bool updateBusy;
     private long? updateTextUntilMilliseconds;
 
+    private const string UpdatingText = "Trwa aktualizowanie. Kiosk zostanie uruchomiony ponownie po zakończeniu.";
+
     /// <param name="seconds">0 = until the next change (the restart); otherwise the text goes away after that time.</param>
     private void SetUpdateStatus(string? text, bool busy = false, int seconds = 0)
     {
@@ -1465,7 +1467,7 @@ internal sealed partial class KioskForm : Form
             updateWaiting = null;
             if (!Updater.FirstAttempt(ready.Tag)) return;
             Audit.Write("auto_update", ready.Tag);
-            SetUpdateStatus("Instaluję " + ready.Tag + ". Kiosk uruchomi się ponownie.", busy: true);
+            SetUpdateStatus(UpdatingText, busy: true);
             closeConfirmed = true;
             Updater.Launch(ready.Folder);
             Close();
@@ -2453,9 +2455,9 @@ internal sealed partial class KioskForm : Form
                     : "Masz aktualną wersję (" + Updater.CurrentVersion + ").", seconds: 6);
                 return;
             }
-            SetUpdateStatus("Pobieram " + release.Tag + "…", busy: true);
+            SetUpdateStatus(UpdatingText, busy: true);
             var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
-                SetUpdateStatus(p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ". Kiosk uruchomi się ponownie.", busy: true)));
+                SetUpdateStatus(p < 100 ? "Trwa aktualizowanie (" + p + " %). Kiosk zostanie uruchomiony ponownie po zakończeniu." : UpdatingText, busy: true)));
             InstallUpdate(folder);
         }
         catch (Exception ex) { Audit.Write("update_failed", ex.Message); SetUpdateStatus("Aktualizacja nie powiodła się: " + ex.Message, seconds: 15); }
@@ -2466,7 +2468,7 @@ internal sealed partial class KioskForm : Form
         Audit.Write("update_requested", folder);
         closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
         if (!closeConfirmed) { SetUpdateStatus(null); return; }
-        SetUpdateStatus("Instaluję aktualizację. Kiosk uruchomi się ponownie.", busy: true);
+        SetUpdateStatus(UpdatingText, busy: true);
         // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
         Updater.Launch(folder);
         Close();
