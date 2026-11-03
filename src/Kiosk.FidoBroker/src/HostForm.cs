@@ -563,7 +563,8 @@ namespace FidoRun
                     providerStatus.SetBounds(0, (int)(116 * scale), content.Width, (int)(64 * scale));
                     fields.SetBounds(left, (int)(180 * scale), width, fields.PreferredSize.Height);
                     buttons.SetBounds(left, (int)(260 * scale), width, (int)(46 * scale));
-                    if (loginProgress != null) loginProgress.SetBounds(left, (int)(190 * scale), width, (int)(52 * scale));
+                    // Under the buttons: the PIN field stays where it is while the PIN is checked.
+                    if (loginProgress != null) loginProgress.SetBounds(left, (int)(318 * scale), width, (int)(52 * scale));
                 };
                 content.Resize += delegate { arrange(); };
                 arrange();
@@ -844,7 +845,8 @@ namespace FidoRun
             if (!working && (tapAgain || lower.StartsWith("przyłóż"))) message = WaitingForCard;
             if (working && !failed && !unknown && (tapAgain || lower.StartsWith("przyłóż") || lower.StartsWith("zalogowano")))
             {
-                touchRequested = tapAgain || lower.StartsWith("przyłóż");
+                // A card lying on the reader (NFC) is read without a touch; only a USB key (YubiKey) is touched.
+                touchRequested = (tapAgain || lower.StartsWith("przyłóż")) && BrokerPolicy.AnyCardPresent() != true;
                 label.Text = touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Trwa logowanie…";
                 label.Visible = true;
                 label.ForeColor = kioskAccent;
@@ -915,10 +917,13 @@ namespace FidoRun
                 if (FieldData.CanSubmit(field.Type, field.State, field.Interactive)) { hasInput = true; break; }
             if (options.Broker && Embedded && buttons != null)
             {
-                buttons.Visible = hasInput && !working;
-                fields.Visible = !working;
+                // One screen: while the PIN is checked (or turns out wrong) the field and buttons stay, greyed out,
+                // and only the line above them changes.
+                buttons.Visible = hasInput;
+                fields.Visible = true;
                 if (signInTitle != null) signInTitle.Text = "Logowanie";
-                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : pinRejected && !working ? "Błędny PIN. Spróbuj ponownie." : working ? touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Sprawdzanie PIN-u…" : hasInput ? "Wpisz PIN karty, potem dotknij klucza." : WaitingForCard;
+                bool cardOnReader = BrokerPolicy.AnyCardPresent() == true;
+                providerStatus.Text = awaitingCardRemoval ? "Wyjmij klucz z czytnika lub USB, włóż go ponownie i dotknij klucza, aby się zalogować." : pinRejected && !working ? "Błędny PIN. Spróbuj ponownie." : working ? touchRequested ? "Dotknij klucza, aby dokończyć logowanie." : "Sprawdzanie PIN-u…" : hasInput ? cardOnReader ? "Wpisz PIN karty." : "Wpisz PIN karty, potem dotknij klucza." : WaitingForCard;
                 providerStatus.Visible = true;
                 providerStatus.ForeColor = awaitingCardRemoval || pinRejected && !working ? ProblemColor() : kioskAccent;
                 state.Visible = false;

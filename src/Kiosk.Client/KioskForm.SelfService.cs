@@ -341,13 +341,16 @@ internal sealed partial class KioskForm
         DropReusablePage();
         cardSessionClosing = cardLogon.CloseAsync();
         cardLogon = null;
-        notice = "Zamykam sesję…";
+        cardSessionRemoving = true;   // Until the card sign-in listens again.
+        notice = "Usuwam sesję…";
         if (reason != null) Audit.Write(reason);
         RefreshChrome();
     }
 
     /// <summary>The page open as the signed-in person, over the Kiosk's screen; null = the start screen.</summary>
     private ApplicationView? cardPage;
+    /// <summary>A card session was ended and the card sign-in is not listening again yet.</summary>
+    private bool cardSessionRemoving;
     private readonly CardPageCommandQueue cardPageCommands = new();
     private int cardPageRequestVersion;
 
@@ -519,15 +522,21 @@ internal sealed partial class KioskForm
             desktop.UpdateStatus(name, notice ?? config.SelfServiceSignedInMessage, person: name);
         }
         else if (signInScreen != null && !(notice != null && noticeUntilMilliseconds is { } deadline && Environment.TickCount64 < deadline))
+        {
+            cardSessionRemoving = false;
             desktop.SetCardLogin(DesktopView.CardLoginStage.Provider, "Przyłóż klucz lub włóż go do USB, potem dotknij klucza.");
+        }
         else
         {
             var stage = cardSessionClosing is { IsCompleted: false } ? DesktopView.CardLoginStage.Closing :
                 cardSignInFinalizing ? DesktopView.CardLoginStage.Verifying :
                 notice != null ? DesktopView.CardLoginStage.Error :
                 cardLogin.HasPending ? DesktopView.CardLoginStage.Preparing : DesktopView.CardLoginStage.Waiting;
+            // While the sign-in starts again nothing can be signed in yet: no request to put the key on the reader.
             desktop.SetCardLogin(stage, notice ??
-                (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." : "Przyłóż klucz lub włóż go do USB, potem dotknij klucza."));
+                (cardSignInFinalizing ? "Trwa przygotowanie Twojej sesji." :
+                 stage == DesktopView.CardLoginStage.Preparing ? cardSessionRemoving ? "Usuwam sesję…" : "Przygotowuję logowanie…" :
+                 "Przyłóż klucz lub włóż go do USB, potem dotknij klucza."));
         }
         // The portal's bar on top: the person and "Zakończ sesję", or a notice in place of the page's line.
         // The name in large letters (without the domain when there is no friendly name), the account under it.
