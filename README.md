@@ -2,6 +2,8 @@
 
 A Windows shell for shared PCs. Konfiguracja is visible only to Kiosk administrators.
 
+AI contributor workflow: [Project Brain usage](.ai/USAGE.md), [Codex rules](AGENTS.md) and [Claude Code rules](CLAUDE.md). The source index has a [validation workflow](.github/workflows/project-brain.yml) and is refreshed with `python scripts/project_brain.py update`.
+
 ## Operating modes
 
 | Mode | Use |
