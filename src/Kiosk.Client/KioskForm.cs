@@ -435,6 +435,18 @@ internal sealed partial class KioskForm : Form
             if (!CardMatchesSession(session)) { CloseStaleCardLogon(session); return; }
         }
         Unlock(session);
+        WarmPersonPage(session);
+    }
+
+    /// <summary>
+    /// Stanowisko: the person's page window and its browser start right after the sign-in, hidden, so the first
+    /// Szybka pomoc page opens at once instead of waiting for a new program and its browser.
+    /// </summary>
+    private void WarmPersonPage(UserSession session)
+    {
+        if (SelfService || session.Logon is not { ProfileDirectory: not null } logon || current != session) return;
+        if (reusableLogon == logon && reusablePage != null) return;
+        reusableStarting = StartReusablePageAsync(logon);
     }
 
     private bool CardMatchesSession(UserSession session) =>
@@ -638,6 +650,7 @@ internal sealed partial class KioskForm : Form
         if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; CloseCardPage(); }
         session.Commands.Dispose();
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
+        if (session.Logon != null && reusableLogon == session.Logon) DropReusablePage();
         session.Logon?.Dispose(); // End the person's broker sign-in and its programs.
         session.Logon = null;
         sessions.Remove(session.Identity.Id);

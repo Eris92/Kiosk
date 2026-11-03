@@ -371,6 +371,8 @@ internal sealed partial class KioskForm
         // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.
         if (reusableStarting is { IsCompleted: false } starting) { await starting; if (!Latest()) return; }
         if (!Latest()) return;
+        // Stanowisko: the window of a person whose card was taken away earlier is not this person's.
+        if (reusablePage != null && reusableLogon != logon) DropReusablePage();
         if (reusablePage is { Started: true } reusable && reusableHost > 0 && reusable.RefreshHostedWindow())
         {
             ShowSideFor(side);
@@ -449,10 +451,15 @@ internal sealed partial class KioskForm
     /// <summary>Its process, which alone answers on its pipe.</summary>
     private int reusableHost;
 
+    /// <summary>Whose account <see cref="reusablePage"/> runs as.</summary>
+    private UserLogon? reusableLogon;
+
     private async Task StartReusablePageAsync(UserLogon logon)
     {
+        DropReusablePage();
         var page = new ApplicationView { AlwaysOverlay = true };
         reusablePage = page;
+        reusableLogon = logon;
         var area = desktop.PageScreenArea;
         string kioskAccount;
         using (var self = System.Security.Principal.WindowsIdentity.GetCurrent()) kioskAccount = self.User!.Value;
@@ -484,6 +491,7 @@ internal sealed partial class KioskForm
     {
         if (reusablePage is not { } page) return;
         reusablePage = null;
+        reusableLogon = null;
         reusableHost = 0;
         if (cardPage == page) CloseCardPage();
         if (desktop.Page == page) { desktop.ShowPage(null); desktop.SetPageTitle(null); }
