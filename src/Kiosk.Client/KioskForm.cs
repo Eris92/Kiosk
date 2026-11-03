@@ -2432,6 +2432,16 @@ internal sealed partial class KioskForm : Form
         try
         {
             var release = await Updater.LatestAsync();
+            // The same rule as the hotkey: only a newer numbered release replaces this Kiosk.
+            if (!Updater.IsNewer(release.Tag))
+            {
+                notice = Updater.CurrentVersion == "dev"
+                    ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
+                    : "Masz najnowszą wersję (" + Updater.CurrentVersion + ").";
+                Audit.Write("update_not_newer", release.Tag);
+                RefreshChrome();
+                return;
+            }
             notice = "Pobieram " + release.Tag + "…";
             RefreshChrome();
             var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
