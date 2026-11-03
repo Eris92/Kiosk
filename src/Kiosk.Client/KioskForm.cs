@@ -2409,9 +2409,14 @@ internal sealed partial class KioskForm : Form
             notice = "Sprawdzam najnowszą wersję…";
             RefreshChrome();
             var release = await Updater.LatestAsync();
-            if (release.Tag == Updater.CurrentVersion)
+            // Never back to an older release: a local build (dev) may hold settings that release cannot read,
+            // and then the Kiosk would not start at all.
+            if (!Updater.IsNewer(release.Tag))
             {
-                notice = "Masz najnowszą wersję (" + release.Tag + ").";
+                notice = Updater.CurrentVersion == "dev"
+                    ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
+                    : "Masz najnowszą wersję (" + Updater.CurrentVersion + ").";
+                Audit.Write("update_not_newer", release.Tag);
                 RefreshChrome();
                 return;
             }
