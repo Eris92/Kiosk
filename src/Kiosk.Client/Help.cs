@@ -327,17 +327,23 @@ internal sealed class HelpBrowserForm : Form
         Audit.Write("card_page_parked");
     }
 
-    /// <summary>A reusable window starts the browser at once (a blank page), so the first page opens without that wait.</summary>
-    internal async void Warm()
+    /// <summary>
+    /// A reusable window starts the browser at once, so the first page opens without that wait. With
+    /// <paramref name="url"/> the hidden browser also opens that page: the Microsoft sign-in (SSO) is then done and
+    /// its cookies are in the profile before the person chooses anything.
+    /// </summary>
+    internal async void Warm(string? url = null)
     {
-        keeper = new BrowserView([], new SitePolicy(true, [], []), null, windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder)
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? uri.Host : null;
+        keeper = new BrowserView([], new SitePolicy(true, [], host == null ? [] : SignInDomains.Append(host)), null,
+            windowsAccount: windowsAccount, singlePage: true, profileFolder: profileFolder)
         {
             // Shown (a hidden control gets no window for the browser), one pixel behind the page.
             Dock = DockStyle.None, Bounds = new Rectangle(0, 0, 1, 1)
         };
         Controls.Add(keeper);
         keeper.SendToBack();
-        try { await keeper.InitializeAsync("about:blank"); }
+        try { await keeper.InitializeAsync(host != null ? uri!.AbsoluteUri : "about:blank"); }
         catch (Exception ex) { Audit.Write("card_page_warm_failed", ex.Message); }
     }
 

@@ -469,7 +469,10 @@ internal sealed partial class KioskForm
             .Where(h => h.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var request = new CardPageHost.Request("Kiosk", "", config.HelpCloseSeconds, config.AccentColor, domains,
             logon.ProfileDirectory is { } profile ? Path.Combine(profile, @"AppData\Local\Kiosk\Pages") : null,
-            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks, Kiosk: Environment.ProcessId, KioskSid: kioskAccount);
+            [area.X, area.Y, area.Width, area.Height], config.BrowserOnlyBookmarks, Kiosk: Environment.ProcessId, KioskSid: kioskAccount,
+            // The first page that needs the sign-in is opened hidden right away, so the Microsoft sign-in is already done.
+            Warmup: config.HelpActions.FirstOrDefault(h => h.Enabled && h.NeedsSignIn &&
+                Uri.TryCreate(h.Action, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps)?.Action);
         var entry = new ApplicationEntry { Name = "Kiosk", Path = Environment.ProcessPath!, Arguments = CardPageHost.Argument + " " + CardPageHost.Encode(request) };
         try
         {

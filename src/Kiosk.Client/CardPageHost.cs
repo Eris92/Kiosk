@@ -24,7 +24,7 @@ internal static class CardPageHost
     /// <param name="Kiosk">The Kiosk process of a reusable window (0 = one page, then the program ends).</param>
     /// <param name="KioskSid">The Kiosk's Windows account: the only one besides the person that may open the pipe.</param>
     internal sealed record Request(string Title, string Url, int Seconds, string? Accent, string[] Domains, string? Profile, int[]? Area = null,
-        bool OnlyListed = true, int SideInset = 0, int Kiosk = 0, string KioskSid = "");
+        bool OnlyListed = true, int SideInset = 0, int Kiosk = 0, string KioskSid = "", string? Warmup = null);
 
     /// <summary>The command-line argument for <paramref name="request"/>: one token, nothing for a shell to split.</summary>
     internal static string Encode(Request request)
@@ -73,7 +73,7 @@ internal static class CardPageHost
         form.Shown += (_, _) =>
         {
             form.Park();   // Nothing shown yet: the Kiosk keeps it off its screen.
-            form.Warm();
+            form.Warm(request.Warmup);
             new Thread(() => Serve(form, request.Kiosk, kioskAccount)) { IsBackground = true, Name = "Card page pipe" }.Start();
         };
         Application.Run(form);
