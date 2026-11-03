@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 
 namespace Kiosk.Client;
 
@@ -97,14 +97,15 @@ internal sealed partial class DesktopView : UserControl
     private readonly Label date = new() { AutoSize = false, TextAlign = ContentAlignment.TopRight };
     private readonly StatusCard card = new();
     private readonly StatusProgress statusProgress = new() { Visible = false };
-    internal bool StatusBusy { get => statusProgress.Visible; set { statusProgress.Visible = value; statusProgress.BringToFront(); } }
+    private bool statusBusy;
+    /// <summary>The spinner under the greeting's text; shown only while that text is (never over the PIN, a question or a page).</summary>
+    internal bool StatusBusy { get => statusBusy; set { if (statusBusy == value) return; statusBusy = value; ApplyVisibility(); } }
     /// <summary>Company messages at the bottom (Konfiguracja → Komunikaty).</summary>
     internal NewsCarousel News { get; } = new();
     /// <summary>Szybka pomoc (Konfiguracja → Szybka pomoc), shown locked and unlocked.</summary>
     internal HelpBar Help { get; } = new();
     private readonly Label heading = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter, AutoEllipsis = true };
     private readonly Label detail = new() { AutoSize = false, TextAlign = ContentAlignment.TopCenter };
-    private readonly Label hint = new() { AutoSize = false, TextAlign = ContentAlignment.MiddleCenter };
     private readonly Button resume = new() { Text = "Wznów sesję", Visible = false };
     private readonly System.Windows.Forms.Timer clockTimer = new() { Interval = 1000 };
     // Card PIN asked right on the lock card (FIDO2 cards), instead of a separate window.
@@ -213,11 +214,9 @@ internal sealed partial class DesktopView : UserControl
         heading.Font = new Font("Segoe UI", 22, FontStyle.Bold);
         detail.Font = new Font("Segoe UI", 11);
         detail.ForeColor = KioskTheme.Muted;
-        hint.Font = new Font("Segoe UI", 10);
-        hint.ForeColor = KioskTheme.Muted;
 
         foreach (var label in new[] { brand, subtitle, clock, date }) label.BackColor = Color.Transparent;
-        foreach (var label in new[] { heading, detail, hint, pinPrompt }) label.BackColor = KioskTheme.Surface;
+        foreach (var label in new[] { heading, detail, pinPrompt }) label.BackColor = KioskTheme.Surface;
         signInPlace.BackColor = KioskTheme.Surface;
         pinPrompt.Font = new Font("Segoe UI", 11);
         pinPrompt.ForeColor = KioskTheme.Muted;
@@ -254,7 +253,7 @@ internal sealed partial class DesktopView : UserControl
         Help.ContentChanged += ArrangeControls;   // A category opened: the column has another height.
         KioskTheme.Changed += OnThemeChanged;
         resume.Click += (_, _) => ResumeRequested?.Invoke();
-        card.Controls.AddRange(new Control[] { heading, detail, hint, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, askTitle, askText, askYes, askNo, signInPlace });
+        card.Controls.AddRange(new Control[] { heading, detail, resume, pinPrompt, pinBox, pinOk, pinCancel, pinCountdown, askTitle, askText, askYes, askNo, signInPlace });
         Controls.AddRange(new Control[] { card, News, Help, logo, brand, subtitle, clock, date });
         InitPortal();
         clockTimer.Tick += (_, _) => UpdateClock();
@@ -313,12 +312,10 @@ internal sealed partial class DesktopView : UserControl
         // Called on every shell tick; repaint only when something changed.
         if (heading.Text == title && detail.Text == description && this.locked == locked && resume.Text == buttonText && this.person == person) return;
         this.person = person;
-        card.Initials = person == null ? "" : People.Initials(person);
         resume.Text = buttonText;
         this.locked = locked;
         heading.Text = title;
         detail.Text = description;
-        hint.Text = locked ? "Twoje aplikacje czekają na wznowienie sesji." : "Aplikacje i połączenia znajdziesz w menu na dole.";
         card.Locked = locked;
         ApplyVisibility();
         ArrangeControls();
@@ -353,11 +350,13 @@ internal sealed partial class DesktopView : UserControl
         if (pageContent != null) pageContent.Visible = page;
         if (sideContent != null) sideContent.Visible = page;
         signInPlace.Visible = signIn;
-        card.SignIn = !status || AskingPin || portal && person == null;
+        statusProgress.Visible = statusBusy && status && !AskingPin;
+        if (statusProgress.Visible) statusProgress.BringToFront();
+        // The portal's card has no icon unless locked: its heading sits where the icon would be and cut it in half.
+        card.SignIn = !status || AskingPin || portal && (person == null || !locked);
         heading.Visible = status;
         detail.Visible = status && !AskingPin;   // The PIN's own text takes its place.
         resume.Visible = status && locked && !AskingPin && !signingIn;
-        hint.Visible = status && !AskingPin && !signingIn && !portal;
         foreach (var c in new Control[] { askTitle, askText, askYes, askNo }) c.Visible = Asking;
         if (Asking) pinCountdown.Visible = true;
         // Szybka pomoc stays where it is; while a question or the PIN waits it is greyed out.
@@ -542,128 +541,30 @@ internal sealed partial class DesktopView : UserControl
         // Bars across the top (Komunikaty, "Kind": "Pasek"); everything else moves down under them.
         int bar = 0;
         foreach (var alert in bars) { alert.SetBounds(0, bar, Width, Scale(44)); bar += Scale(44); }
-        int clockWidth = Math.Min(Scale(290), Math.Max(Scale(150), Width / 3));
-        int logoSize = Scale(76), textLeft = margin;
-        // Visible reads false while the desktop itself is hidden, so the layout looks at the content.
-        // The portal places these itself: moving them here first and back there made them blink on every change.
-        if (!portal && logo.Image != null)
-        {
-            // Wide logos keep their proportions up to three times their height.
-            var image = logo.Image!;
-            int logoWidth = Math.Min(logoSize * 3, Math.Max(Scale(20), logoSize * image.Width / Math.Max(1, image.Height)));
-            logo.SetBounds(margin, bar + Scale(24), logoWidth, logoSize);
-            textLeft = margin + logoWidth + Scale(16);
-        }
-        int textWidth0 = Math.Max(0, Width - clockWidth - margin - textLeft);
-        // Only a line under it: the line moves up to where the name would be.
-        if (!portal)
-        {
-            brand.SetBounds(textLeft, bar + Scale(24), textWidth0, Scale(47));
-            subtitle.SetBounds(textLeft + Scale(2), bar + (brand.Text.Length > 0 ? Scale(75) : Scale(30)), textWidth0, Scale(25));
-            clock.SetBounds(Width - clockWidth - margin, bar + Scale(25), clockWidth, Scale(47));
-            date.SetBounds(Width - clockWidth - margin, bar + Scale(77), clockWidth, Scale(25));
-        }
-
         int cardWidth = Math.Min(Scale(660), Math.Max(Scale(240), Width - margin * 2));
-        bool personRow = person != null && !locked && !AskingPin && !Asking;
-        int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : cardLoginActive || signingIn ? 440 : locked ? 370 : personRow ? 270 : 324);
-        if (portal && !Asking && !AskingPin && !locked && !cardLoginActive) cardHeight = Scale(360);
+        int cardHeight = Scale(Asking ? 430 : AskingPin ? 470 : cardLoginActive || signingIn ? 440 : locked ? 370 : 360);
         bool page = pageContent != null && !AskingPin && !Asking;
-        if (portal)
-        {
-            var place = ArrangePortal(bar, cardWidth, cardHeight, page);
-            cardWidth = place.Width;
-            cardHeight = place.Height;
-            card.Bounds = place;
-            if (page) PlacePage(new Rectangle(0, 0, cardWidth, cardHeight));
-            Help.Visible = ShowSidebar && UseClassicSidebar;
-        }
-        else ArrangeDesktop(bar, margin, ref cardWidth, ref cardHeight, page);
-        ArrangeCardInside(cardWidth, cardHeight, personRow);
-    }
-
-    /// <summary>The desktop with the card in the middle, Szybka pomoc beside or under it and the messages at the bottom.</summary>
-    private void ArrangeDesktop(int bar, int margin, ref int cardWidth, ref int cardHeight, bool page)
-    {
-        // Szybka pomoc: a column at the left when it fits beside the card, otherwise a row under the card.
-        bool help = Help.Count > 0;
-        var column = Help.Needed(true);
-        bool helpColumn = help && (Width - cardWidth) / 2 - margin - Scale(16) >= column.Width && Height - (bar + Scale(125)) >= column.Height;
-        int helpRow = help && !helpColumn ? Scale(56) : 0;   // gap + row height
-        Help.Vertical = helpColumn;
-        // The messages take the bottom of the desktop when they fit under the card; the card is centred above them.
-        // The size set in Konfiguracja, or the largest smaller one that fits.
-        int[] heights = [132, 220, 320], widths = [980, 1200, 1400];
-        int size = (int)banner, newsGap = Scale(20), bottom = Height;
-        while (size > 0 && Height - (bar + Scale(125)) - cardHeight - helpRow - Scale(heights[size]) - newsGap * 2 < 0) size--;
-        int newsHeight = Scale(heights[size]);
-        bool news = News.Count > 0 && !AskingPin && !Asking && !page && Height - (bar + Scale(125)) - cardHeight - helpRow - newsHeight - newsGap * 2 >= 0;
-        News.Visible = news;
-        if (news)
-        {
-            int newsWidth = Math.Min(Scale(widths[size]), Math.Max(Scale(240), Width - margin * 2));
-            News.SetBounds((Width - newsWidth) / 2, Height - newsHeight - newsGap, newsWidth, newsHeight);
-            bottom = News.Top - newsGap;
-        }
-        int top = Math.Max((bar + Scale(125)), (bottom - cardHeight - helpRow) / 2 + Scale(12));
-        if (news) top = Math.Min(top, bottom - cardHeight - helpRow);
-        if (page)
-        {
-            // The page takes the whole free space: beside the Szybka pomoc column, or above its row.
-            int left = helpColumn ? margin + column.Width + Scale(24) : margin;
-            top = bar + Scale(125);
-            cardWidth = Math.Max(Scale(240), Width - margin - left);
-            cardHeight = Math.Max(Scale(200), Height - top - margin - helpRow);
-            card.SetBounds(left, top, cardWidth, cardHeight);
-            int inset = Scale(10);
-            PlacePage(new Rectangle(inset, inset, Math.Max(0, cardWidth - 2 * inset), Math.Max(0, cardHeight - 2 * inset)));
-        }
-        else card.SetBounds((Width - cardWidth) / 2, top, cardWidth, cardHeight);
-        Help.Visible = help;
-        if (helpColumn) Help.SetBounds(margin, (bar + Scale(125)), column.Width, column.Height);
-        else if (help)
-        {
-            var row = Help.Needed(false);
-            int rowWidth = Math.Min(row.Width, Width - margin * 2);
-            Help.SetBounds((Width - rowWidth) / 2, card.Bottom + Scale(16), rowWidth, row.Height);
-        }
+        var place = ArrangePortal(bar, cardWidth, cardHeight, page);
+        cardWidth = place.Width;
+        cardHeight = place.Height;
+        card.Bounds = place;
+        if (page) PlacePage(new Rectangle(0, 0, cardWidth, cardHeight));
+        Help.Visible = ShowSidebar && UseClassicSidebar;
+        ArrangeCardInside(cardWidth, cardHeight);
     }
 
     /// <summary>What is inside the card: the sign-in, the greeting, the PIN field or a question.</summary>
-    private void ArrangeCardInside(int cardWidth, int cardHeight, bool personRow)
+    private void ArrangeCardInside(int cardWidth, int cardHeight)
     {
         statusProgress.SetBounds((cardWidth - Scale(48)) / 2, Scale(215), Scale(48), Scale(48));
         int innerMargin = Scale(30);
         signInPlace.SetBounds(innerMargin, Scale(24), Math.Max(0, cardWidth - innerMargin * 2), Math.Max(0, cardHeight - Scale(48)));
         int textWidth = Math.Max(0, cardWidth - innerMargin * 2);
-        if (personRow && !portal)
-        {
-            // The person: initials in a circle and the name beside it, the rest under them.
-            int diameter = Scale(62), gap = Scale(18);
-            int nameWidth = Math.Max(0, Math.Min(textWidth - diameter - gap, TextRenderer.MeasureText(heading.Text, heading.Font).Width + Scale(8)));
-            int left = (cardWidth - diameter - gap - nameWidth) / 2;
-            card.Avatar = new Rectangle(left, Scale(36), diameter, diameter);
-            heading.TextAlign = ContentAlignment.MiddleLeft;
-            heading.SetBounds(left + diameter + gap, Scale(32), nameWidth, diameter + Scale(8));
-            detail.SetBounds(innerMargin, Scale(124), textWidth, Scale(64));
-            hint.SetBounds(innerMargin, Scale(214), textWidth, Scale(35));
-        }
-        else
-        {
-            card.Avatar = Rectangle.Empty;
-            heading.TextAlign = ContentAlignment.MiddleCenter;
-            heading.SetBounds(innerMargin, Scale(110), textWidth, Scale(70));
-            detail.SetBounds(innerMargin, Scale(191), textWidth, Scale(64));
-            hint.SetBounds(innerMargin, Scale(locked ? 320 : 270), textWidth, Scale(35));
-        }
-        if (portal && !Asking && !AskingPin && !locked)
-        {
-            card.Avatar = Rectangle.Empty;
-            card.SignIn = true;
-            heading.TextAlign = ContentAlignment.MiddleCenter;
-            heading.SetBounds(innerMargin, Scale(60), textWidth, Scale(70));
-            detail.SetBounds(innerMargin, Scale(140), textWidth, Scale(64));
-        }
+        heading.TextAlign = ContentAlignment.MiddleCenter;
+        // Locked: under the padlock icon. Otherwise the card has no icon and the text starts at the top.
+        bool icon = locked || Asking || AskingPin;
+        heading.SetBounds(innerMargin, Scale(icon ? 110 : 60), textWidth, Scale(70));
+        detail.SetBounds(innerMargin, Scale(icon ? 191 : 140), textWidth, Scale(64));
         int buttonWidth = Math.Min(Scale(220), textWidth);
         resume.SetBounds((cardWidth - buttonWidth) / 2, Scale(265), buttonWidth, Scale(43));
         int pinWidth = Math.Min(Scale(360), textWidth);
@@ -798,8 +699,6 @@ internal sealed partial class DesktopView : UserControl
     private sealed class StatusCard : Panel
     {
         internal bool Locked { get; set; }
-        internal string Initials { get; set; } = "";
-        internal Rectangle Avatar { get; set; }
         /// <summary>Something else fills the card (sign-in, question, page): no icon.</summary>
         internal bool SignIn { get; set; }
 
@@ -815,25 +714,17 @@ internal sealed partial class DesktopView : UserControl
             base.OnPaint(e);
             if (Width <= 1 || Height <= 1) return;
             var g = e.Graphics;
-            g.Clear(BackColor);
+            // The corners outside the rounded frame show the desktop's background, not a square of the card's colour.
+            PaintBackdrop(g, this);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             int S(int value) => (int)Math.Round(value * DeviceDpi / 96d);
             using var cardPath = KioskTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), S(20));
+            using var surface = new SolidBrush(BackColor);
+            g.FillPath(surface, cardPath);
             using var border = new Pen(KioskTheme.Border);
             g.DrawPath(border, cardPath);
 
             if (SignIn) return;
-            if (Initials.Length > 0 && !Avatar.IsEmpty)
-            {
-                using var fill = new SolidBrush(KioskTheme.AccentSoft);
-                g.FillEllipse(fill, Avatar);
-                using var ring = new Pen(KioskTheme.AccentLine, S(2));
-                g.DrawEllipse(ring, Avatar);
-                using var letters = new Font("Segoe UI", 18, FontStyle.Bold);
-                TextRenderer.DrawText(g, Initials, letters, Avatar, KioskTheme.AccentLine,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
-                return;
-            }
             int diameter = S(62);
             var iconBounds = new Rectangle((Width - diameter) / 2, S(32), diameter, diameter);
             using var circle = new SolidBrush(KioskTheme.AccentSoft);

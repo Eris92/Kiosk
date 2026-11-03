@@ -227,6 +227,8 @@ internal sealed partial class KioskForm : Form
                 if (idle >= (uint)config.LockAfterSeconds * 1000u) Lock("idle_lock", idle);
             }
             ExpireSessions();
+            // Stanowisko: the person's page ended ("Zamknij" or its countdown).
+            if (!SelfService && cardPage is { Started: true } page && !page.RefreshHostedWindow()) CloseCardPage();
             MonitorWindows();
             UpdateMainIdle();
         }
@@ -314,7 +316,7 @@ internal sealed partial class KioskForm : Form
         if (settingsView != null && session.Windows.Any(w => w.Key == SettingsKey)) CloseWindow(SettingsKey, "settings_closed", session);
         if (!session.Locked) session.InactiveSinceMilliseconds = Environment.TickCount64;
         session.Locked = true;
-        if (current == session) current = null;
+        if (current == session) { current = null; CloseCardPage(); }
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
     }
@@ -327,6 +329,7 @@ internal sealed partial class KioskForm : Form
         menu.HideMenu();
         DismissQuestions();
         session.Locked = true;
+        CloseCardPage();   // The person's page window lies over the Kiosk: it must not stay over the lock screen.
         session.InactiveSinceMilliseconds = Environment.TickCount64 - idleMilliseconds;
         ShowView(desktop);
         Audit.Write(reason, session.Identity.Name);
@@ -632,7 +635,7 @@ internal sealed partial class KioskForm : Form
 
     private void CloseSession(UserSession session, string reason)
     {
-        if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; }
+        if (session == current) { menu.HideMenu(); DismissQuestions(); ShowView(desktop); current = null; CloseCardPage(); }
         session.Commands.Dispose();
         foreach (var window in session.Windows.ToArray()) CloseWindowCore(session, window);
         session.Logon?.Dispose(); // End the person's broker sign-in and its programs.
@@ -1491,6 +1494,14 @@ internal sealed partial class KioskForm : Form
     private void ShowHelpPage(string title, string url, string side = "")
     {
         if (SelfService && OpenPageAsCardPerson(title, url, side)) return;
+        // Stanowisko signed in with the card: the page runs as the person too (their account, SSO for RCP, SharePoint),
+        // not as the Kiosk's own account.
+        if (!SelfService && current is { Locked: false, Logon: { } person })
+        {
+            CloseCardPage();
+            _ = OpenCardPageAsync(person, title, url, side, cardPageRequestVersion);
+            return;
+        }
         helpBrowser?.Close();
         ShowSideFor(side);
         // In the start screen's middle frame: no separate window over the screen.

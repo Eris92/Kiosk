@@ -364,7 +364,8 @@ internal sealed partial class KioskForm
 
     private async Task OpenCardPageAsync(UserLogon logon, string title, string url, string side, int requestVersion)
     {
-        bool Latest() => !IsDisposed && cardPageRequestVersion == requestVersion && cardLogon == logon && cardAwaySinceMilliseconds == null;
+        bool Latest() => !IsDisposed && cardPageRequestVersion == requestVersion && cardAwaySinceMilliseconds == null &&
+            (SelfService ? cardLogon == logon : current is { Locked: false } session && session.Logon == logon);
         var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : "";
         helpBrowser?.Close();
         // The card session's window, still starting (signed in a moment ago): it is waited for rather than started twice.

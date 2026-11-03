@@ -131,6 +131,10 @@ internal sealed class NavBar : Control
             bool needsSignIn = (own == null || own.NeedsSignIn) && (inside.Count > 0 ? inside.All(i => i.NeedsSignIn) : own != null);
             list.Add((top, top, link != null ? TileIcons.ForCategory(top, [link]) : TileIcons.ForCategory(top, inside), link, needsSignIn));
         }
+        // An entry without a category is in the main menu itself: its click opens it, like a category with its own action.
+        // Its path starts with a line break, which no category name has.
+        foreach (var item in items.Where(i => i.CategoryPath.Length == 0 && i.LinkPath == null))
+            list.Add(("\n" + item.Name, item.Name, TileIcons.ForCategory(item.Name, [item]), item, item.NeedsSignIn));
         // "Dolna sekcja": those categories after the others, under a line.
         list = [.. list.Where(e => !TileIcons.InBottomGroup(e.Item1)), .. list.Where(e => TileIcons.InBottomGroup(e.Item1))];
         firstBottom = list.FindIndex(e => TileIcons.InBottomGroup(e.Item1));
