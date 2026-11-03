@@ -283,14 +283,14 @@ internal sealed partial class DesktopView : UserControl
     internal void EmphasizeStatus(bool emphasize) => detail.ForeColor = emphasize ? KioskTheme.AccentLine : KioskTheme.Muted;
 
     /// <summary>The same login card and geometry for Station and SelfService; only its state changes.</summary>
-    internal void SetCardLogin(CardLoginStage stage, string message)
+    internal void SetCardLogin(CardLoginStage stage, string message, string title = "Logowanie")
     {
         bool wasActive = cardLoginActive;
         cardLoginActive = true;
         CurrentCardLoginStage = stage;
         StatusBusy = stage is CardLoginStage.Preparing or CardLoginStage.Verifying or CardLoginStage.Closing;
         ShowSignIn(stage == CardLoginStage.Provider);
-        UpdateStatus("Logowanie", message);
+        UpdateStatus(title, message);
         EmphasizeStatus(stage == CardLoginStage.Waiting);
         if (!wasActive) ArrangeControls();
     }

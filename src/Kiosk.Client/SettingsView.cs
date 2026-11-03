@@ -671,9 +671,12 @@ internal sealed class SettingsView : UserControl
                 updateStatus.Text = "Sprawdzam najnowsze wydanie…";
                 Updater.Channel = updateChannel.SelectedIndex == 1 ? "dev" : "main";   // The channel chosen here, saved or not.
                 var release = await Updater.LatestAsync();
-                if (release.Tag == Updater.CurrentVersion)
+                // Nothing newer: the answer stays here and Konfiguracja stays open.
+                if (!Updater.IsNewer(release.Tag))
                 {
-                    updateStatus.Text = "Masz najnowszą wersję (" + release.Tag + ").";
+                    updateStatus.Text = Updater.CurrentVersion == "dev"
+                        ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
+                        : "Masz najnowszą wersję (" + Updater.CurrentVersion + ").";
                     return;
                 }
                 if (UpdateByKiosk) { updateStatus.Text = "Kiosk pobiera i instaluje " + release.Tag + "…"; UpdateRequested?.Invoke(""); return; }

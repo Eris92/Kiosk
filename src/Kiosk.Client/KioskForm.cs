@@ -1175,7 +1175,9 @@ internal sealed partial class KioskForm : Form
             taskbar.MenuButton.Enabled = true;
             taskbar.LockButton.Enabled = taskbar.LogoutButton.Enabled = false;
             taskbar.SetTasks([]);
-            SelfServiceStatus(); return;
+            SelfServiceStatus();
+            ShowUpdateStatus();
+            return;
         }
 
         taskbar.Centered = config.TaskbarAlignment == TaskbarAlignment.Center;
@@ -1225,6 +1227,28 @@ internal sealed partial class KioskForm : Form
             desktop.SetCardLogin(notice == null ? DesktopView.CardLoginStage.Waiting : DesktopView.CardLoginStage.Error, notice ?? (others > 0
                 ? "Zachowane sesje: " + others + ". Każdy wraca do swojej sesji, przykładając swoją kartę.\n" + retention
                 : "Włóż kartę, aby rozpocząć pracę.\n" + reader.Status.Split('\n')[0]));
+        ShowUpdateStatus();
+    }
+
+    /// <summary>What the update is doing, in the card instead of the sign-in (the Kiosk restarts in a moment anyway).</summary>
+    private string? updateText;
+    private bool updateBusy;
+    private long? updateTextUntilMilliseconds;
+
+    /// <param name="seconds">0 = until the next change (the restart); otherwise the text goes away after that time.</param>
+    private void SetUpdateStatus(string? text, bool busy = false, int seconds = 0)
+    {
+        updateText = text;
+        updateBusy = busy;
+        updateTextUntilMilliseconds = seconds > 0 ? Environment.TickCount64 + seconds * 1000L : null;
+        RefreshChrome();
+    }
+
+    private void ShowUpdateStatus()
+    {
+        if (updateText == null) return;
+        if (updateTextUntilMilliseconds is { } until && Environment.TickCount64 >= until) { updateText = null; RefreshChrome(); return; }
+        desktop.SetCardLogin(updateBusy ? DesktopView.CardLoginStage.Verifying : DesktopView.CardLoginStage.Waiting, updateText, "Aktualizacja");
     }
 
     private static string FormatDuration(int seconds) =>
@@ -1441,6 +1465,7 @@ internal sealed partial class KioskForm : Form
             updateWaiting = null;
             if (!Updater.FirstAttempt(ready.Tag)) return;
             Audit.Write("auto_update", ready.Tag);
+            SetUpdateStatus("Instaluję " + ready.Tag + ". Kiosk uruchomi się ponownie.", busy: true);
             closeConfirmed = true;
             Updater.Launch(ready.Folder);
             Close();
@@ -2406,23 +2431,8 @@ internal sealed partial class KioskForm : Form
         try
         {
             Audit.Write("update_hotkey");
-            notice = "Sprawdzam najnowszą wersję…";
-            RefreshChrome();
-            var release = await Updater.LatestAsync();
-            // Never back to an older release: a local build (dev) may hold settings that release cannot read,
-            // and then the Kiosk would not start at all.
-            if (!Updater.IsNewer(release.Tag))
-            {
-                notice = Updater.CurrentVersion == "dev"
-                    ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
-                    : "Masz najnowszą wersję (" + Updater.CurrentVersion + ").";
-                Audit.Write("update_not_newer", release.Tag);
-                RefreshChrome();
-                return;
-            }
             await UpdateFromSettingsAsync();
         }
-        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
         finally { updating = false; }
     }
 
@@ -2431,34 +2441,32 @@ internal sealed partial class KioskForm : Form
     {
         try
         {
+            SetUpdateStatus("Sprawdzam najnowszą wersję…", busy: true);
             var release = await Updater.LatestAsync();
-            // The same rule as the hotkey: only a newer numbered release replaces this Kiosk.
+            // Never back to an older release: a local build (dev) may hold settings that release cannot read,
+            // and then the Kiosk would not start at all.
             if (!Updater.IsNewer(release.Tag))
             {
-                notice = Updater.CurrentVersion == "dev"
-                    ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
-                    : "Masz najnowszą wersję (" + Updater.CurrentVersion + ").";
                 Audit.Write("update_not_newer", release.Tag);
-                RefreshChrome();
+                SetUpdateStatus(Updater.CurrentVersion == "dev"
+                    ? "To lokalna wersja Kiosku. Wydanie " + release.Tag + " jej nie zastąpi."
+                    : "Masz aktualną wersję (" + Updater.CurrentVersion + ").", seconds: 6);
                 return;
             }
-            notice = "Pobieram " + release.Tag + "…";
-            RefreshChrome();
+            SetUpdateStatus("Pobieram " + release.Tag + "…", busy: true);
             var folder = await Updater.DownloadAsync(release, new Progress<int>(p =>
-            {
-                notice = p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ", Kiosk uruchomi się ponownie.";
-                RefreshChrome();
-            }));
+                SetUpdateStatus(p < 100 ? "Pobieram " + release.Tag + "… " + p + " %" : "Instaluję " + release.Tag + ". Kiosk uruchomi się ponownie.", busy: true)));
             InstallUpdate(folder);
         }
-        catch (Exception ex) { notice = "Aktualizacja nie powiodła się: " + ex.Message; Audit.Write("update_failed", ex.Message); RefreshChrome(); }
+        catch (Exception ex) { Audit.Write("update_failed", ex.Message); SetUpdateStatus("Aktualizacja nie powiodła się: " + ex.Message, seconds: 15); }
     }
 
     private void InstallUpdate(string folder)
     {
         Audit.Write("update_requested", folder);
         closeConfirmed = !sessions.Values.Any(x => x.HasWork) || ConfirmEnd(sessions.Values);
-        if (!closeConfirmed) return;
+        if (!closeConfirmed) { SetUpdateStatus(null); return; }
+        SetUpdateStatus("Instaluję aktualizację. Kiosk uruchomi się ponownie.", busy: true);
         // The new copy waits for this process to exit, replaces the files and starts Kiosk again.
         Updater.Launch(folder);
         Close();
