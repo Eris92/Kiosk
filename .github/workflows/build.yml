@@ -54,7 +54,9 @@ jobs:
           name: Kiosk-win-x64-candidate
           path: out/package/
           if-no-files-found: error
-          retention-days: 30
+          # ~53 MB per build on every push/PR; 30 days exhausted the account-wide
+          # Actions artifact quota and broke uploads in other repositories.
+          retention-days: 5
       - name: Upload self-test diagnostics separately
         if: always()
         uses: actions/upload-artifact@v7
